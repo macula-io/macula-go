@@ -1,0 +1,216 @@
+//go:build live
+
+// Integration tests against a real, live macula-station. NOT run by
+// default `go test ./...` — gated behind the `live` build tag, same
+// discipline as connection/live_test.go and content/live_test.go. Run
+// explicitly:
+//
+//	go test -tags=live ./stream/... -run TestLive -v
+package stream
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/macula-io/macula-go-sdk/cbor"
+	"github.com/macula-io/macula-go-sdk/connection"
+	"github.com/macula-io/macula-go-sdk/frame"
+	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go-sdk/transport"
+)
+
+const (
+	liveStationHost = "station-de-frankfurt.macula.io"
+	liveStationPort = 4433
+)
+
+func nowMs() int64 { return time.Now().UnixMilli() }
+
+func randomHex(t *testing.T, n int) string {
+	t.Helper()
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
+	return hex.EncodeToString(b)
+}
+
+func connectLive(t *testing.T) (*connection.Session, identity.KeyPair) {
+	t.Helper()
+	id, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	session, err := connection.Connect(ctx, liveStationHost, liveStationPort, transport.WebPKI{}, id)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	return session, id
+}
+
+// TestLiveStreamOpenRoundTrip: a real STREAM_OPEN round trip against a
+// deliberately nonexistent procedure — same spirit as the connection
+// package's TestLiveCallRoundTrip: there's no known streaming procedure
+// registered anywhere on this fleet to exercise a genuine data exchange
+// against (streaming consumers like hecate-tube are separate app-level
+// services, not part of macula-station itself), so this proves the wire
+// mechanics — opening a dedicated stream, sending a signed STREAM_OPEN,
+// a chunk, a half-close, and awaiting whatever the station does with an
+// unknown procedure — rather than a specific procedure's behavior.
+//
+// macula-rust-sdk's own equivalent test found empirically (2026-08-28)
+// that the station DOES actively validate streaming procedures,
+// symmetric to CALL: it replies with a real STREAM_ERROR
+// (unknown_next_peer / "procedure not advertised"), which AwaitReply
+// correctly surfaces as ErrPeerAborted. Still printed as OBSERVED rather
+// than asserted either way: this test exists to prove the wire
+// mechanics work at all, not to pin the station's procedure-validation
+// behavior as a contract this module depends on.
+func TestLiveStreamOpenRoundTrip(t *testing.T) {
+	session, id := connectLive(t)
+	defer session.Close("normal", nil, id)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	realm := make([]byte, 32)
+	handle, err := Open(ctx, session, "macula_go_sdk.test_stream", realm, frame.ClientStream,
+		cbor.Null(), nowMs()+10_000, id)
+	if err != nil {
+		t.Fatalf("Open: opening a dedicated stream and sending STREAM_OPEN should succeed: %v", err)
+	}
+
+	if err := handle.SendData(frame.Raw, cbor.Bytes([]byte("hello from macula-go-sdk")), id); err != nil {
+		t.Fatalf("SendData: %v", err)
+	}
+	if err := handle.CloseSend(id); err != nil {
+		t.Fatalf("CloseSend: %v", err)
+	}
+
+	payload, respondedBy, err := handle.AwaitReply(5 * time.Second)
+	if err != nil {
+		t.Logf("OBSERVED: no reply within 5s, as: %v", err)
+		return
+	}
+	t.Logf("OBSERVED: got a STREAM_REPLY (unexpected for a made-up procedure, but valid): payload=%s responded_by=%s",
+		payload, hex.EncodeToString(respondedBy))
+}
+
+// TestLiveStreamingProviderRoundTrip is the real point of §13.2's whole
+// existence: two independent connections to the SAME live station — one
+// advertises a procedure and accepts inbound streams for it (the
+// provider role), the other dials in and pushes/pulls data against it
+// (the caller role). This is the first test in this module where a
+// session is on the RECEIVING end of a mesh interaction it didn't
+// initiate — one session sits idle after Advertise until the station
+// itself routes a stranger's request back to it.
+//
+// Same station on purpose: cross-station routing depends on gossip
+// propagation between stations, which isn't instant and isn't this
+// module's concern to wait out — same-station is the direct case §6.9
+// describes, and it's what a real provider dialed into one station
+// actually needs day to day.
+func TestLiveStreamingProviderRoundTrip(t *testing.T) {
+	providerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (provider): %v", err)
+	}
+	callerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (caller): %v", err)
+	}
+
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer connectCancel()
+	providerSession, err := connection.Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, providerID)
+	if err != nil {
+		t.Fatalf("provider handshake should succeed: %v", err)
+	}
+	defer providerSession.Close("normal", nil, providerID)
+	callerSession, err := connection.Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, callerID)
+	if err != nil {
+		t.Fatalf("caller handshake should succeed: %v", err)
+	}
+	defer callerSession.Close("normal", nil, callerID)
+
+	realm := make([]byte, 32)
+	if _, err := rand.Read(realm); err != nil {
+		t.Fatalf("rand.Read(realm): %v", err)
+	}
+	procedure := fmt.Sprintf("macula_go_sdk.test_provider.%s", randomHex(t, 8))
+
+	advertiseSpec := frame.NewAdvertiseSpec(realm, procedure, providerID.NodeID())
+	if err := providerSession.Advertise(advertiseSpec, providerID); err != nil {
+		t.Fatalf("advertise should send: %v", err)
+	}
+
+	// Give the station a moment to register the advertisement before the
+	// caller dials in against it.
+	time.Sleep(500 * time.Millisecond)
+
+	type acceptResult struct {
+		handle *Handle
+		info   frame.StreamOpenInfo
+		err    error
+	}
+	acceptCh := make(chan acceptResult, 1)
+	go func() {
+		handle, info, err := Accept(providerSession, 10*time.Second)
+		acceptCh <- acceptResult{handle: handle, info: info, err: err}
+	}()
+
+	openCtx, openCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer openCancel()
+	callerHandle, err := Open(openCtx, callerSession, procedure, realm, frame.ServerStream,
+		cbor.Null(), nowMs()+10_000, callerID)
+	if err != nil {
+		t.Fatalf("caller should open a stream: %v", err)
+	}
+
+	accepted := <-acceptCh
+	if accepted.err != nil {
+		t.Fatalf("provider should accept the inbound STREAM_OPEN: %v", accepted.err)
+	}
+	providerHandle, openInfo := accepted.handle, accepted.info
+
+	t.Logf("OBSERVED: provider accepted stream_open for procedure=%s mode=%v", openInfo.Procedure, openInfo.Mode)
+	if openInfo.Procedure != procedure {
+		t.Errorf("openInfo.Procedure = %q, want %q", openInfo.Procedure, procedure)
+	}
+	if openInfo.Mode != frame.ServerStream {
+		t.Errorf("openInfo.Mode = %v, want ServerStream", openInfo.Mode)
+	}
+
+	if err := providerHandle.SendData(frame.Raw, cbor.Bytes([]byte("hello from the provider")), providerID); err != nil {
+		t.Fatalf("provider should push a chunk: %v", err)
+	}
+	if err := providerHandle.CloseSend(providerID); err != nil {
+		t.Fatalf("provider should close its send side: %v", err)
+	}
+
+	item, err := callerHandle.Recv(5 * time.Second)
+	if err != nil {
+		t.Fatalf("caller should receive the pushed chunk: %v", err)
+	}
+	if item.IsEOF {
+		t.Fatalf("expected Data, got Eof")
+	}
+	body, ok := item.Body.AsBytes()
+	if !ok || string(body) != "hello from the provider" {
+		t.Errorf("item.Body = %v, want Bytes(\"hello from the provider\")", item.Body)
+	}
+
+	item, err = callerHandle.Recv(5 * time.Second)
+	if err != nil {
+		t.Fatalf("caller should see end-of-stream: %v", err)
+	}
+	if !item.IsEOF {
+		t.Fatalf("expected Eof, got Data")
+	}
+}

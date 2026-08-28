@@ -45,12 +45,18 @@ func (e *ParseHelloError) Error() string {
 func (e *ParseHelloError) Unwrap() error { return e.Err }
 
 func getBytes32(v cbor.Value, field string) ([]byte, error) {
+	return getBytesSized(v, field, 32)
+}
+
+// getBytesSized is getBytes32 generalized to an arbitrary fixed length
+// -- e.g. stream_id/call_id are 16 bytes, not 32.
+func getBytesSized(v cbor.Value, field string, n int) ([]byte, error) {
 	fv, ok := v.Get(field)
 	if !ok {
 		return nil, &ParseHelloError{Field: field, Err: ErrMissingField}
 	}
 	b, ok := fv.AsBytes()
-	if !ok || len(b) != 32 {
+	if !ok || len(b) != n {
 		return nil, &ParseHelloError{Field: field, Err: ErrWrongFieldType}
 	}
 	return b, nil
