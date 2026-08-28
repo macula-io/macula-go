@@ -19,14 +19,15 @@
 
 ---
 
-> **Status, 2026-08-28:** the client/leaf side of the wire protocol is
-> built and **live-verified against the production station fleet**
-> (`station-de-frankfurt.macula.io`) — handshake, unary RPC, PubSub,
-> content transfer, and streaming RPC in both caller and provider roles.
-> The frame layer is cross-checked byte-for-byte — including the Ed25519
-> signature itself — against
+> **Status, 2026-08-28:** the FULL wire protocol is built and
+> **live-verified against the production station fleet**
+> (`station-de-frankfurt.macula.io`) — handshake, unary RPC (both caller
+> AND provider), PubSub, content transfer, and streaming RPC, every
+> primitive in both caller and provider roles where the protocol has
+> one. The frame layer is cross-checked byte-for-byte — including the
+> Ed25519 signature itself — against
 > [`macula-rust-sdk`](https://github.com/macula-io/macula-rust-sdk)'s own
-> fixed reference vector. See [Status](#status) for what's not there yet.
+> fixed reference vector. See [Status](#status) for the full picture.
 
 ## What is this?
 
@@ -59,7 +60,7 @@ other two anywhere, this would fail; it doesn't.
 |---|---|---|---|
 | Handshake (CONNECT/HELLO) | ✅ | — | Ed25519 identity, S/Kademlia puzzle-hardened; live-verified |
 | Deterministic CBOR codec | ✅ | — | Hand-rolled — see [Codec](#the-cbor-codec-is-hand-rolled-on-purpose) |
-| Unary RPC (CALL/RESULT/ERROR) | ✅ | ⏳ | Provider dispatch not yet implemented |
+| Unary RPC (CALL/RESULT/ERROR) | ✅ | ✅ | `Session.ServeOneCall`, BOLT#4 error mapping live-verified |
 | PubSub (PUBLISH/SUBSCRIBE/EVENT) | ✅ | ✅ | A subscriber gets its own publish, verified live |
 | Content transfer (single-block + chunked) | ✅ | ✅ | Content-addressed, BLAKE3/SHA-256, Merkle-verified |
 | Streaming RPC (STREAM_OPEN/DATA/END/REPLY) | ✅ | ✅ | Both roles live-verified against the real fleet |
@@ -120,6 +121,34 @@ plus an identity shape — see `content.Put`/`content.Get` and
 `stream.Open`/`stream.Accept`, exercised end to end (both against the
 real fleet) in `content/live_test.go` and `stream/live_test.go`.
 
+Serving a procedure looks like this — `Session.ServeOneCall` blocks for
+the next inbound CALL and replies with the handler's result (or the
+matching BOLT#4 error on a lookup miss or a handler panic):
+
+```go
+lookup := func(realm []byte, procedure string) (connection.CallHandler, bool) {
+	if procedure != "math.add" {
+		return nil, false
+	}
+	return func(payload cbor.Value) (cbor.Value, error) {
+		a, _ := payload.Get("a")
+		b, _ := payload.Get("b")
+		aVal, _ := a.AsInt64()
+		bVal, _ := b.AsInt64()
+		return cbor.Int(aVal + bVal), nil
+	}, true
+}
+
+if err := session.Advertise(frame.NewAdvertiseSpec(realm, "math.add", id.NodeID()), id); err != nil {
+	log.Fatal(err)
+}
+for {
+	if err := session.ServeOneCall(lookup, id, 30*time.Second); err != nil {
+		log.Println(err) // ErrServeOneCallTimeout just means nothing arrived
+	}
+}
+```
+
 ## The CBOR codec is hand-rolled on purpose
 
 This protocol's canonical CBOR **deliberately diverges** from RFC 8949's
@@ -148,19 +177,30 @@ unrelated PR. Same convention as `macula-rust-sdk`'s `tests/live_station.rs`.
 
 ## Status
 
-**Live-verified, 2026-08-28:** handshake, CALL/RESULT/ERROR, PUBLISH/
-SUBSCRIBE/EVENT (a subscriber does receive its own publish), content
-transfer (single-block and chunked, Merkle-verified), and streaming RPC
-in both the caller and provider roles — all against
-`station-de-frankfurt.macula.io`, the real fleet, not a local mock. The
-streaming-RPC and content-transfer wire behavior was cross-checked
+**Live-verified, 2026-08-28 — full parity, both directions:** handshake,
+CALL/RESULT/ERROR as both caller (`Session.Call`) and provider
+(`Session.ServeOneCall`, BOLT#4 error mapping — `unknown_next_peer` on a
+lookup miss, `temporary_relay_failure` on a handler panic, `unknown_error`
+with detail on a handler-returned error, all ported field-for-field from
+`macula_station_link.erl`'s `handle_inbound_call/2`), PUBLISH/SUBSCRIBE/
+EVENT (a subscriber does receive its own publish), content transfer
+(single-block and chunked, Merkle-verified), and streaming RPC in both
+the caller and provider roles — all against
+`station-de-frankfurt.macula.io`, the real fleet, not a local mock. Two
+independent connections to the same station (one advertising and
+serving, the other calling in) is the pattern behind every provider-role
+test here — see `connection/live_test.go`'s
+`TestLiveUnaryCallProviderRoundTrip` for the unary case and
+`stream/live_test.go`'s `TestLiveStreamingProviderRoundTrip` for the
+streaming case.
+
+The streaming-RPC and content-transfer wire behavior was cross-checked
 against `macula-rust-sdk`'s own live findings along the way — e.g. an
 unregistered streaming procedure returns the same STREAM_ERROR
 (`unknown_next_peer` / "procedure not advertised") on both SDKs.
-
-**Not yet built:**
-- Unary-RPC provider dispatch (accepting an inbound CALL and replying —
-  only streaming's provider side needed this so far)
+Unary-RPC provider dispatch was built here first and ported back to
+`macula-rust-sdk` in the same pass, so both SDKs now serve RPCs, not
+just call them.
 
 See [`plans/PLAN_WIRE_PROTOCOL.md`](plans/PLAN_WIRE_PROTOCOL.md) for the
 full wire-format spec this module is built against, section by section,

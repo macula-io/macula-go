@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/macula-io/macula-go-sdk/bolt4"
 	"github.com/macula-io/macula-go-sdk/cbor"
 	"github.com/macula-io/macula-go-sdk/frame"
 	"github.com/macula-io/macula-go-sdk/identity"
@@ -167,4 +168,150 @@ func TestLivePubSubRoundTrip(t *testing.T) {
 	if event.Topic != topic {
 		t.Errorf("event.Topic = %q, want %q", event.Topic, topic)
 	}
+}
+
+// TestLiveUnaryCallProviderRoundTrip is the real point of §6.9's
+// ADVERTISE existing for unary RPC, not just streaming: two independent
+// connections to the SAME live station — one advertises a procedure and
+// serves inbound CALLs for it via ServeOneCall (the provider role this
+// package's own README used to list as "not yet built"), the other
+// dials in and calls it (the caller role, already live-verified in
+// TestLiveCallRoundTrip). Same station on purpose, same reasoning as
+// the sibling streaming-provider test in package stream: cross-station
+// routing depends on gossip propagation this test isn't here to wait
+// out.
+func TestLiveUnaryCallProviderRoundTrip(t *testing.T) {
+	providerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (provider): %v", err)
+	}
+	callerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (caller): %v", err)
+	}
+
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer connectCancel()
+	providerSession, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, providerID)
+	if err != nil {
+		t.Fatalf("provider handshake should succeed: %v", err)
+	}
+	defer providerSession.Close("normal", nil, providerID)
+	callerSession, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, callerID)
+	if err != nil {
+		t.Fatalf("caller handshake should succeed: %v", err)
+	}
+	defer callerSession.Close("normal", nil, callerID)
+
+	realm := randomBytes(t, 32)
+	procedure := fmt.Sprintf("macula_go_sdk.test_add.%s", hex.EncodeToString(randomBytes(t, 8)))
+
+	advertiseSpec := frame.NewAdvertiseSpec(realm, procedure, providerID.NodeID())
+	if err := providerSession.Advertise(advertiseSpec, providerID); err != nil {
+		t.Fatalf("advertise should send: %v", err)
+	}
+
+	// Give the station a moment to register the advertisement before the
+	// caller dials in against it.
+	time.Sleep(500 * time.Millisecond)
+
+	lookup := func(gotRealm []byte, gotProcedure string) (CallHandler, bool) {
+		if gotProcedure != procedure {
+			return nil, false
+		}
+		return func(payload cbor.Value) (cbor.Value, error) {
+			a, _ := payload.Get("a")
+			b, _ := payload.Get("b")
+			aVal, _ := a.AsInt64()
+			bVal, _ := b.AsInt64()
+			return cbor.Int(aVal + bVal), nil
+		}, true
+	}
+
+	serveErrCh := make(chan error, 1)
+	go func() {
+		serveErrCh <- providerSession.ServeOneCall(lookup, providerID, 15*time.Second)
+	}()
+
+	payload := cbor.Map([]cbor.MapEntry{
+		{Key: cbor.Text("a"), Val: cbor.Int(3)},
+		{Key: cbor.Text("b"), Val: cbor.Int(4)},
+	})
+	response, err := callerSession.Call(procedure, realm, payload, nowMs()+10_000, callerID, 10*time.Second)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+
+	if err := <-serveErrCh; err != nil {
+		t.Fatalf("ServeOneCall: %v", err)
+	}
+
+	if response.IsError {
+		t.Fatalf("expected a RESULT, got ERROR code=%d name=%s detail=%v", response.Code, response.Name, response.Detail)
+	}
+	sum, ok := response.Payload.AsInt64()
+	if !ok || sum != 7 {
+		t.Fatalf("response.Payload = %v, want Int(7)", response.Payload)
+	}
+	t.Logf("OBSERVED: provider served the inbound CALL for procedure=%s, caller got RESULT payload=%d", procedure, sum)
+}
+
+// TestLiveUnaryCallProviderReportsUnknownNextPeerOnLookupMiss confirms
+// the BOLT#4 error path: a provider that's advertised but whose lookup
+// (deliberately, here) can't find a handler replies with the exact
+// same unknown_next_peer code the reference sends for this race
+// (macula_station_link.erl's handle_inbound_call/2, "unknown (realm,
+// procedure)" branch).
+func TestLiveUnaryCallProviderReportsUnknownNextPeerOnLookupMiss(t *testing.T) {
+	providerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (provider): %v", err)
+	}
+	callerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (caller): %v", err)
+	}
+
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer connectCancel()
+	providerSession, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, providerID)
+	if err != nil {
+		t.Fatalf("provider handshake should succeed: %v", err)
+	}
+	defer providerSession.Close("normal", nil, providerID)
+	callerSession, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, callerID)
+	if err != nil {
+		t.Fatalf("caller handshake should succeed: %v", err)
+	}
+	defer callerSession.Close("normal", nil, callerID)
+
+	realm := randomBytes(t, 32)
+	procedure := fmt.Sprintf("macula_go_sdk.test_miss.%s", hex.EncodeToString(randomBytes(t, 8)))
+
+	if err := providerSession.Advertise(frame.NewAdvertiseSpec(realm, procedure, providerID.NodeID()), providerID); err != nil {
+		t.Fatalf("advertise should send: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	noHandlers := func([]byte, string) (CallHandler, bool) { return nil, false }
+	serveErrCh := make(chan error, 1)
+	go func() {
+		serveErrCh <- providerSession.ServeOneCall(noHandlers, providerID, 15*time.Second)
+	}()
+
+	response, err := callerSession.Call(procedure, realm, cbor.Null(), nowMs()+10_000, callerID, 10*time.Second)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if err := <-serveErrCh; err != nil {
+		t.Fatalf("ServeOneCall: %v", err)
+	}
+
+	if !response.IsError {
+		t.Fatalf("expected an ERROR, got a RESULT: %s", response.Payload)
+	}
+	if response.Code != uint8(bolt4.UnknownNextPeer) {
+		t.Errorf("response.Code = %d (%s), want %d (unknown_next_peer)", response.Code, response.Name, bolt4.UnknownNextPeer)
+	}
+	t.Logf("OBSERVED: lookup miss correctly reported as ERROR code=%d name=%s", response.Code, response.Name)
 }

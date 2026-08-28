@@ -143,6 +143,73 @@ func FrameCallID(v cbor.Value) ([]byte, bool) {
 	return b, true
 }
 
+// CallInfo is the fields a provider needs from an *inbound* CALL — the
+// counterpart to CallResponse for the receiving side. Doesn't carry
+// source_route/retry_budget/ucan_token: nothing in the provider role
+// built so far acts on any of them.
+type CallInfo struct {
+	CallID     []byte // 16 bytes
+	Procedure  string
+	Realm      []byte // 32 bytes
+	Payload    cbor.Value
+	DeadlineMs int64
+	Caller     []byte // 32 bytes
+}
+
+// ErrNotACallFrame is returned by ParseCall when frame_type is not
+// "call".
+var ErrNotACallFrame = errors.New("frame_type is not \"call\"")
+
+// ParseCall parses a decoded frame as a CALL — the provider-side
+// counterpart to ParseCallResponse.
+func ParseCall(v cbor.Value) (CallInfo, error) {
+	ft, ok := v.Get("frame_type")
+	if !ok {
+		return CallInfo{}, ErrNotACallFrame
+	}
+	if t, ok := ft.AsText(); !ok || t != "call" {
+		return CallInfo{}, ErrNotACallFrame
+	}
+
+	callID, err := getBytesSized(v, "call_id", 16)
+	if err != nil {
+		return CallInfo{}, err
+	}
+	procedureVal, ok := v.Get("procedure")
+	if !ok {
+		return CallInfo{}, &ParseHelloError{Field: "procedure", Err: ErrMissingField}
+	}
+	procedureB, ok := procedureVal.AsBytes()
+	if !ok {
+		return CallInfo{}, &ParseHelloError{Field: "procedure", Err: ErrWrongFieldType}
+	}
+	realm, err := getBytes32(v, "realm")
+	if err != nil {
+		return CallInfo{}, err
+	}
+	payload, ok := v.Get("payload")
+	if !ok {
+		return CallInfo{}, &ParseHelloError{Field: "payload", Err: ErrMissingField}
+	}
+	deadlineVal, ok := v.Get("deadline_ms")
+	if !ok {
+		return CallInfo{}, &ParseHelloError{Field: "deadline_ms", Err: ErrMissingField}
+	}
+	deadlineMs, ok := deadlineVal.AsInt64()
+	if !ok {
+		return CallInfo{}, &ParseHelloError{Field: "deadline_ms", Err: ErrWrongFieldType}
+	}
+	caller, err := getBytes32(v, "caller")
+	if err != nil {
+		return CallInfo{}, err
+	}
+
+	return CallInfo{
+		CallID: callID, Procedure: string(procedureB), Realm: realm,
+		Payload: payload, DeadlineMs: deadlineMs, Caller: caller,
+	}, nil
+}
+
 // ErrNotAResultOrError is returned by ParseCallResponse when
 // frame_type is neither "result" nor "error".
 var ErrNotAResultOrError = errors.New("frame_type is neither \"result\" nor \"error\"")
