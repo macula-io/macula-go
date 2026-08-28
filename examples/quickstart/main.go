@@ -1,13 +1,8 @@
-// Minimal end-to-end example: connect to a real macula-station and
-// complete the handshake. Dials the real fleet, so this isn't run by
-// CI — see README.md's "Quick start" section, which this file backs
-// (kept compiling by `go build ./...` in CI, run manually with
-// `go run ./examples/quickstart`).
-//
-// This is a handshake-only example on purpose: RPC/PubSub/content
-// transfer aren't built yet (see README.md's Status section) — a
-// call/publish example will follow the same shape once they land, the
-// same way macula-rust-sdk's own quick start does today.
+// Minimal end-to-end example: connect to a real macula-station,
+// complete the handshake, and make one unary CALL. Dials the real
+// fleet, so this isn't run by CI — see README.md's "Quick start"
+// section, which this file backs (kept compiling by `go build ./...`
+// in CI, run manually with `go run ./examples/quickstart`).
 package main
 
 import (
@@ -16,6 +11,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/macula-io/macula-go-sdk/cbor"
 	"github.com/macula-io/macula-go-sdk/connection"
 	"github.com/macula-io/macula-go-sdk/identity"
 	"github.com/macula-io/macula-go-sdk/transport"
@@ -42,4 +38,12 @@ func main() {
 	fmt.Printf("connected: remote=%s accepted=%v station_id=%x negotiated_capabilities=%d\n",
 		session.RemoteAddr(), session.Station.Accepted, session.Station.StationID,
 		session.Station.NegotiatedCapabilities)
+
+	realm := make([]byte, 32)
+	deadlineMs := time.Now().Add(5 * time.Second).UnixMilli()
+	response, err := session.Call("io.macula.echo", realm, cbor.Text("hello"), deadlineMs, id, 5*time.Second)
+	if err != nil {
+		log.Fatalf("session.Call: %v", err)
+	}
+	fmt.Printf("call response: is_error=%v payload=%s\n", response.IsError, response.Payload)
 }

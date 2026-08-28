@@ -19,14 +19,14 @@
 
 ---
 
-> **Status, 2026-08-28:** walking skeleton, **live-verified against the
-> production station fleet** (`station-de-frankfurt.macula.io`):
-> deterministic CBOR, Ed25519 identity, the frame envelope, QUIC/TLS
-> transport, and the CONNECT/HELLO handshake. The frame layer is
-> cross-checked byte-for-byte — including the Ed25519 signature itself
-> — against [`macula-rust-sdk`](https://github.com/macula-io/macula-rust-sdk)'s
-> own fixed reference vector. RPC, PubSub, content transfer, and
-> streaming RPC aren't built yet — see [Status](#status).
+> **Status, 2026-08-28:** the client/leaf side of the wire protocol is
+> built and **live-verified against the production station fleet**
+> (`station-de-frankfurt.macula.io`) — handshake, unary RPC, PubSub,
+> content transfer, and streaming RPC in both caller and provider roles.
+> The frame layer is cross-checked byte-for-byte — including the Ed25519
+> signature itself — against
+> [`macula-rust-sdk`](https://github.com/macula-io/macula-rust-sdk)'s own
+> fixed reference vector. See [Status](#status) for what's not there yet.
 
 ## What is this?
 
@@ -55,14 +55,16 @@ other two anywhere, this would fail; it doesn't.
 
 ## Features
 
-| Primitive | Status | Notes |
-|---|---|---|
-| Handshake (CONNECT/HELLO) | ✅ | Ed25519 identity, S/Kademlia puzzle-hardened; live-verified |
-| Deterministic CBOR codec | ✅ | Hand-rolled — see [Codec](#the-cbor-codec-is-hand-rolled-on-purpose) |
-| Unary RPC (CALL/RESULT/ERROR) | ⏳ | Not yet built |
-| PubSub (PUBLISH/SUBSCRIBE/EVENT) | ⏳ | Not yet built |
-| Content transfer | ⏳ | Not yet built |
-| Streaming RPC | ⏳ | Not yet built |
+| Primitive | Caller | Provider | Notes |
+|---|---|---|---|
+| Handshake (CONNECT/HELLO) | ✅ | — | Ed25519 identity, S/Kademlia puzzle-hardened; live-verified |
+| Deterministic CBOR codec | ✅ | — | Hand-rolled — see [Codec](#the-cbor-codec-is-hand-rolled-on-purpose) |
+| Unary RPC (CALL/RESULT/ERROR) | ✅ | ⏳ | Provider dispatch not yet implemented |
+| PubSub (PUBLISH/SUBSCRIBE/EVENT) | ✅ | ✅ | A subscriber gets its own publish, verified live |
+| Content transfer (single-block + chunked) | ✅ | ✅ | Content-addressed, BLAKE3/SHA-256, Merkle-verified |
+| Streaming RPC (STREAM_OPEN/DATA/END/REPLY) | ✅ | ✅ | Both roles live-verified against the real fleet |
+| RPC advertise/unadvertise | ✅ | — | |
+| Pubkey-pinned trust | ✅ | — | `transport.Pinned` — Ed25519 SPKI match, no CA chain needed |
 
 No `unsafe` anywhere in this module — the badge above is checked, not
 aspirational (`grep -rl '"unsafe"' --include='*.go'` comes back empty).
@@ -80,6 +82,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/macula-io/macula-go-sdk/cbor"
 	"github.com/macula-io/macula-go-sdk/connection"
 	"github.com/macula-io/macula-go-sdk/identity"
 	"github.com/macula-io/macula-go-sdk/transport"
@@ -87,8 +90,7 @@ import (
 
 func main() {
 	// Puzzle-hardened identity — required. An unhardened identity fails
-	// the handshake silently in the worst case (QUIC/TLS looks healthy,
-	// HELLO never accepts).
+	// the handshake silently (QUIC/TLS looks healthy, HELLO never accepts).
 	id, err := identity.Generate()
 	if err != nil {
 		log.Fatalf("identity.Generate: %v", err)
@@ -101,16 +103,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("connection.Connect: %v", err)
 	}
-	defer session.Close()
+	defer session.Close("normal", nil, id)
 
-	fmt.Printf("connected: remote=%s accepted=%v station_id=%x\n",
-		session.RemoteAddr(), session.Station.Accepted, session.Station.StationID)
+	realm := make([]byte, 32)
+	deadlineMs := time.Now().Add(5 * time.Second).UnixMilli()
+	response, err := session.Call("io.macula.echo", realm, cbor.Text("hello"), deadlineMs, id, 5*time.Second)
+	if err != nil {
+		log.Fatalf("session.Call: %v", err)
+	}
+	fmt.Printf("call response: is_error=%v payload=%s\n", response.IsError, response.Payload)
 }
 ```
 
-Handshake-only on purpose — RPC/PubSub/content transfer aren't built
-yet. A call/publish example will follow the same shape once they land,
-matching `macula-rust-sdk`'s own quick start.
+Content transfer and streaming RPC follow the same `*connection.Session`
+plus an identity shape — see `content.Put`/`content.Get` and
+`stream.Open`/`stream.Accept`, exercised end to end (both against the
+real fleet) in `content/live_test.go` and `stream/live_test.go`.
 
 ## The CBOR codec is hand-rolled on purpose
 
@@ -129,8 +137,8 @@ wrong.
 ## Testing
 
 ```bash
-go test ./...                                          # default suite, no network
-go test -tags=live ./connection/... -run TestLive -v   # dials the real fleet
+go test ./...                                       # default suite, no network
+go test -tags=live ./... -run TestLive -v            # dials the real fleet
 ```
 
 The live suite is gated behind the `live` build tag — excluded from
@@ -140,15 +148,19 @@ unrelated PR. Same convention as `macula-rust-sdk`'s `tests/live_station.rs`.
 
 ## Status
 
-**Live-verified, 2026-08-28:** the CONNECT/HELLO handshake, against
-`station-de-frankfurt.macula.io` — the real fleet, not a local mock —
-via both `connection/live_test.go` and `examples/quickstart`.
+**Live-verified, 2026-08-28:** handshake, CALL/RESULT/ERROR, PUBLISH/
+SUBSCRIBE/EVENT (a subscriber does receive its own publish), content
+transfer (single-block and chunked, Merkle-verified), and streaming RPC
+in both the caller and provider roles — all against
+`station-de-frankfurt.macula.io`, the real fleet, not a local mock. The
+streaming-RPC and content-transfer wire behavior was cross-checked
+against `macula-rust-sdk`'s own live findings along the way — e.g. an
+unregistered streaming procedure returns the same STREAM_ERROR
+(`unknown_next_peer` / "procedure not advertised") on both SDKs.
 
-**Not yet built** (tracked in the order `macula-rust-sdk` built them):
-- Unary RPC (CALL/RESULT/ERROR)
-- PubSub (PUBLISH/SUBSCRIBE/EVENT)
-- Content transfer (single-block + chunked)
-- Streaming RPC (both caller and provider roles)
+**Not yet built:**
+- Unary-RPC provider dispatch (accepting an inbound CALL and replying —
+  only streaming's provider side needed this so far)
 
 See [`plans/PLAN_WIRE_PROTOCOL.md`](plans/PLAN_WIRE_PROTOCOL.md) for the
 full wire-format spec this module is built against, section by section,
@@ -158,7 +170,7 @@ traced directly to the Erlang SDK's source.
 
 | Project | Description |
 |---|---|
-| [macula-rust-sdk](https://github.com/macula-io/macula-rust-sdk) | The Rust port — same protocol, built first, further along |
+| [macula-rust-sdk](https://github.com/macula-io/macula-rust-sdk) | The Rust port — same protocol, built first; also ships mobile bindings (Kotlin/Swift via UniFFI) |
 | [macula](https://github.com/macula-io/macula) | The reference SDK (Erlang/OTP) |
 | [macula-station](https://github.com/macula-io/macula-station) | The station: DHT, SWIM, routing, peering |
 | [macula-realm](https://github.com/macula-io/macula-realm) | Managed-realm identity + certificate authority |
