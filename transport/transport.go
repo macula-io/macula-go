@@ -1,0 +1,97 @@
+// Package transport dials a macula-station over raw QUIC (not HTTP/3 —
+// see plans/PLAN_WIRE_PROTOCOL.md §1: despite the "HTTP/3 mesh"
+// branding elsewhere, there is no h3 dependency anywhere in the
+// reference implementation). ALPN is the single string "macula".
+package transport
+
+import (
+	"context"
+	"crypto/ed25519"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+
+	"github.com/quic-go/quic-go"
+)
+
+// ALPN is the single protocol string a client MUST negotiate.
+const ALPN = "macula"
+
+// Trust selects how the QUIC/TLS layer verifies the peer's certificate —
+// independent of, and in addition to, the application-layer CONNECT/
+// HELLO signature check (frame.Verify), which runs regardless of Trust.
+type Trust interface {
+	tlsConfig(serverName string) *tls.Config
+}
+
+// WebPKI is standard CA-bundle + hostname validation, via the host
+// system's certificate pool. The default since macula 5.0.0; matches
+// what the live production fleet actually presents (§2's empirical
+// note: macula-station-frankfurt presents a 3-certificate RSA chain,
+// Let's-Encrypt-anchored, not a self-signed Ed25519 cert).
+type WebPKI struct{}
+
+func (WebPKI) tlsConfig(serverName string) *tls.Config {
+	return &tls.Config{
+		ServerName: serverName,
+		NextProtos: []string{ALPN},
+	}
+}
+
+// Pinned pins the server cert's Ed25519 SubjectPublicKeyInfo to an
+// exact known key — used when the dialer already knows the peer's
+// identity (DHT records, pre-shared relay identities), skipping CA/
+// hostname validation entirely in favor of an exact key match.
+type Pinned struct {
+	NodeID []byte // 32-byte Ed25519 public key the peer's cert must present
+}
+
+func (p Pinned) tlsConfig(serverName string) *tls.Config {
+	expected := ed25519.PublicKey(p.NodeID)
+	return &tls.Config{
+		ServerName:         serverName,
+		NextProtos:         []string{ALPN},
+		InsecureSkipVerify: true, // we do our own verification below
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return fmt.Errorf("transport: pinned verify: no certificate presented")
+			}
+			cert, err := x509.ParseCertificate(rawCerts[0])
+			if err != nil {
+				return fmt.Errorf("transport: pinned verify: parse leaf cert: %w", err)
+			}
+			pub, ok := cert.PublicKey.(ed25519.PublicKey)
+			if !ok {
+				return fmt.Errorf("transport: pinned verify: leaf cert is not Ed25519")
+			}
+			if !pub.Equal(expected) {
+				return fmt.Errorf("transport: pinned verify: leaf cert pubkey does not match the pinned NodeID")
+			}
+			return nil
+		},
+	}
+}
+
+// Insecure skips TLS verification entirely. Dev/lab only — logs nothing
+// itself, but callers should.
+type Insecure struct{}
+
+func (Insecure) tlsConfig(serverName string) *tls.Config {
+	return &tls.Config{
+		ServerName:         serverName,
+		NextProtos:         []string{ALPN},
+		InsecureSkipVerify: true,
+	}
+}
+
+// Dial establishes a raw QUIC connection to host:port with ALPN
+// "macula" and the given trust mode.
+func Dial(ctx context.Context, host string, port uint16, trust Trust) (*quic.Conn, error) {
+	addr := fmt.Sprintf("%s:%d", host, port)
+	tlsConf := trust.tlsConfig(host)
+	conn, err := quic.DialAddr(ctx, addr, tlsConf, nil)
+	if err != nil {
+		return nil, fmt.Errorf("transport: dial %s: %w", addr, err)
+	}
+	return conn, nil
+}
