@@ -37,7 +37,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("connection.Connect: %v", err)
 	}
-	defer session.Close()
+	defer session.Close("normal", nil, id)
 
 	fmt.Printf("connected: remote=%s accepted=%v station_id=%x negotiated_capabilities=%d\n",
 		session.RemoteAddr(), session.Station.Accepted, session.Station.StationID,

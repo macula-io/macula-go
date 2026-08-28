@@ -21,12 +21,28 @@ package connection
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/macula-io/macula-go-sdk/cbor"
+	"github.com/macula-io/macula-go-sdk/frame"
 	"github.com/macula-io/macula-go-sdk/identity"
 	"github.com/macula-io/macula-go-sdk/transport"
 )
+
+func nowMs() int64 { return time.Now().UnixMilli() }
+
+func randomBytes(t *testing.T, n int) []byte {
+	t.Helper()
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
+	return b
+}
 
 const (
 	liveStationHost = "station-de-frankfurt.macula.io"
@@ -53,7 +69,7 @@ func TestLiveHandshakeAgainstRealStation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
-	defer session.Close()
+	defer session.Close("normal", nil, id)
 
 	t.Logf("connected: remote=%s station_id=%x accepted=%v capabilities=%d negotiated=%d",
 		session.RemoteAddr(), session.Station.StationID, session.Station.Accepted,
@@ -67,5 +83,88 @@ func TestLiveHandshakeAgainstRealStation(t *testing.T) {
 	}
 	if len(session.Station.StationID) != 32 {
 		t.Errorf("station StationID length = %d, want 32", len(session.Station.StationID))
+	}
+}
+
+// TestLiveCallRoundTrip is a real end-to-end CALL/RESULT-or-ERROR round
+// trip. Calls a procedure name that certainly doesn't exist
+// (macula_go_sdk.test_probe) — the point isn't to exercise any
+// particular procedure, only to prove the wire round trip itself: a
+// signed CALL sent, and a signed RESULT or ERROR received back,
+// correlated by call_id, with a real BOLT#4 code if it's an error.
+func TestLiveCallRoundTrip(t *testing.T) {
+	id, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	session, err := Connect(ctx, liveStationHost, liveStationPort, transport.WebPKI{}, id)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer session.Close("normal", nil, id)
+
+	realm := make([]byte, 32) // the content-sentinel realm, reused here as a harmless default
+	response, err := session.Call("macula_go_sdk.test_probe", realm, cbor.Null(),
+		nowMs()+10_000, id, 10*time.Second)
+	if err != nil {
+		t.Fatalf("Call: expected SOME response (result or a well-formed error), not: %v", err)
+	}
+
+	if response.IsError {
+		t.Logf("OBSERVED: got an ERROR (expected for a nonexistent procedure): code=%d name=%s reported_by=%s detail=%v",
+			response.Code, response.Name, hex.EncodeToString(response.ReportedBy), response.Detail)
+	} else {
+		t.Logf("OBSERVED: got a RESULT (unexpected for a made-up procedure, but valid): payload=%s responded_by=%s",
+			response.Payload, hex.EncodeToString(response.RespondedBy))
+	}
+}
+
+// TestLivePubSubRoundTrip is a real end-to-end SUBSCRIBE -> PUBLISH ->
+// (maybe) EVENT round trip. Whether a subscriber receives its own
+// publish is genuinely unknown going in — this test observes and
+// reports rather than assuming an answer, same discipline as the
+// unhardened-identity check in TestLiveHandshakeAgainstRealStation's
+// sibling would use if this module built pubkey-pinned trust yet.
+func TestLivePubSubRoundTrip(t *testing.T) {
+	id, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	session, err := Connect(ctx, liveStationHost, liveStationPort, transport.WebPKI{}, id)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer session.Close("normal", nil, id)
+
+	// A realm+topic scratch value nobody else would collide with.
+	realm := randomBytes(t, 32)
+	topic := fmt.Sprintf("macula-go-sdk.test.%s", hex.EncodeToString(randomBytes(t, 8)))
+
+	if err := session.Subscribe(frame.NewSubscribeSpec(topic, realm, id.NodeID()), id); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	if err := session.Publish(frame.NewPublishSpec(topic, realm, id.NodeID(), 1,
+		cbor.Text("hello from macula-go-sdk"), nowMs()), id); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	event, err := session.RecvEvent(5 * time.Second)
+	if err != nil {
+		t.Logf("OBSERVED: no EVENT arrived within 5s (%v) — a subscriber may not receive its "+
+			"own publish, or delivery may simply be slower than this test waits. Not asserted "+
+			"as a failure either way.", err)
+		return
+	}
+	t.Logf("OBSERVED: received our own EVENT back — topic=%s seq=%d delivered_via=%s payload=%s",
+		event.Topic, event.Seq, event.DeliveredVia, event.Payload)
+	if event.Topic != topic {
+		t.Errorf("event.Topic = %q, want %q", event.Topic, topic)
 	}
 }
