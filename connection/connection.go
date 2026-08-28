@@ -1,12 +1,16 @@
 // Package connection implements the CONNECT/HELLO handshake, the
 // Session it produces, and the control-stream application primitives
 // built on top of it (CALL, PUBLISH/SUBSCRIBE/EVENT, ADVERTISE) — see
-// plans/PLAN_WIRE_PROTOCOL.md §3, §6.
+// plans/PLAN_WIRE_PROTOCOL.md §3, §6. FrameStream (frame_stream.go) is
+// the reusable "send/receive signed application frames on one QUIC
+// stream" primitive — Session wraps one for the control stream, and
+// Session.OpenDedicatedStream/AcceptDedicatedStream hand out fresh ones
+// for content transfer (§12) and streaming RPC (§13), which both run on
+// dedicated streams rather than the control stream.
 package connection
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"time"
 
@@ -25,17 +29,12 @@ import (
 // not an explicit error frame.
 const HandshakeTimeout = 30 * time.Second
 
-// readChunkSize is how much is read per Stream.Read call while
-// accumulating a frame.
-const readChunkSize = 4096
-
 // Session is a handshaked connection to a macula-station: the open
 // control stream (CONNECT/HELLO already exchanged) and the station's
 // identity as verified by the HELLO frame's own signature.
 type Session struct {
 	conn    *quic.Conn
-	control *quic.Stream
-	buf     []byte // leftover bytes already read that belong to the next frame
+	control *FrameStream
 	Station frame.HelloInfo
 }
 
@@ -57,23 +56,24 @@ func Connect(ctx context.Context, host string, port uint16, trust transport.Trus
 		return nil, err
 	}
 
-	control, err := conn.OpenStreamSync(ctx)
+	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
 		conn.CloseWithError(0, "open control stream failed")
 		return nil, fmt.Errorf("connection: open control stream: %w", err)
 	}
+	control := newFrameStream(stream)
 
 	session := &Session{conn: conn, control: control}
 
 	puzzleEvidence := id.PuzzleEvidence()
 	spec := frame.NewConnectSpec(id.NodeID(), puzzleEvidence[:])
 	connectFrame := frame.Sign(frame.Connect(spec), id)
-	if err := session.sendFrame(connectFrame); err != nil {
+	if err := control.SendFrame(connectFrame); err != nil {
 		return nil, fmt.Errorf("connection: send CONNECT: %w", err)
 	}
 
 	deadline, _ := ctx.Deadline()
-	helloValue, err := session.recvFrame(deadline)
+	helloValue, err := control.RecvFrame(deadline)
 	if err != nil {
 		return nil, err
 	}
@@ -93,88 +93,39 @@ func Connect(ctx context.Context, host string, port uint16, trust transport.Trus
 	return session, nil
 }
 
-// sendFrame encodes and writes v to the control stream.
-func (s *Session) sendFrame(v cbor.Value) error {
-	encoded, err := frame.Encode(v)
+// OpenDedicatedStream opens a new dedicated QUIC stream on this same
+// connection, separate from the control stream — the mechanism content
+// transfer (§12) and streaming RPC (§13) both use instead of the
+// control stream.
+func (s *Session) OpenDedicatedStream(ctx context.Context) (*FrameStream, error) {
+	stream, err := s.conn.OpenStreamSync(ctx)
 	if err != nil {
-		return fmt.Errorf("connection: encode frame: %w", err)
+		return nil, fmt.Errorf("connection: open dedicated stream: %w", err)
 	}
-	if _, err := s.control.Write(encoded); err != nil {
-		return fmt.Errorf("connection: write frame: %w", err)
-	}
-	return nil
+	return newFrameStream(stream), nil
 }
 
-// recvFrame reads the next complete application frame off the control
-// stream, using (and updating) s.buf. deadline bounds the read
-// (Stream.Read doesn't take a context directly); a zero deadline means
-// no bound.
-func (s *Session) recvFrame(deadline time.Time) (cbor.Value, error) {
-	if err := s.control.SetReadDeadline(deadline); err != nil {
-		return cbor.Value{}, fmt.Errorf("connection: set read deadline: %w", err)
-	}
-	chunk := make([]byte, readChunkSize)
-	for {
-		decoded, err := frame.Decode(s.buf)
-		if err != nil {
-			return cbor.Value{}, fmt.Errorf("connection: decode: %w", err)
-		}
-		if decoded.Complete {
-			s.buf = s.buf[decoded.Consumed:]
-			return decoded.Frame, nil
-		}
-
-		n, err := s.control.Read(chunk)
-		if n > 0 {
-			s.buf = append(s.buf, chunk[:n]...)
-		}
-		if err != nil {
-			return cbor.Value{}, fmt.Errorf("connection: read control stream: %w", err)
-		}
-	}
-}
-
-// Call sends a signed CALL for procedure and waits for the matching
-// RESULT or ERROR, correlated by call_id.
+// AcceptDedicatedStream accepts the next dedicated stream the *peer*
+// opens toward us — e.g. the station routing an inbound STREAM_OPEN for
+// a procedure this session has Advertised (§13.2). Blocks until one
+// arrives or ctx is done.
 //
-// Known v1 limitation (control stream only): any frame that arrives
-// before the match (e.g. an EVENT from an active Subscribe) is
-// discarded, not queued or dispatched elsewhere — correct for a client
-// doing one thing at a time on the control stream, not yet correct for
-// Call and Publish/Subscribe used concurrently on it.
-func (s *Session) Call(procedure string, realm []byte, payload cbor.Value, deadlineMs int64, id identity.KeyPair, timeout time.Duration) (frame.CallResponse, error) {
-	callID := make([]byte, 16)
-	if _, err := rand.Read(callID); err != nil {
-		return frame.CallResponse{}, fmt.Errorf("connection: generate call_id: %w", err)
+// The receiving side has no advance notice of why a new stream arrived;
+// §7 of plans/PLAN_WIRE_PROTOCOL.md says to read the stream's own first
+// frame to learn its purpose, which is exactly what a caller of this
+// method does next via the returned FrameStream's own RecvFrame.
+func (s *Session) AcceptDedicatedStream(ctx context.Context) (*FrameStream, error) {
+	stream, err := s.conn.AcceptStream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("connection: accept dedicated stream: %w", err)
 	}
-	spec := frame.NewCallSpec(callID, procedure, realm, payload, deadlineMs, id.NodeID())
-	signed := frame.Sign(frame.Call(spec), id)
-	if err := s.sendFrame(signed); err != nil {
-		return frame.CallResponse{}, err
-	}
+	return newFrameStream(stream), nil
+}
 
-	deadline := time.Now().Add(timeout)
-	for {
-		if time.Now().After(deadline) {
-			return frame.CallResponse{}, fmt.Errorf("connection: call: timed out waiting for a response")
-		}
-		value, err := s.recvFrame(deadline)
-		if err != nil {
-			return frame.CallResponse{}, err
-		}
-		gotID, ok := frame.FrameCallID(value)
-		if !ok || string(gotID) != string(callID) {
-			continue // not ours -- see this method's doc on the v1 limitation
-		}
-		response, err := frame.ParseCallResponse(value)
-		if err != nil {
-			// Matching call_id but not a result/error shape: keep
-			// waiting rather than erroring, since nothing else in the
-			// protocol is expected to carry this call's id.
-			continue
-		}
-		return response, nil
-	}
+// Call sends a signed CALL on the control stream and waits for the
+// matching RESULT or ERROR — see FrameStream.Call.
+func (s *Session) Call(procedure string, realm []byte, payload cbor.Value, deadlineMs int64, id identity.KeyPair, timeout time.Duration) (frame.CallResponse, error) {
+	return s.control.Call(procedure, realm, payload, deadlineMs, id, timeout)
 }
 
 // Publish sends a signed PUBLISH. Fire-and-forget — no reply is
@@ -182,30 +133,31 @@ func (s *Session) Call(procedure string, realm []byte, payload cbor.Value, deadl
 // subscribed to the same topic/realm) receives an EVENT asynchronously,
 // read via RecvEvent.
 func (s *Session) Publish(spec frame.PublishSpec, id identity.KeyPair) error {
-	return s.sendFrame(frame.Sign(frame.Publish(spec), id))
+	return s.control.SendFrame(frame.Sign(frame.Publish(spec), id))
 }
 
 // Subscribe sends a signed SUBSCRIBE. Fire-and-forget.
 func (s *Session) Subscribe(spec frame.SubscribeSpec, id identity.KeyPair) error {
-	return s.sendFrame(frame.Sign(frame.Subscribe(spec), id))
+	return s.control.SendFrame(frame.Sign(frame.Subscribe(spec), id))
 }
 
 // Unsubscribe sends a signed UNSUBSCRIBE. Fire-and-forget.
 func (s *Session) Unsubscribe(spec frame.UnsubscribeSpec, id identity.KeyPair) error {
-	return s.sendFrame(frame.Sign(frame.Unsubscribe(spec), id))
+	return s.control.SendFrame(frame.Sign(frame.Unsubscribe(spec), id))
 }
 
 // Advertise sends a signed ADVERTISE (§6.9) — registers this connection
 // as the handler for spec's (realm, procedure). Fire-and-forget on the
-// wire; the station then routes inbound CALLs (control stream) back to
-// this connection.
+// wire; the station then routes inbound CALLs (control stream) and
+// STREAM_OPENs (a fresh dedicated stream — see AcceptDedicatedStream)
+// for that procedure back to this connection.
 func (s *Session) Advertise(spec frame.AdvertiseSpec, id identity.KeyPair) error {
-	return s.sendFrame(frame.Sign(frame.Advertise(spec), id))
+	return s.control.SendFrame(frame.Sign(frame.Advertise(spec), id))
 }
 
 // Unadvertise sends a signed UNADVERTISE. Fire-and-forget.
 func (s *Session) Unadvertise(spec frame.UnadvertiseSpec, id identity.KeyPair) error {
-	return s.sendFrame(frame.Sign(frame.Unadvertise(spec), id))
+	return s.control.SendFrame(frame.Sign(frame.Unadvertise(spec), id))
 }
 
 // RecvEvent reads the next frame and parses it as an EVENT, bounded by
@@ -214,7 +166,7 @@ func (s *Session) Unadvertise(spec frame.UnadvertiseSpec, id identity.KeyPair) e
 // specifically for a pubsub delivery has no reason to expect anything
 // else to legitimately arrive first.
 func (s *Session) RecvEvent(timeout time.Duration) (frame.EventInfo, error) {
-	value, err := s.recvFrame(time.Now().Add(timeout))
+	value, err := s.control.RecvFrame(time.Now().Add(timeout))
 	if err != nil {
 		return frame.EventInfo{}, err
 	}
@@ -232,6 +184,6 @@ func (s *Session) RemoteAddr() string {
 // isn't holding a supervisor to clean up).
 func (s *Session) Close(reason string, detail *string, id identity.KeyPair) error {
 	goodbye := frame.Sign(frame.Goodbye(reason, detail), id)
-	_ = s.sendFrame(goodbye) // best-effort -- the connection is closing regardless
+	_ = s.control.SendFrame(goodbye) // best-effort -- the connection is closing regardless
 	return s.conn.CloseWithError(0, reason)
 }
