@@ -186,12 +186,40 @@ func (s *Session) RemoteAddr() string {
 	return s.conn.RemoteAddr().String()
 }
 
+// closeDrainMs bounds how long Close waits after its last write before
+// hard-closing the connection -- see Close's own doc for why this
+// exists at all. Short relative to the Erlang reference's own 5s
+// draining-state upper bound (macula_peering.erl, ?DRAIN_TIMEOUT_MS):
+// this side only needs to cover quic-go's own internal send-scheduling
+// latency, not a full round trip's worth of protocol drain.
+const closeDrainMs = 250 * time.Millisecond
+
 // Close sends a signed GOODBYE and closes the underlying QUIC
 // connection, matching macula_peering_conn.erl's connected -> draining
-// transition (minus the drain-timeout bookkeeping, since this module
-// isn't holding a supervisor to clean up).
+// transition (minus the full drain-timeout bookkeeping, since this
+// module isn't holding a supervisor to clean up).
+//
+// quic-go's Stream.Write and Stream.Close both queue data for a
+// background sender goroutine and return before it's actually on the
+// wire -- there is no synchronous "flush" or "wait until acked"
+// primitive at this level. CloseWithError on the whole connection is
+// abrupt: it does not wait for outstanding stream data to be
+// delivered, so anything queued but not yet sent when it runs can be
+// silently lost. Found live 2026-08-29: a PUBLISH sent immediately
+// before Close (the exact shape every one-shot CLI command uses)
+// intermittently never reached the peer -- confirmed by a station-side
+// trace showing zero activity despite a client-side success, root-
+// caused to this race by observing that a manually inserted delay
+// before Close fixed it every time. Closing the stream gracefully
+// first, then giving the background sender a bounded window to
+// actually transmit, mirrors the Erlang reference's own bounded-drain
+// approach rather than requiring a true synchronous ack (which the
+// wire protocol doesn't provide for fire-and-forget frames like
+// PUBLISH in the first place).
 func (s *Session) Close(reason string, detail *string, id identity.KeyPair) error {
 	goodbye := frame.Sign(frame.Goodbye(reason, detail), id)
 	_ = s.control.SendFrame(goodbye) // best-effort -- the connection is closing regardless
+	_ = s.control.stream.Close()     // signal no more writes; still async, see doc above
+	time.Sleep(closeDrainMs)
 	return s.conn.CloseWithError(0, reason)
 }

@@ -23,6 +23,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -168,6 +169,114 @@ func TestLivePubSubRoundTrip(t *testing.T) {
 	if event.Topic != topic {
 		t.Errorf("event.Topic = %q, want %q", event.Topic, topic)
 	}
+}
+
+// TestLivePublishSurvivesImmediateClose is the regression test for a
+// real bug found live 2026-08-29, NOT caught by TestLivePubSubRoundTrip
+// above: that test keeps reading on the SAME session that published,
+// so session.Close (deferred) never runs until well after the PUBLISH
+// was already flushed by the blocking RecvEvent call in between --
+// structurally unable to race. Every one-shot CLI command (macula-cli
+// pubsub publish, and by the same shape every other fire-and-forget
+// command) instead does exactly: connect, send one frame, close
+// immediately, exit -- no intervening read of any kind. quic-go's
+// Stream.Write/Close both just queue data for a background sender and
+// return before it's actually on the wire; Session.Close's own
+// CloseWithError is abrupt and does not wait for outstanding data to
+// be delivered. Confirmed live: a PUBLISH sent this way intermittently
+// never reached the peer at all (a station-side trace showed zero
+// activity despite session.Publish returning nil), and a manually
+// inserted delay before Close fixed it every time -- root-caused to
+// this race, not to anything about the frame's content. Fixed in
+// Session.Close itself (closeDrainMs). This test uses two INDEPENDENT
+// sessions specifically so the publishing side's Close is not
+// incidentally delayed by anything the subscribing side does.
+func TestLivePublishSurvivesImmediateClose(t *testing.T) {
+	subID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (subscriber): %v", err)
+	}
+	pubID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (publisher): %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	subSession, err := Connect(ctx, liveStationHost, liveStationPort, transport.WebPKI{}, subID)
+	if err != nil {
+		t.Fatalf("Connect (subscriber): %v", err)
+	}
+	defer subSession.Close("normal", nil, subID)
+
+	realm := randomBytes(t, 32)
+	topic := fmt.Sprintf("macula-go-sdk.test.immediate-close.%s", hex.EncodeToString(randomBytes(t, 8)))
+
+	if err := subSession.Subscribe(frame.NewSubscribeSpec(topic, realm, subID.NodeID()), subID); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	// Give the SUBSCRIBE a moment to register before the publish races
+	// it -- this test is about the PUBLISH-then-Close race, not about
+	// subscribe-propagation timing (a separate concern).
+	time.Sleep(500 * time.Millisecond)
+
+	// Separate connection, separate identity: publish then close
+	// immediately, matching macula-cli pubsub publish's exact shape
+	// (see cmd/macula-cli/pubsub.go's runPubsubPublish in the sibling
+	// repo) -- connect, one frame, Close, done. No read in between.
+	func() {
+		pubCtx, pubCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer pubCancel()
+		pubSession, err := Connect(pubCtx, liveStationHost, liveStationPort, transport.WebPKI{}, pubID)
+		if err != nil {
+			t.Fatalf("Connect (publisher): %v", err)
+		}
+		defer pubSession.Close("normal", nil, pubID)
+
+		if err := pubSession.Publish(frame.NewPublishSpec(topic, realm, pubID.NodeID(), 1,
+			cbor.Text("hello from the immediate-close regression test"), nowMs()), pubID); err != nil {
+			t.Fatalf("Publish: %v", err)
+		}
+		// Deliberately nothing else here -- Close fires via defer the
+		// instant this function returns, exactly like the CLI.
+	}()
+
+	// Loop, not a single RecvEvent call: this is a real, shared,
+	// busy station (frankfurt), and RecvFrame returns whatever
+	// arrives next on the control stream -- unrelated live traffic
+	// (including a frame that isn't even an EVENT at all) is expected
+	// to interleave, not a sign the race this test guards against has
+	// resurfaced. Only a genuine deadline expiry with nothing matching
+	// received counts as this test failing.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			t.Fatalf("EVENT for our topic never arrived after a publish immediately followed by " +
+				"Close (this is the exact race this test exists to catch)")
+		}
+		event, err := subSession.RecvEvent(remaining)
+		if err != nil {
+			if isTimeout(err) {
+				t.Fatalf("EVENT for our topic never arrived after a publish immediately followed "+
+					"by Close: %v (this is the exact race this test exists to catch)", err)
+			}
+			t.Logf("skipping a non-EVENT frame on this shared, busy station: %v", err)
+			continue
+		}
+		if event.Topic == topic {
+			return // found it -- the race did not reproduce
+		}
+		t.Logf("skipping unrelated live EVENT on this shared station: topic=%s", event.Topic)
+	}
+}
+
+func isTimeout(err error) bool {
+	var ne interface{ Timeout() bool }
+	if errors.As(err, &ne) {
+		return ne.Timeout()
+	}
+	return false
 }
 
 // TestLiveUnaryCallProviderRoundTrip is the real point of §6.9's
