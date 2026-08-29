@@ -248,6 +248,18 @@ func ReadStationEndpoint(r Record) (StationEndpoint, error) {
 	if hv, ok := r.Payload.Get("host_advertised"); ok {
 		if list, ok := hv.AsList(); ok {
 			for _, item := range list {
+				// macula_record.erl's with_host_list/2 puts each host in
+				// as a bare Erlang binary, unlike every other string
+				// field in this file (which wraps with {text, Bin}) —
+				// so on the wire these are CBOR BYTE strings (major type
+				// 2), not text strings, confirmed against a real
+				// station's own published record. AsText() alone finds
+				// nothing here; try bytes first, text as a fallback in
+				// case a future publisher wraps these properly.
+				if b, ok := item.AsBytes(); ok {
+					hosts = append(hosts, string(b))
+					continue
+				}
 				if s, ok := item.AsText(); ok {
 					hosts = append(hosts, s)
 				}

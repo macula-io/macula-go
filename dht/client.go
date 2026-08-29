@@ -18,9 +18,10 @@ var dhtRealm = make([]byte, 32)
 const dhtTimeout = 5 * time.Second
 
 const (
-	putRecordProc   = "_dht.put_record"
-	findRecordProc  = "_dht.find_record"
-	findRecordsProc = "_dht.find_records"
+	putRecordProc         = "_dht.put_record"
+	findRecordProc        = "_dht.find_record"
+	findRecordsProc       = "_dht.find_records"
+	findRecordsByTypeProc = "_dht.find_records_by_type"
 )
 
 // toRPCValue builds the FULL-field-name map macula.erl's put_record/2
@@ -149,6 +150,33 @@ func FindRecords(session *connection.Session, id identity.KeyPair, key [32]byte)
 		rec, rerr := recordFromRPCValue(item)
 		if rerr != nil {
 			continue // skip a malformed entry rather than fail the whole batch
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+// FindRecordsByType returns every record of typ currently visible from the
+// station this session is connected to. Coverage depends on that
+// station's own view of the DHT. Mirrors macula:find_records_by_type/2.
+func FindRecordsByType(session *connection.Session, id identity.KeyPair, typ uint8) ([]Record, error) {
+	args := cbor.Map([]cbor.MapEntry{{Key: cbor.Text("type"), Val: cbor.Uint64(uint64(typ))}})
+	resp, err := session.Call(findRecordsByTypeProc, dhtRealm, args, deadlineMs(dhtTimeout), id, dhtTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("dht: find_records_by_type: %w", err)
+	}
+	if resp.IsError {
+		return nil, fmt.Errorf("dht: find_records_by_type failed: %s", bolt4Name(resp.Code))
+	}
+	list, ok := resp.Payload.AsList()
+	if !ok {
+		return nil, fmt.Errorf("dht: find_records_by_type: expected a list reply")
+	}
+	out := make([]Record, 0, len(list))
+	for _, item := range list {
+		rec, rerr := recordFromRPCValue(item)
+		if rerr != nil {
+			continue
 		}
 		out = append(out, rec)
 	}

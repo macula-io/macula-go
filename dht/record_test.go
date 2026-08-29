@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/macula-io/macula-go-sdk/cbor"
 	"github.com/macula-io/macula-go-sdk/identity"
 )
 
@@ -220,6 +221,35 @@ func TestStationEndpointKeyIsDomainSeparatedFromBarePubkey(t *testing.T) {
 	copy(barePubkey[:], pub)
 	if key == barePubkey {
 		t.Fatalf("StationEndpointKey(pub) collides with the bare pubkey -- domain separation is broken")
+	}
+}
+
+// TestReadStationEndpointHostAsByteString guards a real bug found live
+// against the deployed fleet: macula_record.erl's with_host_list/2 puts
+// each host in as a bare Erlang binary (CBOR byte string), never wrapped
+// in {text, Bin} the way every other string field in that file is — so a
+// naive AsText()-only read silently gets zero hosts back from a real,
+// well-formed station_endpoint record. ReadStationEndpoint must accept
+// byte-string list entries.
+func TestReadStationEndpointHostAsByteString(t *testing.T) {
+	station := mustKeyPair(t)
+	payload := cbor.Map([]cbor.MapEntry{
+		{Key: cbor.Text("quic_port"), Val: cbor.Uint64(4433)},
+		{Key: cbor.Text("host_advertised"), Val: cbor.List([]cbor.Value{
+			cbor.Bytes([]byte("2a01:4f8:c014:c8b3::be:01")), // byte string, NOT cbor.Text
+		})},
+	})
+	rec := newEnvelope(TypeStationEndpoint, station.NodeID(), payload, time.Hour)
+
+	ep, err := ReadStationEndpoint(rec)
+	if err != nil {
+		t.Fatalf("ReadStationEndpoint: %v", err)
+	}
+	if ep.QuicPort != 4433 {
+		t.Errorf("QuicPort = %d, want 4433", ep.QuicPort)
+	}
+	if len(ep.HostAdvertised) != 1 || ep.HostAdvertised[0] != "2a01:4f8:c014:c8b3::be:01" {
+		t.Fatalf("HostAdvertised = %v, want [\"2a01:4f8:c014:c8b3::be:01\"]", ep.HostAdvertised)
 	}
 }
 
