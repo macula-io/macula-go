@@ -54,7 +54,7 @@ func TestStreamOpenRejectsWrongFrameType(t *testing.T) {
 }
 
 func TestParseStreamEventData(t *testing.T) {
-	spec := NewStreamDataSpec(mkID(9, 16), 42, Msgpack, cbor.Uint64(7))
+	spec := NewStreamDataSpec(mkID(9, 16), 42, Msgpack, cbor.Uint64(7), nil)
 	v := StreamData(spec)
 
 	ev, err := ParseStreamEvent(v)
@@ -79,7 +79,7 @@ func TestParseStreamEventData(t *testing.T) {
 }
 
 func TestParseStreamEventEnd(t *testing.T) {
-	spec := NewStreamEndSpec(mkID(9, 16), Both)
+	spec := NewStreamEndSpec(mkID(9, 16), Both, nil)
 	v := StreamEnd(spec)
 
 	ev, err := ParseStreamEvent(v)
@@ -95,7 +95,7 @@ func TestParseStreamEventEnd(t *testing.T) {
 }
 
 func TestParseStreamEventError(t *testing.T) {
-	spec := NewStreamErrorSpec(mkID(9, 16), "cancelled", "user aborted")
+	spec := NewStreamErrorSpec(mkID(9, 16), "cancelled", "user aborted", nil)
 	v := StreamErrorFrame(spec)
 
 	ev, err := ParseStreamEvent(v)
@@ -133,9 +133,9 @@ func TestStreamDataEndErrorReplyLeaveRealmCallIdSourceRouteNull(t *testing.T) {
 	// Matches RESULT's own documented behavior: these four frame types
 	// don't touch the base envelope's realm/call_id/source_route at all.
 	for name, v := range map[string]cbor.Value{
-		"stream_data":  StreamData(NewStreamDataSpec(mkID(1, 16), 0, Raw, cbor.Bytes(nil))),
-		"stream_end":   StreamEnd(NewStreamEndSpec(mkID(1, 16), Send)),
-		"stream_error": StreamErrorFrame(NewStreamErrorSpec(mkID(1, 16), "x", "y")),
+		"stream_data":  StreamData(NewStreamDataSpec(mkID(1, 16), 0, Raw, cbor.Bytes(nil), nil)),
+		"stream_end":   StreamEnd(NewStreamEndSpec(mkID(1, 16), Send, nil)),
+		"stream_error": StreamErrorFrame(NewStreamErrorSpec(mkID(1, 16), "x", "y", nil)),
 		"stream_reply": StreamReply(NewStreamReplySpec(mkID(1, 16), cbor.Null(), mkID(1, 32))),
 	} {
 		for _, field := range []string{"realm", "call_id", "source_route"} {
@@ -148,7 +148,7 @@ func TestStreamDataEndErrorReplyLeaveRealmCallIdSourceRouteNull(t *testing.T) {
 }
 
 func TestFrameStreamID(t *testing.T) {
-	v := StreamEnd(NewStreamEndSpec(mkID(5, 16), Send))
+	v := StreamEnd(NewStreamEndSpec(mkID(5, 16), Send, nil))
 	id, ok := FrameStreamID(v)
 	if !ok {
 		t.Fatalf("FrameStreamID: not ok")

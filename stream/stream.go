@@ -116,7 +116,7 @@ func (h *Handle) SendReply(payload cbor.Value, id identity.KeyPair) error {
 // (a sanity/debugging signal, not used for reordering: frames arrive in
 // order on a single QUIC stream by construction).
 func (h *Handle) SendData(encoding frame.StreamEncoding, body cbor.Value, id identity.KeyPair) error {
-	spec := frame.NewStreamDataSpec(h.StreamID, h.seqOut, encoding, body)
+	spec := frame.NewStreamDataSpec(h.StreamID, h.seqOut, encoding, body, id.NodeID())
 	h.seqOut++
 	return h.fs.SendFrame(frame.Sign(frame.StreamData(spec), id))
 }
@@ -124,7 +124,7 @@ func (h *Handle) SendData(encoding frame.StreamEncoding, body cbor.Value, id ide
 // CloseSend half-closes: signal this side is done sending. For
 // ClientStream/Bidi modes, follow with AwaitReply.
 func (h *Handle) CloseSend(id identity.KeyPair) error {
-	spec := frame.NewStreamEndSpec(h.StreamID, frame.Send)
+	spec := frame.NewStreamEndSpec(h.StreamID, frame.Send, id.NodeID())
 	return h.fs.SendFrame(frame.Sign(frame.StreamEnd(spec), id))
 }
 
@@ -231,7 +231,7 @@ func (h *Handle) checkStreamID(streamID []byte) error {
 // distinguish a cancellation/failure from a dropped connection.
 // Best-effort, like connection.Session.Close's GOODBYE.
 func (h *Handle) Abort(code, message string, id identity.KeyPair) {
-	spec := frame.NewStreamErrorSpec(h.StreamID, code, message)
+	spec := frame.NewStreamErrorSpec(h.StreamID, code, message, id.NodeID())
 	signed := frame.Sign(frame.StreamErrorFrame(spec), id)
 	_ = h.fs.SendFrame(signed) // best-effort -- the stream is aborting regardless
 }

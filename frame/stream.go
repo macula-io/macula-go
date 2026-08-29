@@ -230,26 +230,44 @@ func ParseStreamOpen(v cbor.Value) (StreamOpenInfo, error) {
 // body's shape follows encoding: bytes for Raw, any structured
 // cbor.Value for Msgpack (see StreamEncoding's doc on why that's still
 // a plain CBOR value, not a second codec).
+//
+// Signer: nil is a valid, reference-supported value (the frame's own
+// maybe_add_signer/2 leaves it out entirely when absent) -- but every
+// real caller in this SDK (stream.Handle.SendData) always supplies
+// identity.KeyPair.NodeID(). See streamDataValue's doc for why this
+// field exists at all: found live, 2026-08-29, as the root cause of a
+// cross-station stream silently losing every DATA frame after a
+// correctly-routed STREAM_OPEN.
 type StreamDataSpec struct {
 	StreamID []byte
 	Seq      uint64
 	Encoding StreamEncoding
 	Body     cbor.Value
+	Signer   []byte
 }
 
-func NewStreamDataSpec(streamID []byte, seq uint64, encoding StreamEncoding, body cbor.Value) StreamDataSpec {
-	return StreamDataSpec{StreamID: streamID, Seq: seq, Encoding: encoding, Body: body}
+func NewStreamDataSpec(streamID []byte, seq uint64, encoding StreamEncoding, body cbor.Value, signer []byte) StreamDataSpec {
+	return StreamDataSpec{StreamID: streamID, Seq: seq, Encoding: encoding, Body: body, Signer: signer}
 }
 
 // streamDataValue does NOT touch the base envelope's realm/call_id/
 // source_route fields at all -- they stay Null, matching the reference
 // exactly (confirmed directly against its own output, same as RESULT).
+//
+// signer (mirrors macula_frame:maybe_add_signer/2): non-OPEN stream
+// frames verify against this pubkey when present at any relay hop
+// beyond the first; absent it, the station falls back to "whichever
+// connection this frame arrived on", which is only correct for the
+// direct client -> first-station edge. Ported from macula-rust-sdk's
+// own fix for the identical gap, confirmed live cross-station
+// (Frankfurt provider, Milan caller) before this port.
 func streamDataValue(spec StreamDataSpec, frameID []byte, sentAtMs int64) cbor.Value {
 	fields := base("stream_data", 0, frameID, sentAtMs)
 	fields = withField(fields, "stream_id", cbor.Bytes(spec.StreamID))
 	fields = withField(fields, "seq", cbor.Uint64(spec.Seq))
 	fields = withField(fields, "encoding", cbor.Text(spec.Encoding.Name()))
 	fields = withField(fields, "body", spec.Body)
+	fields = withOptionalSigner(fields, spec.Signer)
 	return cbor.Map(fields)
 }
 
@@ -258,21 +276,34 @@ func StreamData(spec StreamDataSpec) cbor.Value {
 	return streamDataValue(spec, freshFrameID(), currentMillis())
 }
 
+// withOptionalSigner mirrors the reference's maybe_add_signer/2
+// exactly: append the field when present, leave fields untouched
+// otherwise. See StreamDataSpec's doc for why this exists.
+func withOptionalSigner(fields []cbor.MapEntry, signer []byte) []cbor.MapEntry {
+	if signer == nil {
+		return fields
+	}
+	return withField(fields, "signer", cbor.Bytes(signer))
+}
+
 // StreamEndSpec holds the fields for a STREAM_END frame -- a half-close
-// (Role: Send) or full close (Role: Both) of one direction.
+// (Role: Send) or full close (Role: Both) of one direction. Signer: see
+// StreamDataSpec's doc -- same field, same reasoning.
 type StreamEndSpec struct {
 	StreamID []byte
 	Role     StreamRole
+	Signer   []byte
 }
 
-func NewStreamEndSpec(streamID []byte, role StreamRole) StreamEndSpec {
-	return StreamEndSpec{StreamID: streamID, Role: role}
+func NewStreamEndSpec(streamID []byte, role StreamRole, signer []byte) StreamEndSpec {
+	return StreamEndSpec{StreamID: streamID, Role: role, Signer: signer}
 }
 
 func streamEndValue(spec StreamEndSpec, frameID []byte, sentAtMs int64) cbor.Value {
 	fields := base("stream_end", 0, frameID, sentAtMs)
 	fields = withField(fields, "stream_id", cbor.Bytes(spec.StreamID))
 	fields = withField(fields, "role", cbor.Text(spec.Role.Name()))
+	fields = withOptionalSigner(fields, spec.Signer)
 	return cbor.Map(fields)
 }
 
@@ -286,15 +317,17 @@ func StreamEnd(spec StreamEndSpec) cbor.Value {
 // stream on any non-normal termination (§13.1 point 4). Code here is a
 // free-form label (binary() in the reference), NOT a BOLT#4 numeric
 // code like an ERROR (§6.4) frame's Code -- streaming aborts and
-// unary-call errors use unrelated error vocabularies.
+// unary-call errors use unrelated error vocabularies. Signer: see
+// StreamDataSpec's doc -- same field, same reasoning.
 type StreamErrorSpec struct {
 	StreamID []byte
 	Code     string
 	Message  string
+	Signer   []byte
 }
 
-func NewStreamErrorSpec(streamID []byte, code, message string) StreamErrorSpec {
-	return StreamErrorSpec{StreamID: streamID, Code: code, Message: message}
+func NewStreamErrorSpec(streamID []byte, code, message string, signer []byte) StreamErrorSpec {
+	return StreamErrorSpec{StreamID: streamID, Code: code, Message: message, Signer: signer}
 }
 
 func streamErrorValue(spec StreamErrorSpec, frameID []byte, sentAtMs int64) cbor.Value {
@@ -302,6 +335,7 @@ func streamErrorValue(spec StreamErrorSpec, frameID []byte, sentAtMs int64) cbor
 	fields = withField(fields, "stream_id", cbor.Bytes(spec.StreamID))
 	fields = withField(fields, "code", cbor.Bytes([]byte(spec.Code)))
 	fields = withField(fields, "message", cbor.Bytes([]byte(spec.Message)))
+	fields = withOptionalSigner(fields, spec.Signer)
 	return cbor.Map(fields)
 }
 

@@ -214,3 +214,121 @@ func TestLiveStreamingProviderRoundTrip(t *testing.T) {
 		t.Fatalf("expected Eof, got Data")
 	}
 }
+
+const (
+	milanHost = "station-it-milan.macula.io"
+	milanPort = 4433
+)
+
+// TestLiveCrossStationStreamingRoundTrip ports macula-rust-sdk's own test
+// of the same name (2026-08-29): provider on Frankfurt, caller on Milan,
+// Bidi mode, both sides exchange data. That test found and fixed a real
+// bug in the Rust SDK -- STREAM_DATA/END/ERROR frames never carried the
+// optional `signer` field macula_station_peer_observer.erl's own relay
+// needs to verify a frame at a SECOND station-to-station hop (the
+// station falls back to "whichever connection this frame arrived on"
+// when absent, which is only correct for the direct client -> first
+// station edge). This module had the identical gap -- NewStreamDataSpec/
+// NewStreamEndSpec/NewStreamErrorSpec never took a signer parameter
+// either -- fixed the same way, same day, ported rather than
+// independently rediscovered. This test is the live proof the Go port
+// carries the fix correctly, not just that it compiles.
+func TestLiveCrossStationStreamingRoundTrip(t *testing.T) {
+	providerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (provider): %v", err)
+	}
+	callerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (caller): %v", err)
+	}
+
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer connectCancel()
+	providerSession, err := connection.Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, providerID)
+	if err != nil {
+		t.Fatalf("provider handshake against Frankfurt should succeed: %v", err)
+	}
+	defer providerSession.Close("normal", nil, providerID)
+	callerSession, err := connection.Connect(connectCtx, milanHost, milanPort, transport.WebPKI{}, callerID)
+	if err != nil {
+		t.Fatalf("caller handshake against Milan should succeed: %v", err)
+	}
+	defer callerSession.Close("normal", nil, callerID)
+
+	realm := make([]byte, 32)
+	if _, err := rand.Read(realm); err != nil {
+		t.Fatalf("rand.Read(realm): %v", err)
+	}
+	procedure := fmt.Sprintf("macula_go_sdk.test_cross_station.%s", randomHex(t, 8))
+
+	advertiseSpec := frame.NewAdvertiseSpec(realm, procedure, providerID.NodeID())
+	if err := providerSession.Advertise(advertiseSpec, providerID); err != nil {
+		t.Fatalf("advertise on Frankfurt should send: %v", err)
+	}
+
+	// Same wait macula-rust-sdk's own cross-station tests use for the
+	// resolver lookup to actually reach the other station.
+	time.Sleep(5 * time.Second)
+
+	type acceptResult struct {
+		handle *Handle
+		info   frame.StreamOpenInfo
+		err    error
+	}
+	acceptCh := make(chan acceptResult, 1)
+	go func() {
+		handle, info, err := Accept(providerSession, 20*time.Second)
+		acceptCh <- acceptResult{handle: handle, info: info, err: err}
+	}()
+
+	openCtx, openCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer openCancel()
+	callerHandle, err := Open(openCtx, callerSession, procedure, realm, frame.Bidi,
+		cbor.Null(), nowMs()+10_000, callerID)
+	if err != nil {
+		t.Fatalf("caller should open a cross-station stream: %v", err)
+	}
+
+	accepted := <-acceptCh
+	if accepted.err != nil {
+		t.Fatalf("provider should accept the inbound STREAM_OPEN relayed via Milan: %v", accepted.err)
+	}
+	providerHandle, openInfo := accepted.handle, accepted.info
+	t.Logf("OBSERVED: cross-station STREAM_OPEN succeeded -- Milan routed it to Frankfurt (procedure=%s mode=%v)",
+		openInfo.Procedure, openInfo.Mode)
+
+	if err := callerHandle.SendData(frame.Raw, cbor.Bytes([]byte("frame from milan caller")), callerID); err != nil {
+		t.Fatalf("caller should push a frame: %v", err)
+	}
+	if err := providerHandle.SendData(frame.Raw, cbor.Bytes([]byte("frame from frankfurt provider")), providerID); err != nil {
+		t.Fatalf("provider should push a frame: %v", err)
+	}
+
+	item, err := providerHandle.Recv(5 * time.Second)
+	if err != nil {
+		t.Fatalf("provider should receive the caller's frame: %v", err)
+	}
+	if body, ok := item.Body.AsBytes(); !ok || string(body) != "frame from milan caller" {
+		t.Errorf("provider received %v, want Bytes(\"frame from milan caller\")", item.Body)
+	} else {
+		t.Log("OBSERVED: provider (Frankfurt) received the caller's frame from Milan")
+	}
+
+	item, err = callerHandle.Recv(5 * time.Second)
+	if err != nil {
+		t.Fatalf("caller should receive the provider's frame: %v", err)
+	}
+	if body, ok := item.Body.AsBytes(); !ok || string(body) != "frame from frankfurt provider" {
+		t.Errorf("caller received %v, want Bytes(\"frame from frankfurt provider\")", item.Body)
+	} else {
+		t.Log("OBSERVED: caller (Milan) received the provider's frame from Frankfurt")
+	}
+
+	if err := callerHandle.CloseSend(callerID); err != nil {
+		t.Fatalf("caller should half-close: %v", err)
+	}
+	if err := providerHandle.CloseSend(providerID); err != nil {
+		t.Fatalf("provider should half-close: %v", err)
+	}
+}
