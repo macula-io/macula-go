@@ -1,0 +1,211 @@
+// Package directdial implements Macula's direct-dial resolve-and-call:
+// resolving a signed procedure_advertisement DHT record and its serving
+// station's own signed station_endpoint, then dialing that station in one
+// hop — instead of depending on ordinary advertise-gossip having
+// propagated a route between whichever two stations happen to be
+// involved. Ported from macula-io/macula's macula_direct_dial.erl; see
+// that module's doc for the full trust model this reproduces.
+//
+// Trust model (see macula_direct_dial.erl's module doc for the full
+// reasoning): every candidate procedure_advertisement must carry a valid
+// Ed25519 signature before its serving_station is trusted at all, and the
+// resolved station_endpoint must be signed by the station itself. The
+// actual QUIC dial trusts neither the TLS certificate (a production
+// station's TLS is terminated by an unrelated PKI) nor nothing — trust is
+// enforced at the application layer, by checking the freshly dialed
+// session's own signature-verified HELLO identity against the exact
+// pubkey the signed DHT chain resolved.
+//
+// cert_chain-based org/realm authorization (Slice 7c Direction B,
+// macula_record:verify_advertisement_cert_chain/3 on the Erlang side) is
+// NOT ported here — it is opt-in even in the reference implementation,
+// and blocked behind direct-dial itself existing at all in this SDK.
+package directdial
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/macula-io/macula-go-sdk/cbor"
+	"github.com/macula-io/macula-go-sdk/connection"
+	"github.com/macula-io/macula-go-sdk/dht"
+	"github.com/macula-io/macula-go-sdk/frame"
+	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go-sdk/transport"
+)
+
+// resolveRetries/resolveRetryDelay match macula_direct_dial.erl's
+// ?RESOLVE_RETRIES/?RESOLVE_RETRY_MS — a record just published on the
+// provider's station has not necessarily replicated to the resolving
+// station yet, so the first miss is not treated as failure.
+const (
+	resolveRetries    = 50
+	resolveRetryDelay = 100 * time.Millisecond
+)
+
+var (
+	ErrProcedureNotAdvertised  = errors.New("directdial: procedure has no direct-dial advertisement in the DHT")
+	ErrNoTrustedAdvertisement  = errors.New("directdial: every candidate advertisement failed signature verification")
+	ErrStationEndpointNotFound = errors.New("directdial: resolved station published no reachable station_endpoint")
+)
+
+// Resolve finds procedure's currently-advertised serving station and its
+// dialable host/port, retrying past DHT propagation lag. realm and
+// procedure must match exactly what the provider passed to AdvertiseDirect
+// (or the Erlang equivalent) — the discovery URI they derive must agree.
+// session is used only to query the DHT; it does not need to be connected
+// to the same station that will end up serving the call.
+func Resolve(session *connection.Session, id identity.KeyPair, realm []byte, procedure string) (station []byte, host string, port uint16, err error) {
+	uri := dht.DiscoveryURI(realm, procedure)
+	key := dht.ProcedureKey(uri)
+
+	var recs []dht.Record
+	for attempt := 0; attempt < resolveRetries; attempt++ {
+		recs, err = dht.FindRecords(session, id, key)
+		if err == nil && len(recs) > 0 {
+			break
+		}
+		time.Sleep(resolveRetryDelay)
+	}
+	if len(recs) == 0 {
+		return nil, "", 0, ErrProcedureNotAdvertised
+	}
+
+	adv, ok := firstTrustedAdvertisement(recs)
+	if !ok {
+		return nil, "", 0, ErrNoTrustedAdvertisement
+	}
+
+	return resolveStationEndpoint(session, id, adv.ServingStation)
+}
+
+func firstTrustedAdvertisement(recs []dht.Record) (dht.ProcedureAdvertisement, bool) {
+	for _, rec := range recs {
+		if dht.Verify(rec) != nil {
+			continue
+		}
+		adv, err := dht.ReadProcedureAdvertisement(rec)
+		if err != nil {
+			continue
+		}
+		return adv, true
+	}
+	return dht.ProcedureAdvertisement{}, false
+}
+
+// resolveStationEndpoint retries past a resolved-but-stale record, not
+// just an absent one — the DHT can hand back a replica that hasn't been
+// evicted yet even though the station's own current publish is live.
+// Giving up on the first stale hit would make an otherwise healthy
+// station unreachable via direct-dial until that one replica ages out.
+func resolveStationEndpoint(session *connection.Session, id identity.KeyPair, station []byte) (out []byte, host string, port uint16, err error) {
+	key := dht.StationEndpointKey(station)
+	for attempt := 0; attempt < resolveRetries; attempt++ {
+		rec, ferr := dht.FindRecord(session, id, key)
+		if ferr != nil {
+			if errors.Is(ferr, dht.ErrNotFound) {
+				time.Sleep(resolveRetryDelay)
+				continue
+			}
+			return nil, "", 0, ferr
+		}
+		// The station_endpoint record for `station` must be SIGNED BY
+		// `station` itself — checking the signature and that the signer
+		// is exactly `station`, not just any valid signature, is what
+		// makes pinning the dial's expected identity meaningful below.
+		if !bytesEqual(rec.Key, station) {
+			return nil, "", 0, fmt.Errorf("directdial: station_endpoint signer mismatch")
+		}
+		verr := dht.Verify(rec)
+		if errors.Is(verr, dht.ErrExpired) {
+			time.Sleep(resolveRetryDelay)
+			continue
+		}
+		if verr != nil {
+			return nil, "", 0, verr
+		}
+		ep, rerr := dht.ReadStationEndpoint(rec)
+		if rerr != nil {
+			return nil, "", 0, rerr
+		}
+		if len(ep.HostAdvertised) == 0 {
+			return nil, "", 0, fmt.Errorf("directdial: station_endpoint has no advertised host")
+		}
+		return station, ep.HostAdvertised[0], ep.QuicPort, nil
+	}
+	return nil, "", 0, ErrStationEndpointNotFound
+}
+
+// Call resolves procedure's provider via direct-dial (through resolveVia,
+// which is used only to query the DHT) and calls it there, in one hop, in
+// a SEPARATE connection from resolveVia. The provider must have advertised
+// via AdvertiseDirect (or the Erlang macula_response:advertise_direct/6,7)
+// — a plain advertise publishes no discoverable record and Resolve will
+// return ErrProcedureNotAdvertised.
+//
+// The dial itself uses transport.Insecure{} (no TLS verification) because
+// trust is enforced at the application layer instead — see the package
+// doc's "Trust model". After the dial, the freshly connected session's own
+// signature-verified HELLO identity is checked against the exact pubkey
+// the signed DHT chain resolved; a mismatch is a trust violation, not a
+// retryable error, and the call is refused.
+func Call(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, payload cbor.Value, timeout time.Duration) (frame.CallResponse, error) {
+	station, host, port, err := Resolve(resolveVia, id, realm, procedure)
+	if err != nil {
+		return frame.CallResponse{}, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
+	}
+
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	target, err := connection.Connect(dialCtx, host, port, transport.Insecure{}, id)
+	if err != nil {
+		return frame.CallResponse{}, fmt.Errorf("directdial: dial resolved station %x at %s:%d: %w", station, host, port, err)
+	}
+	defer func() { _ = target.Close("normal", nil, id) }()
+
+	if !bytesEqual(target.Station.NodeID, station) {
+		return frame.CallResponse{}, fmt.Errorf(
+			"directdial: trust violation — resolved station %x but the dialed peer proved identity %x",
+			station, target.Station.NodeID)
+	}
+
+	return target.Call(procedure, realm, payload, time.Now().Add(timeout).UnixMilli(), id, timeout)
+}
+
+// AdvertiseDirect publishes a signed procedure_advertisement naming
+// session's own currently-connected station (session.Station.NodeID) as
+// procedure's server, discoverable by any caller's Resolve/Call. Mirrors
+// macula_response:advertise_direct/6,7 +
+// macula_direct_dial:publish_advertisement/4,5 — unlike the Erlang
+// reference's pool (many links, one chosen by connected_station/1), a Go
+// Session is always exactly one connection, so there is no link-selection
+// step: session's own verified HELLO identity IS the serving station.
+//
+// Unlike the Erlang SDK's supervised macula_response, this does not
+// register a handler or re-advertise on a timer — it publishes the DHT
+// record once. A caller wanting periodic re-advertise (needed because a
+// station's registration for a procedure does not survive the connection
+// that sent it being replaced) must call this again on its own schedule.
+func AdvertiseDirect(session *connection.Session, id identity.KeyPair, realm []byte, procedure string, ttl time.Duration) error {
+	uri := dht.DiscoveryURI(realm, procedure)
+	rec, err := dht.NewProcedureAdvertisement(id.NodeID(), uri, session.Station.NodeID, ttl)
+	if err != nil {
+		return err
+	}
+	rec = dht.Sign(rec, id)
+	return dht.PutRecord(session, id, rec)
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

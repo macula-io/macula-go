@@ -10,6 +10,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
+	"strconv"
 
 	"github.com/quic-go/quic-go"
 )
@@ -86,8 +88,15 @@ func (Insecure) tlsConfig(serverName string) *tls.Config {
 
 // Dial establishes a raw QUIC connection to host:port with ALPN
 // "macula" and the given trust mode.
+//
+// host is joined with port via net.JoinHostPort, not a bare "%s:%d"
+// format — a bare IPv6 literal (e.g. a station_endpoint record's
+// host_advertised, which macula-station may publish as one) needs
+// bracketing ("[::1]:4433") or the result is ambiguous/unparseable, since
+// the address itself is full of colons. JoinHostPort brackets only when
+// host contains a colon, so hostnames and IPv4 literals are unaffected.
 func Dial(ctx context.Context, host string, port uint16, trust Trust) (*quic.Conn, error) {
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, strconv.Itoa(int(port)))
 	tlsConf := trust.tlsConfig(host)
 	conn, err := quic.DialAddr(ctx, addr, tlsConf, nil)
 	if err != nil {
