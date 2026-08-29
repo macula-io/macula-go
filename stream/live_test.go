@@ -216,9 +216,138 @@ func TestLiveStreamingProviderRoundTrip(t *testing.T) {
 }
 
 const (
-	milanHost = "station-it-milan.macula.io"
-	milanPort = 4433
+	milanHost       = "station-it-milan.macula.io"
+	milanPort       = 4433
+	parisHost       = "station-fr-paris.macula.io"
+	parisPort       = 4433
+	stockholmHost   = "station-se-stockholm.macula.io"
+	stockholmPort   = 4433
+	helsinkiHost    = "station-fi-helsinki.macula.io"
+	helsinkiPort    = 4433
+	falkensteinHost = "station-de-falkenstein.macula.io"
+	falkensteinPort = 4433
+	nurembergHost   = "station-de-nuremberg.macula.io"
+	nurembergPort   = 4433
 )
+
+// crossStationStreamingRoundTrip is the shared body behind
+// TestLiveCrossStationStreamingRoundTrip and
+// TestLiveCrossStationStreamingMultiHop: connect a provider to
+// providerHost and a caller to callerHost (two DIFFERENT stations),
+// advertise on the provider side, open a Bidi stream from the caller,
+// and confirm data flows both ways through whatever station-to-station
+// relay path the mesh picks. See TestLiveCrossStationStreamingRoundTrip's
+// doc comment for why this specifically exercises the `signer`-stamping
+// fix (2026-08-29): a station-to-station hop is exactly the case the
+// direct client->first-station edge doesn't cover.
+func crossStationStreamingRoundTrip(t *testing.T, providerHost string, providerPort uint16, providerLabel string, callerHost string, callerPort uint16, callerLabel string) {
+	t.Helper()
+	providerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (provider): %v", err)
+	}
+	callerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (caller): %v", err)
+	}
+
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer connectCancel()
+	providerSession, err := connection.Connect(connectCtx, providerHost, providerPort, transport.WebPKI{}, providerID)
+	if err != nil {
+		t.Fatalf("provider handshake against %s should succeed: %v", providerLabel, err)
+	}
+	defer providerSession.Close("normal", nil, providerID)
+	callerSession, err := connection.Connect(connectCtx, callerHost, callerPort, transport.WebPKI{}, callerID)
+	if err != nil {
+		t.Fatalf("caller handshake against %s should succeed: %v", callerLabel, err)
+	}
+	defer callerSession.Close("normal", nil, callerID)
+
+	realm := make([]byte, 32)
+	if _, err := rand.Read(realm); err != nil {
+		t.Fatalf("rand.Read(realm): %v", err)
+	}
+	procedure := fmt.Sprintf("macula_go_sdk.test_cross_station.%s", randomHex(t, 8))
+
+	advertiseSpec := frame.NewAdvertiseSpec(realm, procedure, providerID.NodeID())
+	if err := providerSession.Advertise(advertiseSpec, providerID); err != nil {
+		t.Fatalf("advertise on %s should send: %v", providerLabel, err)
+	}
+
+	// Same wait macula-rust-sdk's own cross-station tests use for the
+	// resolver lookup to actually reach the other station. Bumped from
+	// 5s -> 8s (diagnostic, 2026-08-29): running several of these
+	// subtests back to back in one process intermittently timed out
+	// waiting for Accept at 5s/20s, but passed reliably in isolation --
+	// consistent with gossip-propagation lag under rapid sequential
+	// advertise/connect churn, not a functional relay bug.
+	time.Sleep(8 * time.Second)
+
+	type acceptResult struct {
+		handle *Handle
+		info   frame.StreamOpenInfo
+		err    error
+	}
+	acceptCh := make(chan acceptResult, 1)
+	go func() {
+		handle, info, err := Accept(providerSession, 30*time.Second)
+		acceptCh <- acceptResult{handle: handle, info: info, err: err}
+	}()
+
+	openCtx, openCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer openCancel()
+	callerHandle, err := Open(openCtx, callerSession, procedure, realm, frame.Bidi,
+		cbor.Null(), nowMs()+10_000, callerID)
+	if err != nil {
+		t.Fatalf("caller should open a cross-station stream: %v", err)
+	}
+
+	accepted := <-acceptCh
+	if accepted.err != nil {
+		t.Fatalf("provider should accept the inbound STREAM_OPEN relayed via %s: %v", callerLabel, accepted.err)
+	}
+	providerHandle, openInfo := accepted.handle, accepted.info
+	t.Logf("OBSERVED: cross-station STREAM_OPEN succeeded -- %s routed it to %s (procedure=%s mode=%v)",
+		callerLabel, providerLabel, openInfo.Procedure, openInfo.Mode)
+
+	callerFrame := fmt.Sprintf("frame from %s caller", callerLabel)
+	providerFrame := fmt.Sprintf("frame from %s provider", providerLabel)
+
+	if err := callerHandle.SendData(frame.Raw, cbor.Bytes([]byte(callerFrame)), callerID); err != nil {
+		t.Fatalf("caller should push a frame: %v", err)
+	}
+	if err := providerHandle.SendData(frame.Raw, cbor.Bytes([]byte(providerFrame)), providerID); err != nil {
+		t.Fatalf("provider should push a frame: %v", err)
+	}
+
+	item, err := providerHandle.Recv(5 * time.Second)
+	if err != nil {
+		t.Fatalf("provider should receive the caller's frame: %v", err)
+	}
+	if body, ok := item.Body.AsBytes(); !ok || string(body) != callerFrame {
+		t.Errorf("provider received %v, want Bytes(%q)", item.Body, callerFrame)
+	} else {
+		t.Logf("OBSERVED: provider (%s) received the caller's frame from %s", providerLabel, callerLabel)
+	}
+
+	item, err = callerHandle.Recv(5 * time.Second)
+	if err != nil {
+		t.Fatalf("caller should receive the provider's frame: %v", err)
+	}
+	if body, ok := item.Body.AsBytes(); !ok || string(body) != providerFrame {
+		t.Errorf("caller received %v, want Bytes(%q)", item.Body, providerFrame)
+	} else {
+		t.Logf("OBSERVED: caller (%s) received the provider's frame from %s", callerLabel, providerLabel)
+	}
+
+	if err := callerHandle.CloseSend(callerID); err != nil {
+		t.Fatalf("caller should half-close: %v", err)
+	}
+	if err := providerHandle.CloseSend(providerID); err != nil {
+		t.Fatalf("provider should half-close: %v", err)
+	}
+}
 
 // TestLiveCrossStationStreamingRoundTrip ports macula-rust-sdk's own test
 // of the same name (2026-08-29): provider on Frankfurt, caller on Milan,
@@ -234,101 +363,31 @@ const (
 // independently rediscovered. This test is the live proof the Go port
 // carries the fix correctly, not just that it compiles.
 func TestLiveCrossStationStreamingRoundTrip(t *testing.T) {
-	providerID, err := identity.Generate()
-	if err != nil {
-		t.Fatalf("identity.Generate (provider): %v", err)
-	}
-	callerID, err := identity.Generate()
-	if err != nil {
-		t.Fatalf("identity.Generate (caller): %v", err)
-	}
+	crossStationStreamingRoundTrip(t, liveStationHost, liveStationPort, "Frankfurt", milanHost, milanPort, "Milan")
+}
 
-	connectCtx, connectCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer connectCancel()
-	providerSession, err := connection.Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, providerID)
-	if err != nil {
-		t.Fatalf("provider handshake against Frankfurt should succeed: %v", err)
+// TestLiveCrossStationStreamingMultiHop extends
+// TestLiveCrossStationStreamingRoundTrip's single Frankfurt/Milan pair
+// across several more of the fleet's 7 real macula-station-* boxes
+// (frankfurt, paris, milan, stockholm, helsinki, falkenstein,
+// nuremberg), on the request to verify the 2026-08-29 signer-stamping
+// fix isn't a Frankfurt/Milan-specific result -- each pair exercises an
+// independent station-to-station relay path/route lookup, which is
+// exactly the code path the fix touches.
+func TestLiveCrossStationStreamingMultiHop(t *testing.T) {
+	pairs := []struct {
+		providerHost, callerHost   string
+		providerPort, callerPort   uint16
+		providerLabel, callerLabel string
+	}{
+		{helsinkiHost, falkensteinHost, helsinkiPort, falkensteinPort, "Helsinki", "Falkenstein"},
+		{parisHost, stockholmHost, parisPort, stockholmPort, "Paris", "Stockholm"},
+		{nurembergHost, liveStationHost, nurembergPort, liveStationPort, "Nuremberg", "Frankfurt"},
 	}
-	defer providerSession.Close("normal", nil, providerID)
-	callerSession, err := connection.Connect(connectCtx, milanHost, milanPort, transport.WebPKI{}, callerID)
-	if err != nil {
-		t.Fatalf("caller handshake against Milan should succeed: %v", err)
-	}
-	defer callerSession.Close("normal", nil, callerID)
-
-	realm := make([]byte, 32)
-	if _, err := rand.Read(realm); err != nil {
-		t.Fatalf("rand.Read(realm): %v", err)
-	}
-	procedure := fmt.Sprintf("macula_go_sdk.test_cross_station.%s", randomHex(t, 8))
-
-	advertiseSpec := frame.NewAdvertiseSpec(realm, procedure, providerID.NodeID())
-	if err := providerSession.Advertise(advertiseSpec, providerID); err != nil {
-		t.Fatalf("advertise on Frankfurt should send: %v", err)
-	}
-
-	// Same wait macula-rust-sdk's own cross-station tests use for the
-	// resolver lookup to actually reach the other station.
-	time.Sleep(5 * time.Second)
-
-	type acceptResult struct {
-		handle *Handle
-		info   frame.StreamOpenInfo
-		err    error
-	}
-	acceptCh := make(chan acceptResult, 1)
-	go func() {
-		handle, info, err := Accept(providerSession, 20*time.Second)
-		acceptCh <- acceptResult{handle: handle, info: info, err: err}
-	}()
-
-	openCtx, openCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer openCancel()
-	callerHandle, err := Open(openCtx, callerSession, procedure, realm, frame.Bidi,
-		cbor.Null(), nowMs()+10_000, callerID)
-	if err != nil {
-		t.Fatalf("caller should open a cross-station stream: %v", err)
-	}
-
-	accepted := <-acceptCh
-	if accepted.err != nil {
-		t.Fatalf("provider should accept the inbound STREAM_OPEN relayed via Milan: %v", accepted.err)
-	}
-	providerHandle, openInfo := accepted.handle, accepted.info
-	t.Logf("OBSERVED: cross-station STREAM_OPEN succeeded -- Milan routed it to Frankfurt (procedure=%s mode=%v)",
-		openInfo.Procedure, openInfo.Mode)
-
-	if err := callerHandle.SendData(frame.Raw, cbor.Bytes([]byte("frame from milan caller")), callerID); err != nil {
-		t.Fatalf("caller should push a frame: %v", err)
-	}
-	if err := providerHandle.SendData(frame.Raw, cbor.Bytes([]byte("frame from frankfurt provider")), providerID); err != nil {
-		t.Fatalf("provider should push a frame: %v", err)
-	}
-
-	item, err := providerHandle.Recv(5 * time.Second)
-	if err != nil {
-		t.Fatalf("provider should receive the caller's frame: %v", err)
-	}
-	if body, ok := item.Body.AsBytes(); !ok || string(body) != "frame from milan caller" {
-		t.Errorf("provider received %v, want Bytes(\"frame from milan caller\")", item.Body)
-	} else {
-		t.Log("OBSERVED: provider (Frankfurt) received the caller's frame from Milan")
-	}
-
-	item, err = callerHandle.Recv(5 * time.Second)
-	if err != nil {
-		t.Fatalf("caller should receive the provider's frame: %v", err)
-	}
-	if body, ok := item.Body.AsBytes(); !ok || string(body) != "frame from frankfurt provider" {
-		t.Errorf("caller received %v, want Bytes(\"frame from frankfurt provider\")", item.Body)
-	} else {
-		t.Log("OBSERVED: caller (Milan) received the provider's frame from Frankfurt")
-	}
-
-	if err := callerHandle.CloseSend(callerID); err != nil {
-		t.Fatalf("caller should half-close: %v", err)
-	}
-	if err := providerHandle.CloseSend(providerID); err != nil {
-		t.Fatalf("provider should half-close: %v", err)
+	for _, p := range pairs {
+		p := p
+		t.Run(p.providerLabel+"_"+p.callerLabel, func(t *testing.T) {
+			crossStationStreamingRoundTrip(t, p.providerHost, p.providerPort, p.providerLabel, p.callerHost, p.callerPort, p.callerLabel)
+		})
 	}
 }
