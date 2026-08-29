@@ -128,12 +128,20 @@ func (s *Session) Call(procedure string, realm []byte, payload cbor.Value, deadl
 	return s.control.Call(procedure, realm, payload, deadlineMs, id, timeout)
 }
 
-// Publish sends a signed PUBLISH. Fire-and-forget — no reply is
-// expected on the wire; a subscriber (this session included, if
-// subscribed to the same topic/realm) receives an EVENT asynchronously,
-// read via RecvEvent.
+// Publish sends a signed PUBLISH, carrying the end-to-end
+// `publisher_sig` (over topic/realm/publisher/seq/payload, independent
+// of frame type) so the resulting EVENT survives being relayed beyond
+// one hop -- a station verifies an EVENT's per-hop `signature` against
+// whichever station forwarded it, which only matches on hop 1; every
+// hop after that needs publisher_sig instead. Matches the Erlang
+// reference SDK's own default (pubsub_emit_publisher_sig, true since
+// macula 4.6.0). Fire-and-forget — no reply is expected on the wire; a
+// subscriber (this session included, if subscribed to the same
+// topic/realm) receives an EVENT asynchronously, read via RecvEvent.
 func (s *Session) Publish(spec frame.PublishSpec, id identity.KeyPair) error {
-	return s.control.SendFrame(frame.Sign(frame.Publish(spec), id))
+	unsigned := frame.Publish(spec)
+	withPublisherSig := frame.SignPublisher(unsigned, id)
+	return s.control.SendFrame(frame.Sign(withPublisherSig, id))
 }
 
 // Subscribe sends a signed SUBSCRIBE. Fire-and-forget.
