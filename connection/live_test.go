@@ -670,3 +670,214 @@ func TestLiveRunSubscriberAndRunPublisher(t *testing.T) {
 		t.Fatalf("RunSubscriber did not return within 3s of cancel() -- not respecting ctx.Done()")
 	}
 }
+
+// TestLiveRPCTelemetryFacts proves Call and ServeOneCall auto-publish the
+// rpc.sent_v1/rpc.completed_v1 (caller side) and rpc.received_v1/
+// rpc.replied_v1 (provider side) mesh facts around a real round trip,
+// matching macula_request.erl/macula_response.erl exactly. Verified via
+// an INDEPENDENT watcher session subscribed to all four topics, not the
+// caller/provider's own bookkeeping -- same verification standard
+// TestLiveRunSubscriberAndRunPublisher already established for its own
+// auto-published fact.
+func TestLiveRPCTelemetryFacts(t *testing.T) {
+	providerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (provider): %v", err)
+	}
+	callerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (caller): %v", err)
+	}
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer connectCancel()
+	providerSession, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, providerID)
+	if err != nil {
+		t.Fatalf("provider handshake should succeed: %v", err)
+	}
+	defer providerSession.Close("normal", nil, providerID)
+	callerSession, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, callerID)
+	if err != nil {
+		t.Fatalf("caller handshake should succeed: %v", err)
+	}
+	defer callerSession.Close("normal", nil, callerID)
+
+	// FOUR separate watcher sessions/identities, one per topic -- NOT one
+	// session shared across 4 concurrent RunSubscriber goroutines. A
+	// session's control stream is single-reader; ServeOneCall's own doc
+	// already warns about exactly this ("a session that needs to serve
+	// CALLs and also act as a caller/subscriber concurrently should use a
+	// second Session"), and the same limitation applies to running
+	// multiple concurrent RunSubscriber calls on one session -- confirmed
+	// the hard way here: sharing one session across all 4 subscriptions
+	// panicked RecvFrame with a corrupted length prefix from interleaved
+	// concurrent reads on the same stream.
+	watcherSessionFor := func(topic string) (*Session, identity.KeyPair) {
+		t.Helper()
+		id, err := identity.Generate()
+		if err != nil {
+			t.Fatalf("identity.Generate (watcher for %s): %v", topic, err)
+		}
+		sess, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, id)
+		if err != nil {
+			t.Fatalf("watcher handshake for %s should succeed: %v", topic, err)
+		}
+		t.Cleanup(func() { _ = sess.Close("normal", nil, id) })
+		return sess, id
+	}
+
+	realm := randomBytes(t, 32)
+	procedure := fmt.Sprintf("macula_go_sdk.test_rpc_facts.%s", hex.EncodeToString(randomBytes(t, 8)))
+
+	// Buffered generously, not size 1: this is a real shared public demo
+	// fleet ("other people and other agents are also using it, not a
+	// sandbox" -- mesh://etiquette), and rpc.sent_v1/rpc.completed_v1/
+	// rpc.received_v1/rpc.replied_v1 are FIXED, well-known topic names by
+	// design (matching the Erlang reference, which doesn't randomize them
+	// either) -- unlike this file's OTHER pubsub tests, which dodge
+	// exactly this by randomizing the topic string itself. Concurrent,
+	// unrelated third-party traffic on these same topics is expected, so
+	// correlation below is proven by matching request_id across a
+	// SPECIFIC pair, not by assuming the first event to arrive is ours.
+	seen := struct {
+		sent, completed, received, replied chan frame.EventInfo
+	}{
+		sent:      make(chan frame.EventInfo, 32),
+		completed: make(chan frame.EventInfo, 32),
+		received:  make(chan frame.EventInfo, 32),
+		replied:   make(chan frame.EventInfo, 32),
+	}
+	watchCtx, cancelWatch := context.WithCancel(context.Background())
+	defer cancelWatch()
+	for topic, ch := range map[string]chan frame.EventInfo{
+		rpcSentTopic: seen.sent, rpcCompletedTopic: seen.completed,
+		rpcReceivedTopic: seen.received, rpcRepliedTopic: seen.replied,
+	} {
+		topic, ch := topic, ch
+		watcherSession, watcherID := watcherSessionFor(topic)
+		go func() {
+			_ = watcherSession.RunSubscriber(watchCtx, frame.NewSubscribeSpec(topic, realm, watcherID.NodeID()), watcherID,
+				func(evt frame.EventInfo) error {
+					select {
+					case ch <- evt:
+					default:
+					}
+					return nil
+				})
+		}()
+	}
+	// Let all four SUBSCRIBEs land before anything gets published --
+	// same race already accepted and handled this way in
+	// TestLiveRunSubscriberAndRunPublisher.
+	time.Sleep(500 * time.Millisecond)
+
+	advertiseSpec := frame.NewAdvertiseSpec(realm, procedure, providerID.NodeID())
+	if err := providerSession.Advertise(advertiseSpec, providerID); err != nil {
+		t.Fatalf("advertise should send: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	lookup := func(_ []byte, gotProcedure string) (CallHandler, bool) {
+		if gotProcedure != procedure {
+			return nil, false
+		}
+		return func(payload cbor.Value) (cbor.Value, error) { return payload, nil }, true
+	}
+	serveErrCh := make(chan error, 1)
+	go func() { serveErrCh <- providerSession.ServeOneCall(lookup, providerID, 15*time.Second) }()
+
+	resp, err := callerSession.Call(procedure, realm, cbor.Text("telemetry probe"), nowMs()+10_000, callerID, 10*time.Second)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if resp.IsError {
+		t.Fatalf("expected a RESULT, got ERROR code=%d name=%s", resp.Code, resp.Name)
+	}
+	if err := <-serveErrCh; err != nil {
+		t.Fatalf("ServeOneCall: %v", err)
+	}
+
+	requestID := func(t *testing.T, label string, evt frame.EventInfo) []byte {
+		t.Helper()
+		v, ok := evt.Payload.Get("request_id")
+		if !ok {
+			t.Fatalf("%s fact missing request_id field: %+v", label, evt.Payload)
+		}
+		id, ok := v.AsBytes()
+		if !ok || len(id) != 16 {
+			t.Fatalf("%s fact request_id = %+v, want 16 bytes", label, v)
+		}
+		return id
+	}
+	outcomeField := func(t *testing.T, label string, evt frame.EventInfo, want string) {
+		t.Helper()
+		v, ok := evt.Payload.Get("outcome")
+		if txt, _ := v.AsText(); !ok || txt != want {
+			t.Fatalf("%s outcome = %+v, want Text(%q)", label, v, want)
+		}
+	}
+	// drain collects every event already buffered or arriving within
+	// window on ch -- used instead of "read one and trust it's ours"
+	// because unrelated concurrent traffic on this shared fleet publishes
+	// to these same fixed topic names too.
+	drain := func(ch chan frame.EventInfo, window time.Duration) []frame.EventInfo {
+		deadline := time.After(window)
+		var out []frame.EventInfo
+		for {
+			select {
+			case evt := <-ch:
+				out = append(out, evt)
+			case <-deadline:
+				return out
+			}
+		}
+	}
+	// findPair returns the first (a, b) from as/bs whose request_id
+	// fields match -- proving THIS SDK's own correlation is correct
+	// (a real call's sent+completed, or received+replied, share one
+	// minted request_id) even when other parties' unrelated facts are
+	// mixed into the same buffers.
+	findPair := func(t *testing.T, labelA string, as []frame.EventInfo, labelB string, bs []frame.EventInfo) (frame.EventInfo, frame.EventInfo, []byte) {
+		t.Helper()
+		for _, a := range as {
+			aID := requestID(t, labelA, a)
+			for _, b := range bs {
+				bID := requestID(t, labelB, b)
+				if string(aID) == string(bID) {
+					return a, b, aID
+				}
+			}
+		}
+		t.Fatalf("no %s/%s pair shared a request_id -- %d %s event(s), %d %s event(s) observed, none correlated",
+			labelA, labelB, len(as), labelA, len(bs), labelB)
+		return frame.EventInfo{}, frame.EventInfo{}, nil
+	}
+
+	sentEvts := drain(seen.sent, 5*time.Second)
+	completedEvts := drain(seen.completed, 100*time.Millisecond)
+	receivedEvts := drain(seen.received, 100*time.Millisecond)
+	repliedEvts := drain(seen.replied, 100*time.Millisecond)
+	if len(sentEvts) == 0 {
+		t.Fatalf("%s: no event arrived at the independent watcher at all", rpcSentTopic)
+	}
+	if len(receivedEvts) == 0 {
+		t.Fatalf("%s: no event arrived at the independent watcher at all", rpcReceivedTopic)
+	}
+
+	_, completedEvt, callerReqID := findPair(t, rpcSentTopic, sentEvts, rpcCompletedTopic, completedEvts)
+	outcomeField(t, rpcCompletedTopic, completedEvt, "completed")
+
+	_, repliedEvt, providerReqID := findPair(t, rpcReceivedTopic, receivedEvts, rpcRepliedTopic, repliedEvts)
+	outcomeField(t, rpcRepliedTopic, repliedEvt, "replied")
+
+	// The caller's own request_id lifecycle (sent/completed) and the
+	// provider's own (received/replied) are DELIBERATELY independent --
+	// matching macula_request.erl/macula_response.erl exactly, each side
+	// mints its own via crypto:strong_rand_bytes(16), uncorrelated with
+	// the other side or with the wire CALL's own CallID. (Not asserted as
+	// inequality here: on a shared fleet, coincidence aside, a DIFFERENT
+	// concurrent party's ids could theoretically land in either bucket --
+	// the real, meaningful assertion is the two correlations just proven.)
+
+	t.Logf("OBSERVED: RPC telemetry facts correlate correctly through an independent watcher -- caller request_id=%x (sent+completed, outcome=completed), provider request_id=%x (received+replied, outcome=replied)",
+		callerReqID, providerReqID)
+}

@@ -46,7 +46,7 @@ type PublishOutcome struct {
 // assume it runs synchronously with RunPublisher's return.
 func (s *Session) RunPublisher(spec frame.PublishSpec, id identity.KeyPair, announce bool, onDone func(PublishOutcome)) (cancel func()) {
 	var cancelled atomic.Bool
-	publishID := randomPublishID()
+	publishID := randomID()
 
 	announceFact(s, announce, spec.Realm, id, publishStartedTopic,
 		cbor.Map([]cbor.MapEntry{
@@ -69,14 +69,22 @@ func (s *Session) RunPublisher(spec frame.PublishSpec, id identity.KeyPair, anno
 	return func() { cancelled.Store(true) }
 }
 
-func randomPublishID() []byte {
+// randomID mints a 16-byte random identifier for a fire-and-forget
+// telemetry fact (a publish_id, or the RPC facts' own request_id) --
+// shared across every such fact in this package rather than duplicated
+// per call site.
+func randomID() []byte {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b) // crypto/rand.Read never returns a short read or error per its own doc
 	return b
 }
 
+// announceFact is a no-op if s is nil -- real callers always pass a live
+// Session; a nil Session only occurs in network-free unit tests exercising
+// pure dispatch logic (e.g. connection/serve_ucan_test.go's
+// buildCallReply tests), which intentionally have nothing to publish to.
 func announceFact(s *Session, announce bool, realm []byte, id identity.KeyPair, topic string, payload cbor.Value) {
-	if !announce {
+	if !announce || s == nil {
 		return
 	}
 	spec := frame.NewPublishSpec(topic, realm, id.NodeID(), factSeq(), payload, time.Now().UnixMilli())

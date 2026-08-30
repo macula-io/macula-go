@@ -125,14 +125,22 @@ func (s *Session) AcceptDedicatedStream(ctx context.Context) (*FrameStream, erro
 // Call sends a signed CALL on the control stream and waits for the
 // matching RESULT or ERROR — see FrameStream.Call.
 func (s *Session) Call(procedure string, realm []byte, payload cbor.Value, deadlineMs int64, id identity.KeyPair, timeout time.Duration) (frame.CallResponse, error) {
-	return s.control.Call(procedure, realm, payload, deadlineMs, id, timeout)
+	requestID := randomID()
+	announceRPCSent(s, realm, id, requestID)
+	resp, err := s.control.Call(procedure, realm, payload, deadlineMs, id, timeout)
+	announceRPCCompleted(s, realm, id, requestID, resp, err)
+	return resp, err
 }
 
 // CallWithUCAN is Call, attaching ucanToken (e.g. from ucan.Create) to
 // the outgoing CALL — for invoking a procedure gated by a
 // ucan.Policy.Required policy on the provider side.
 func (s *Session) CallWithUCAN(procedure string, realm []byte, payload cbor.Value, deadlineMs int64, id identity.KeyPair, timeout time.Duration, ucanToken []byte) (frame.CallResponse, error) {
-	return s.control.CallWithUCAN(procedure, realm, payload, deadlineMs, id, timeout, ucanToken)
+	requestID := randomID()
+	announceRPCSent(s, realm, id, requestID)
+	resp, err := s.control.CallWithUCAN(procedure, realm, payload, deadlineMs, id, timeout, ucanToken)
+	announceRPCCompleted(s, realm, id, requestID, resp, err)
+	return resp, err
 }
 
 // Publish sends a signed PUBLISH, carrying the end-to-end

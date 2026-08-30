@@ -106,11 +106,21 @@ func (s *Session) ServeOneCallGated(lookup CallLookup, policy PolicyLookup, id i
 }
 
 func (s *Session) replyToCall(callInfo frame.CallInfo, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) error {
-	reply := buildCallReply(callInfo, lookup, policy, id.NodeID())
+	reply := buildCallReply(s, callInfo, lookup, policy, id)
 	return s.control.SendFrame(frame.Sign(reply, id))
 }
 
-func buildCallReply(callInfo frame.CallInfo, lookup CallLookup, policy PolicyLookup, selfPub []byte) cbor.Value {
+// buildCallReply fires rpc.received_v1/rpc.replied_v1 around dispatch,
+// matching macula_response.erl's own per-request child exactly: RECEIVED
+// only after policy and lookup both pass (mirroring the child only
+// starting once the raw advertise mechanism already decided to dispatch
+// to a real handler), REPLIED for the success/handler-error outcomes but
+// NOT for a handler panic -- the reference's own handle_request/2 crash
+// takes down the whole per-request child before its publish_replied/2
+// call is ever reached, so a crash is never announced there either, and
+// this matches that omission rather than "improving" on it.
+func buildCallReply(s *Session, callInfo frame.CallInfo, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) cbor.Value {
+	selfPub := id.NodeID()
 	if err := policy(callInfo.Realm, callInfo.Procedure).Check(callInfo.UcanToken); err != nil {
 		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.Unauthorized, selfPub))
 	}
@@ -120,16 +130,21 @@ func buildCallReply(callInfo frame.CallInfo, lookup CallLookup, policy PolicyLoo
 		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.UnknownNextPeer, selfPub))
 	}
 
+	requestID := randomID()
+	announceRPCReceived(s, callInfo.Realm, id, requestID)
+
 	payload, err, crashed := invokeCallHandler(handler, callInfo.Payload)
 	switch {
 	case crashed:
 		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.TemporaryRelayFailure, selfPub))
 	case err != nil:
+		announceRPCReplied(s, callInfo.Realm, id, requestID, err)
 		spec := frame.NewCallErrorSpec(callInfo.CallID, bolt4.UnknownError, selfPub)
 		detail := err.Error()
 		spec.Detail = &detail
 		return frame.CallErrorFrame(spec)
 	default:
+		announceRPCReplied(s, callInfo.Realm, id, requestID, nil)
 		return frame.Result(frame.NewResultSpec(callInfo.CallID, payload, selfPub))
 	}
 }

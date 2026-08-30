@@ -48,7 +48,7 @@ func TestBuildCallReplyOpenPolicyInvokesHandlerWithoutToken(t *testing.T) {
 		Payload: cbor.Text("hi"), Caller: selfID.NodeID(),
 		// UcanToken deliberately absent.
 	}
-	reply := buildCallReply(callInfo, lookup, openPolicy, selfID.NodeID())
+	reply := buildCallReply(nil, callInfo, lookup, openPolicy, selfID)
 	isErr, _ := responseCode(t, reply)
 	if isErr {
 		t.Fatalf("open policy with no token should reach the handler, got an error frame")
@@ -74,7 +74,7 @@ func TestBuildCallReplyGatedPolicyRejectsMissingTokenWithoutInvokingHandler(t *t
 		Payload: cbor.Text("hi"), Caller: selfID.NodeID(),
 		// UcanToken deliberately absent -- must be refused before lookup.
 	}
-	reply := buildCallReply(callInfo, lookup, policy, selfID.NodeID())
+	reply := buildCallReply(nil, callInfo, lookup, policy, selfID)
 	isErr, code := responseCode(t, reply)
 	if !isErr || bolt4.Code(code) != bolt4.Unauthorized {
 		t.Fatalf("gated policy with no token: isError=%v code=%d, want ERROR Unauthorized(0x%02x)", isErr, code, bolt4.Unauthorized)
@@ -104,7 +104,7 @@ func TestBuildCallReplyGatedPolicyRejectsInvalidTokenWithoutInvokingHandler(t *t
 		CallID: make([]byte, 16), Procedure: "gated.proc", Realm: make([]byte, 32),
 		Payload: cbor.Text("hi"), Caller: selfID.NodeID(), UcanToken: badToken,
 	}
-	reply := buildCallReply(callInfo, lookup, policy, selfID.NodeID())
+	reply := buildCallReply(nil, callInfo, lookup, policy, selfID)
 	isErr, code := responseCode(t, reply)
 	if !isErr || bolt4.Code(code) != bolt4.Unauthorized {
 		t.Fatalf("gated policy with a token from the wrong signer: isError=%v code=%d, want ERROR Unauthorized(0x%02x)", isErr, code, bolt4.Unauthorized)
@@ -139,7 +139,7 @@ func TestBuildCallReplyGatedPolicyAcceptsValidTokenAndInvokesHandler(t *testing.
 		CallID: make([]byte, 16), Procedure: "gated.proc", Realm: make([]byte, 32),
 		Payload: cbor.Text("authorized payload"), Caller: selfID.NodeID(), UcanToken: goodToken,
 	}
-	reply := buildCallReply(callInfo, lookup, policy, selfID.NodeID())
+	reply := buildCallReply(nil, callInfo, lookup, policy, selfID)
 	isErr, _ := responseCode(t, reply)
 	if isErr {
 		t.Fatalf("gated policy with a valid token should reach the handler, got an error frame")
