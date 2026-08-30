@@ -200,12 +200,14 @@ func DiscoveryURI(realm []byte, procedure string) string {
 }
 
 // ProcedureAdvertisement is a procedure_advertisement record's fields, read
-// out of its payload — mirrors macula_record:read_procedure_advertisement/1
-// (the cert_chain field is not ported; see this package's doc).
+// out of its payload — mirrors macula_record:read_procedure_advertisement/1.
+// CertChain is nil when the advertisement carries no cert_chain field (the
+// common, unmanaged-realm case); see VerifyAdvertisementCertChain.
 type ProcedureAdvertisement struct {
 	ProcedureURI   string
 	AdvertiserNode []byte
 	ServingStation []byte
+	CertChain      []byte // optional: leaf-first PEM bundle, leaf ++ org CA
 }
 
 // ReadProcedureAdvertisement extracts a procedure_advertisement record's
@@ -220,7 +222,33 @@ func ReadProcedureAdvertisement(r Record) (ProcedureAdvertisement, error) {
 	if !uok || !aok || !sok || len(adv) != 32 || len(station) != 32 {
 		return ProcedureAdvertisement{}, fmt.Errorf("dht: malformed procedure_advertisement payload")
 	}
-	return ProcedureAdvertisement{ProcedureURI: uri, AdvertiserNode: adv, ServingStation: station}, nil
+	certChain, _ := bytesField(r.Payload, "cert_chain") // absent is valid, not an error
+	return ProcedureAdvertisement{
+		ProcedureURI:   uri,
+		AdvertiserNode: adv,
+		ServingStation: station,
+		CertChain:      certChain,
+	}, nil
+}
+
+// NewProcedureAdvertisementWithCertChain is NewProcedureAdvertisement plus
+// an embedded X.509 service-cert chain (leaf-first PEM: leaf ++ org CA),
+// for Slice 7c Direction B managed-realm authorization — see
+// VerifyAdvertisementCertChain for the corresponding check. Opt-in: plain
+// NewProcedureAdvertisement is unaffected and remains the right choice for
+// unmanaged realms.
+func NewProcedureAdvertisementWithCertChain(advertiserNode []byte, procedureURI string, servingStation []byte, ttl time.Duration, certChainPEM []byte) (Record, error) {
+	rec, err := NewProcedureAdvertisement(advertiserNode, procedureURI, servingStation, ttl)
+	if err != nil {
+		return Record{}, err
+	}
+	entries, ok := rec.Payload.AsMap()
+	if !ok {
+		return Record{}, fmt.Errorf("dht: internal: procedure_advertisement payload is not a map")
+	}
+	entries = append(entries, cbor.MapEntry{Key: cbor.Text("cert_chain"), Val: cbor.Bytes(certChainPEM)})
+	rec.Payload = cbor.Map(entries)
+	return rec, nil
 }
 
 // StationEndpoint is a station_endpoint record's fields, read out of its

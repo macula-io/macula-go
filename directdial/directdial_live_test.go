@@ -2,7 +2,13 @@ package directdial
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"os"
 	"testing"
 	"time"
@@ -13,6 +19,55 @@ import (
 	"github.com/macula-io/macula-go-sdk/identity"
 	"github.com/macula-io/macula-go-sdk/transport"
 )
+
+// testRealmCA and testLeafFor are a minimal, local cert-chain fixture for
+// TestLiveResolveWithCertChain -- the caller's trust anchor is entirely
+// self-issued and never needs macula-station's own involvement, since
+// cert-chain authorization is a client-side check on an opaque DHT
+// payload the station never inspects. See dht/cert_chain_test.go for the
+// fuller fixture this mirrors (unexported there, so not reusable directly
+// across packages).
+func testRealmCA(t *testing.T) ([]byte, *x509.Certificate, ed25519.PrivateKey) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("ed25519.GenerateKey (CA): %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Live Test Realm CA", Organization: []string{"Live Test Realm CA"}},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, priv)
+	if err != nil {
+		t.Fatalf("x509.CreateCertificate (CA): %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("x509.ParseCertificate (CA): %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), cert, priv
+}
+
+func testLeafFor(t *testing.T, ca *x509.Certificate, caPriv ed25519.PrivateKey, subjectPub ed25519.PublicKey, org string) []byte {
+	t.Helper()
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "live-test-service", Organization: []string{org}},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, subjectPub, caPriv)
+	if err != nil {
+		t.Fatalf("x509.CreateCertificate (leaf): %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
 
 // TestLiveAdvertiseAndResolve exercises AdvertiseDirect + Resolve against
 // the real, live demo fleet — not a fake/local station. Skipped unless
@@ -221,6 +276,74 @@ func TestLiveDirectDialServeRoundTrip(t *testing.T) {
 	if serveErr := <-served; serveErr != nil {
 		t.Fatalf("ServeOneCall returned an error after apparently answering: %v", serveErr)
 	}
+}
+
+// TestLiveResolveWithCertChain proves the cert_chain field survives a real
+// DHT round trip end to end (CBOR encode -> wire -> real station storage
+// -> wire -> CBOR decode -> X.509 parse), which unit tests alone cannot
+// check since they never touch the wire. The trust anchor is entirely
+// self-issued for this test -- macula-station never inspects DHT record
+// payloads, so no fleet-side provisioning is needed to prove this path.
+func TestLiveResolveWithCertChain(t *testing.T) {
+	if os.Getenv("MACULA_LIVE_TEST") == "" {
+		t.Skip("set MACULA_LIVE_TEST=1 to run against the live demo fleet")
+	}
+	host := os.Getenv("MACULA_LIVE_HOST")
+	if host == "" {
+		host = "station-de-falkenstein.macula.io"
+	}
+	const port = 4433
+	const procedure = "directdial_live_test.cert_chain_v1"
+	realm := make([]byte, 32)
+	const org = "acme-corp"
+
+	caPEM, caCert, caPriv := testRealmCA(t)
+
+	id, err := identity.GenerateWithPuzzle(identity.DefaultPuzzleDifficulty)
+	if err != nil {
+		t.Fatalf("identity.GenerateWithPuzzle: %v", err)
+	}
+	leafPEM := testLeafFor(t, caCert, caPriv, ed25519.PublicKey(id.NodeID()), org)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	advertiser, err := connection.Connect(ctx, host, port, transport.WebPKI{}, id)
+	if err != nil {
+		t.Fatalf("Connect (advertiser session) to %s:%d: %v", host, port, err)
+	}
+	defer func() { _ = advertiser.Close("normal", nil, id) }()
+
+	if err := AdvertiseDirectWithCertChain(advertiser, id, realm, procedure, time.Hour, leafPEM); err != nil {
+		t.Fatalf("AdvertiseDirectWithCertChain: %v", err)
+	}
+	t.Logf("advertiser %x published a cert-chain advertisement for %q, org=%q", advertiser.Station.NodeID, procedure, org)
+
+	resolver, err := connection.Connect(ctx, host, port, transport.WebPKI{}, id)
+	if err != nil {
+		t.Fatalf("Connect (resolver session) to %s:%d: %v", host, port, err)
+	}
+	defer func() { _ = resolver.Close("normal", nil, id) }()
+
+	station, dialHost, dialPort, err := ResolveWithCertChain(resolver, id, realm, procedure, caPEM, org)
+	if err != nil {
+		if errors.Is(err, ErrStationEndpointNotFound) {
+			t.Skipf("Resolve reached station_endpoint resolution but found no live record -- known external relay-side gap (see TestLiveAdvertiseAndResolve's comment), not a failure of this package's logic: %v", err)
+		}
+		t.Fatalf("ResolveWithCertChain: %v (this is the actual gap under test -- the cert_chain field must round-trip the real wire intact)", err)
+	}
+	t.Logf("resolved+authorized %q -> station=%x host=%s port=%d", procedure, station, dialHost, dialPort)
+	if string(station) != string(advertiser.Station.NodeID) {
+		t.Fatalf("resolved station = %x, want the advertiser's own station %x", station, advertiser.Station.NodeID)
+	}
+
+	// Negative control: the SAME resolved record must be rejected for the
+	// WRONG org, proving this isn't accidentally passing open regardless
+	// of the cert chain's actual content.
+	if _, _, _, err := ResolveWithCertChain(resolver, id, realm, procedure, caPEM, "wrong-org"); !errors.Is(err, ErrNoAuthorizedAdvertisement) {
+		t.Fatalf("ResolveWithCertChain(wrong org) = %v, want ErrNoAuthorizedAdvertisement", err)
+	}
+	t.Logf("OBSERVED: correct org resolves+authorizes over the real wire; wrong org is correctly rejected on the same real record")
 }
 
 // TestLiveKeepAdvertisedDirectRepublishes proves KeepAdvertisedDirect

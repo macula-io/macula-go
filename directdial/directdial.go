@@ -49,6 +49,13 @@ var (
 	ErrProcedureNotAdvertised  = errors.New("directdial: procedure has no direct-dial advertisement in the DHT")
 	ErrNoTrustedAdvertisement  = errors.New("directdial: every candidate advertisement failed signature verification")
 	ErrStationEndpointNotFound = errors.New("directdial: resolved station published no reachable station_endpoint")
+	// ErrNoAuthorizedAdvertisement means at least one candidate advertisement's
+	// envelope signature verified (otherwise ErrNoTrustedAdvertisement would
+	// apply), but none passed cert-chain authorization for the expected org
+	// — see dht.VerifyAdvertisementCertChain for why (absent chain, wrong
+	// org, untrusted chain, etc. — unwrap for the specific reason from the
+	// LAST candidate tried).
+	ErrNoAuthorizedAdvertisement = errors.New("directdial: no candidate advertisement is cert-chain-authorized for the expected org")
 )
 
 // Resolve finds procedure's currently-advertised serving station and its
@@ -93,6 +100,112 @@ func firstTrustedAdvertisement(recs []dht.Record) (dht.ProcedureAdvertisement, b
 		return adv, true
 	}
 	return dht.ProcedureAdvertisement{}, false
+}
+
+// ResolveWithCertChain is Resolve, plus Slice 7c Direction B managed-realm
+// authorization: only an advertisement whose embedded cert chain validates
+// to realmCAPEM and names expectedOrg is trusted. Opt-in — Resolve itself
+// is unaffected and remains the right choice for unmanaged realms.
+//
+// lastErr surfaces the specific dht.VerifyAdvertisementCertChain failure
+// from the LAST candidate tried when none qualify (wrapped under
+// ErrNoAuthorizedAdvertisement via errors.Unwrap) — distinguishing "nobody
+// advertised a cert chain at all" from "one did, but for the wrong org"
+// matters operationally, so callers get the real reason, not just "no".
+func ResolveWithCertChain(session *connection.Session, id identity.KeyPair, realm []byte, procedure string, realmCAPEM []byte, expectedOrg string) (station []byte, host string, port uint16, err error) {
+	uri := dht.DiscoveryURI(realm, procedure)
+	key := dht.ProcedureKey(uri)
+
+	var recs []dht.Record
+	for attempt := 0; attempt < resolveRetries; attempt++ {
+		recs, err = dht.FindRecords(session, id, key)
+		if err == nil && len(recs) > 0 {
+			break
+		}
+		time.Sleep(resolveRetryDelay)
+	}
+	if len(recs) == 0 {
+		return nil, "", 0, ErrProcedureNotAdvertised
+	}
+
+	adv, ok, lastErr := firstAuthorizedAdvertisement(recs, realmCAPEM, expectedOrg)
+	if !ok {
+		if lastErr != nil {
+			return nil, "", 0, fmt.Errorf("%w: %v", ErrNoAuthorizedAdvertisement, lastErr)
+		}
+		return nil, "", 0, ErrNoTrustedAdvertisement
+	}
+
+	return resolveStationEndpoint(session, id, adv.ServingStation)
+}
+
+// firstAuthorizedAdvertisement is firstTrustedAdvertisement plus the
+// cert-chain check. lastErr is the most recent VerifyAdvertisementCertChain
+// failure seen (nil if every candidate failed the plain signature check
+// instead, in which case the caller should report ErrNoTrustedAdvertisement,
+// matching Resolve's own distinction).
+func firstAuthorizedAdvertisement(recs []dht.Record, realmCAPEM []byte, expectedOrg string) (dht.ProcedureAdvertisement, bool, error) {
+	var lastErr error
+	for _, rec := range recs {
+		if err := dht.VerifyAdvertisementCertChain(realmCAPEM, rec, expectedOrg); err != nil {
+			if !errors.Is(err, dht.ErrCertChainBadSignature) {
+				lastErr = err
+			}
+			continue
+		}
+		adv, err := dht.ReadProcedureAdvertisement(rec)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return adv, true, nil
+	}
+	return dht.ProcedureAdvertisement{}, false, lastErr
+}
+
+// CallWithCertChain is Call, resolved via ResolveWithCertChain instead of
+// Resolve — see both for the full contract. Opt-in managed-realm
+// authorization; Call itself is unaffected.
+func CallWithCertChain(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, realmCAPEM []byte, expectedOrg string, payload cbor.Value, timeout time.Duration) (frame.CallResponse, error) {
+	station, host, port, err := ResolveWithCertChain(resolveVia, id, realm, procedure, realmCAPEM, expectedOrg)
+	if err != nil {
+		return frame.CallResponse{}, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
+	}
+
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	target, err := connection.Connect(dialCtx, host, port, transport.Insecure{}, id)
+	if err != nil {
+		return frame.CallResponse{}, fmt.Errorf("directdial: dial resolved station %x at %s:%d: %w", station, host, port, err)
+	}
+	defer func() { _ = target.Close("normal", nil, id) }()
+
+	if !bytesEqual(target.Station.NodeID, station) {
+		return frame.CallResponse{}, fmt.Errorf(
+			"directdial: trust violation — resolved station %x but the dialed peer proved identity %x",
+			station, target.Station.NodeID)
+	}
+
+	return target.Call(procedure, realm, payload, time.Now().Add(timeout).UnixMilli(), id, timeout)
+}
+
+// AdvertiseDirectWithCertChain is AdvertiseDirect, plus embedding a
+// service-cert chain (leaf-first PEM: leaf ++ org CA) for Slice 7c
+// Direction B authorization — see dht.NewProcedureAdvertisementWithCertChain
+// and VerifyAdvertisementCertChain. Opt-in; AdvertiseDirect itself is
+// unaffected.
+func AdvertiseDirectWithCertChain(session *connection.Session, id identity.KeyPair, realm []byte, procedure string, ttl time.Duration, certChainPEM []byte) error {
+	advertiseSpec := frame.NewAdvertiseSpec(realm, procedure, id.NodeID())
+	if err := session.Advertise(advertiseSpec, id); err != nil {
+		return fmt.Errorf("directdial: advertise: %w", err)
+	}
+	uri := dht.DiscoveryURI(realm, procedure)
+	rec, err := dht.NewProcedureAdvertisementWithCertChain(id.NodeID(), uri, session.Station.NodeID, ttl, certChainPEM)
+	if err != nil {
+		return err
+	}
+	rec = dht.Sign(rec, id)
+	return dht.PutRecord(session, id, rec)
 }
 
 // resolveStationEndpoint retries past a resolved-but-stale record, not
