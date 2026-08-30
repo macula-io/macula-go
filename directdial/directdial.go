@@ -26,13 +26,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/macula-io/macula-go-sdk/cbor"
 	"github.com/macula-io/macula-go-sdk/connection"
+	"github.com/macula-io/macula-go-sdk/content"
 	"github.com/macula-io/macula-go-sdk/dht"
 	"github.com/macula-io/macula-go-sdk/frame"
 	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go-sdk/manifest"
+	"github.com/macula-io/macula-go-sdk/stream"
 	"github.com/macula-io/macula-go-sdk/transport"
 )
 
@@ -85,7 +91,7 @@ func Resolve(session *connection.Session, id identity.KeyPair, realm []byte, pro
 		return nil, "", 0, ErrNoTrustedAdvertisement
 	}
 
-	return resolveStationEndpoint(session, id, adv.ServingStation)
+	return ResolveStationEndpoint(session, id, adv.ServingStation)
 }
 
 func firstTrustedAdvertisement(recs []dht.Record) (dht.ProcedureAdvertisement, bool) {
@@ -136,7 +142,7 @@ func ResolveWithCertChain(session *connection.Session, id identity.KeyPair, real
 		return nil, "", 0, ErrNoTrustedAdvertisement
 	}
 
-	return resolveStationEndpoint(session, id, adv.ServingStation)
+	return ResolveStationEndpoint(session, id, adv.ServingStation)
 }
 
 // firstAuthorizedAdvertisement is firstTrustedAdvertisement plus the
@@ -208,12 +214,20 @@ func AdvertiseDirectWithCertChain(session *connection.Session, id identity.KeyPa
 	return dht.PutRecord(session, id, rec)
 }
 
-// resolveStationEndpoint retries past a resolved-but-stale record, not
-// just an absent one — the DHT can hand back a replica that hasn't been
-// evicted yet even though the station's own current publish is live.
-// Giving up on the first stale hit would make an otherwise healthy
-// station unreachable via direct-dial until that one replica ages out.
-func resolveStationEndpoint(session *connection.Session, id identity.KeyPair, station []byte) (out []byte, host string, port uint16, err error) {
+// ResolveStationEndpoint resolves an arbitrary known station's dialable
+// host/port from its own signed station_endpoint record — the same lookup
+// Resolve performs internally after finding a procedure_advertisement, but
+// exported for callers that already know WHICH station they want (content
+// PUT-direct: macula_feeder:start_link_direct/5,6's own pattern, which
+// names Station directly rather than resolving one via a
+// procedure_advertisement — content has no "procedure" to advertise).
+//
+// Retries past a resolved-but-stale record, not just an absent one — the
+// DHT can hand back a replica that hasn't been evicted yet even though the
+// station's own current publish is live. Giving up on the first stale hit
+// would make an otherwise healthy station unreachable via direct-dial
+// until that one replica ages out.
+func ResolveStationEndpoint(session *connection.Session, id identity.KeyPair, station []byte) (out []byte, host string, port uint16, err error) {
 	key := dht.StationEndpointKey(station)
 	for attempt := 0; attempt < resolveRetries; attempt++ {
 		rec, ferr := dht.FindRecord(session, id, key)
@@ -366,6 +380,218 @@ func KeepAdvertisedDirect(ctx context.Context, session *connection.Session, id i
 			tick()
 		}
 	}
+}
+
+// dialAndVerify dials host:port and checks the freshly connected session's
+// own signature-verified HELLO identity against station — the shared
+// second half of every direct-dial call shape (Call, CallWithCertChain, and
+// now OpenStreamDirect/OpenStreamDirectWithCertChain), factored out once
+// PutDirect/GetDirect needed the same dial-then-pin sequence against a
+// station identity that ISN'T necessarily reached via Resolve.
+func dialAndVerify(ctx context.Context, host string, port uint16, station []byte, id identity.KeyPair, timeout time.Duration) (*connection.Session, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	target, err := connection.Connect(dialCtx, host, port, transport.Insecure{}, id)
+	if err != nil {
+		return nil, fmt.Errorf("directdial: dial resolved station %x at %s:%d: %w", station, host, port, err)
+	}
+	if !bytesEqual(target.Station.NodeID, station) {
+		_ = target.Close("normal", nil, id)
+		return nil, fmt.Errorf(
+			"directdial: trust violation — resolved station %x but the dialed peer proved identity %x",
+			station, target.Station.NodeID)
+	}
+	return target, nil
+}
+
+// OpenStreamDirect resolves procedure's provider via direct-dial (through
+// resolveVia, which is used only to query the DHT) and opens a stream
+// there, in one hop, in a SEPARATE connection from resolveVia — the
+// streaming-RPC counterpart to Call. The provider must have advertised via
+// AdvertiseDirect: streaming's provider side (macula_streamer.erl) shares
+// the identical procedure_advertisement mechanism RPC uses (confirmed
+// against macula_streamer.erl/macula_stream_sink.erl's own advertise_direct/
+// start_link_direct — both are macula_response:advertise_direct/
+// macula_direct_dial:call_stream under the hood, nothing stream-specific
+// added), so no separate stream-shaped AdvertiseDirect exists or is needed.
+//
+// The caller owns the returned *connection.Session (and must Close it once
+// the stream and any other work on it is done) alongside the *stream.Handle
+// itself, since — unlike Call, which owns its dial for exactly one
+// request/reply — a stream outlives the single function call that opens it.
+func OpenStreamDirect(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, mode frame.StreamMode, args cbor.Value, deadlineMs int64, timeout time.Duration) (*connection.Session, *stream.Handle, error) {
+	station, host, port, err := Resolve(resolveVia, id, realm, procedure)
+	if err != nil {
+		return nil, nil, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
+	}
+	target, err := dialAndVerify(ctx, host, port, station, id, timeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	h, err := stream.Open(ctx, target, procedure, realm, mode, args, deadlineMs, id)
+	if err != nil {
+		_ = target.Close("normal", nil, id)
+		return nil, nil, fmt.Errorf("directdial: open stream: %w", err)
+	}
+	return target, h, nil
+}
+
+// OpenStreamDirectWithCertChain is OpenStreamDirect, resolved via
+// ResolveWithCertChain instead of Resolve — see both for the full
+// contract. Opt-in managed-realm authorization; OpenStreamDirect itself is
+// unaffected.
+func OpenStreamDirectWithCertChain(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, realmCAPEM []byte, expectedOrg string, mode frame.StreamMode, args cbor.Value, deadlineMs int64, timeout time.Duration) (*connection.Session, *stream.Handle, error) {
+	station, host, port, err := ResolveWithCertChain(resolveVia, id, realm, procedure, realmCAPEM, expectedOrg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
+	}
+	target, err := dialAndVerify(ctx, host, port, station, id, timeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	h, err := stream.Open(ctx, target, procedure, realm, mode, args, deadlineMs, id)
+	if err != nil {
+		_ = target.Close("normal", nil, id)
+		return nil, nil, fmt.Errorf("directdial: open stream: %w", err)
+	}
+	return target, h, nil
+}
+
+// PutDirect stores data at a KNOWN station directly, in one hop, instead of
+// going through whatever station resolveVia happens to be connected to.
+// Mirrors macula_feeder:start_link_direct/5,6, which — unlike
+// procedure/stream direct-dial — takes the target Station's pubkey
+// directly rather than resolving one via a procedure_advertisement: content
+// has no "procedure" to advertise, so there is nothing to Resolve here
+// beyond the station's own station_endpoint (ResolveStationEndpoint).
+// resolveVia is used only to query the DHT for station's station_endpoint;
+// it does not need to already be connected to station.
+//
+// Caveat found live: if resolveVia happens to already be connected to
+// station (the common case when the caller doesn't have a separate
+// resolver session), PutDirect's own internal dial reuses id against the
+// SAME station resolveVia is on — this fleet enforces one connection per
+// identity and kicks whichever connects second, so resolveVia's own
+// connection can be closed out from under the caller by this call. Use a
+// different identity for resolveVia than for id if the caller needs
+// resolveVia to keep working afterward against that same station.
+func PutDirect(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, station []byte, data []byte, name string, timeout time.Duration) (manifest.Mcid, error) {
+	resolved, host, port, err := ResolveStationEndpoint(resolveVia, id, station)
+	if err != nil {
+		return manifest.Mcid{}, fmt.Errorf("directdial: resolve station %x: %w", station, err)
+	}
+	target, err := dialAndVerify(ctx, host, port, resolved, id, timeout)
+	if err != nil {
+		return manifest.Mcid{}, err
+	}
+	defer func() { _ = target.Close("normal", nil, id) }()
+	return content.Put(ctx, target, data, name, id)
+}
+
+// GetDirect fetches and verifies the content addressed by mcid from
+// whichever station a signed content_announcement names as its host,
+// dialing that station in one hop instead of relaying through resolveVia's
+// own station. Mirrors macula_direct_dial:get_content/3.
+//
+// Architectural note this package's other direct-dial functions don't need:
+// a content_announcement's endpoint is the FINAL dial target directly (see
+// macula_record:read_content_announcement/1's `endpoint` field and
+// macula:get_content_station/5's use of it as-is) — unlike
+// procedure_advertisement, there is no station-relay indirection, so the
+// announcer must genuinely BE independently dialable there. A plain
+// outbound-only leaf (everything this SDK's own identity/session model
+// supports) cannot legitimately publish one of these about itself — only
+// something with its own listening identity (macula-station, or a
+// dedicated content-serving relay) can. This SDK therefore does not expose
+// a client-facing "AnnounceContentDirect": dht.NewContentAnnouncement stays
+// a low-level primitive (mirroring macula_record.erl's own export) for
+// that kind of infrastructure-tier code, not ordinary leaf use. GetDirect
+// itself has no such limitation — resolving and fetching FROM an
+// already-announced provider is a perfectly ordinary leaf operation.
+func GetDirect(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, mcid manifest.Mcid, timeout time.Duration) ([]byte, error) {
+	recs, err := dht.FindRecords(resolveVia, id, dht.ContentKey(mcid[:]))
+	if err != nil {
+		return nil, fmt.Errorf("directdial: find content providers: %w", err)
+	}
+	adv, ok := firstTrustedContentProvider(recs)
+	if !ok {
+		return nil, ErrContentNotAnnounced
+	}
+	host, port, err := parseSeedURL(adv.Endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("directdial: content provider endpoint %q: %w", adv.Endpoint, err)
+	}
+	target, err := dialAndVerify(ctx, host, port, adv.AnnouncerNode, id, timeout)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = target.Close("normal", nil, id) }()
+	return content.Get(ctx, target, mcid, id)
+}
+
+// ErrContentNotAnnounced means mcid has no live, verifiable
+// content_announcement in the DHT — either nobody announced it (common:
+// single-block content put via _content.put_block alone is never
+// announced, matching macula_content_transfer:put_single_block/3), or
+// every candidate found failed signature/self-consistency verification.
+var ErrContentNotAnnounced = errors.New("directdial: content has no verifiable announcement in the DHT")
+
+// firstTrustedContentProvider mirrors macula.erl's decode_provider/1: the
+// record's OWN signature must verify, AND the payload's claimed
+// announcer_node must equal the record's own envelope key — a record
+// merely stored under the right key but self-signed by a different
+// identity would otherwise still be trusted.
+func firstTrustedContentProvider(recs []dht.Record) (dht.ContentAnnouncement, bool) {
+	for _, rec := range recs {
+		if dht.Verify(rec) != nil {
+			continue
+		}
+		adv, err := dht.ReadContentAnnouncement(rec)
+		if err != nil {
+			continue
+		}
+		if !bytesEqual(adv.AnnouncerNode, rec.Key) {
+			continue
+		}
+		return adv, true
+	}
+	return dht.ContentAnnouncement{}, false
+}
+
+// parseSeedURL splits a content_announcement's endpoint (a dialable seed
+// URL, e.g. "https://host:4433" — macula_client:seed()'s own format) into
+// the host/port pair connection.Connect wants. Distinct from
+// station_endpoint's already-split host_advertised/quic_port fields —
+// content_announcement embeds a single ready-to-dial URL instead.
+func parseSeedURL(seed string) (host string, port uint16, err error) {
+	u, err := url.Parse(seed)
+	if err != nil {
+		return "", 0, fmt.Errorf("parse: %w", err)
+	}
+	h := u.Hostname()
+	if h == "" {
+		// No scheme/authority at all -- try it as a bare host:port instead
+		// of failing outright, matching this SDK's own tolerance elsewhere
+		// for a station config given without a scheme.
+		var portStr string
+		if h, portStr, err = net.SplitHostPort(seed); err != nil {
+			return "", 0, fmt.Errorf("not a URL or host:port: %s", seed)
+		}
+		p, perr := strconv.ParseUint(portStr, 10, 16)
+		if perr != nil {
+			return "", 0, fmt.Errorf("invalid port %q: %w", portStr, perr)
+		}
+		return h, uint16(p), nil
+	}
+	portStr := u.Port()
+	if portStr == "" {
+		return "", 0, fmt.Errorf("endpoint has no port: %s", seed)
+	}
+	p, perr := strconv.ParseUint(portStr, 10, 16)
+	if perr != nil {
+		return "", 0, fmt.Errorf("invalid port %q: %w", portStr, perr)
+	}
+	return h, uint16(p), nil
 }
 
 func bytesEqual(a, b []byte) bool {

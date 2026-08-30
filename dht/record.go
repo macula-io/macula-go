@@ -24,6 +24,7 @@ import (
 // Record type tags — macula_record.erl's ?TYPE_* constants.
 const (
 	TypeProcedureAdvertisement uint8 = 0x06
+	TypeContentAnnouncement    uint8 = 0x11
 	TypeStationEndpoint        uint8 = 0x12
 )
 
@@ -295,6 +296,79 @@ func ReadStationEndpoint(r Record) (StationEndpoint, error) {
 		}
 	}
 	return StationEndpoint{QuicPort: uint16(portI), HostAdvertised: hosts}, nil
+}
+
+// ContentAnnouncement is a content_announcement record's fields, read out
+// of its payload — mirrors macula_record:read_content_announcement/1. Name/
+// Size/ChunkCount are optional metadata (zero value when absent), matching
+// the reference's own content_announcement_opts().
+type ContentAnnouncement struct {
+	AnnouncerNode []byte
+	MCID          []byte
+	Endpoint      string // a dialable seed URL, e.g. "https://host:4433" — matches macula_client:seed()'s own format, NOT a station_endpoint's split host/port
+	Name          string
+	Size          int64
+	ChunkCount    int64
+}
+
+// NewContentAnnouncement builds an UNSIGNED content_announcement record
+// naming announcerNode as reachable at endpoint for mcid. Sign before
+// PutRecord. Mirrors macula_record:content_announcement/3,4 — the optional
+// name/size/chunk_count metadata fields are not ported (this package's
+// GetDirect doesn't need them to resolve and dial; add them if a future
+// caller needs to prioritize candidates without fetching the manifest).
+func NewContentAnnouncement(announcerNode []byte, mcid []byte, endpoint string, ttl time.Duration) (Record, error) {
+	if len(announcerNode) != 32 {
+		return Record{}, fmt.Errorf("dht: announcer node must be 32 bytes, got %d", len(announcerNode))
+	}
+	if len(mcid) != 34 {
+		return Record{}, fmt.Errorf("dht: mcid must be 34 bytes, got %d", len(mcid))
+	}
+	payload := cbor.Map([]cbor.MapEntry{
+		{Key: cbor.Text("announcer_node"), Val: cbor.Bytes(announcerNode)},
+		{Key: cbor.Text("mcid"), Val: cbor.Bytes(mcid)},
+		{Key: cbor.Text("endpoint"), Val: cbor.Text(endpoint)},
+	})
+	return newEnvelope(TypeContentAnnouncement, announcerNode, payload, ttl), nil
+}
+
+// ReadContentAnnouncement extracts a content_announcement record's typed
+// fields, or an error if r isn't one or is malformed.
+func ReadContentAnnouncement(r Record) (ContentAnnouncement, error) {
+	if r.Type != TypeContentAnnouncement {
+		return ContentAnnouncement{}, fmt.Errorf("dht: not a content_announcement record (type=%d)", r.Type)
+	}
+	announcer, aok := bytesField(r.Payload, "announcer_node")
+	mcid, mok := bytesField(r.Payload, "mcid")
+	endpoint, eok := textField(r.Payload, "endpoint")
+	if !aok || !mok || !eok || len(announcer) != 32 || len(mcid) != 34 {
+		return ContentAnnouncement{}, fmt.Errorf("dht: malformed content_announcement payload")
+	}
+	out := ContentAnnouncement{AnnouncerNode: announcer, MCID: mcid, Endpoint: endpoint}
+	if v, ok := r.Payload.Get("name"); ok {
+		if s, ok := v.AsText(); ok {
+			out.Name = s
+		}
+	}
+	if v, ok := r.Payload.Get("size"); ok {
+		if n, ok := v.AsInt64(); ok {
+			out.Size = n
+		}
+	}
+	if v, ok := r.Payload.Get("chunk_count"); ok {
+		if n, ok := v.AsInt64(); ok {
+			out.ChunkCount = n
+		}
+	}
+	return out, nil
+}
+
+// ContentKey is the DHT storage key for every content_announcement naming
+// mcid: SHA-256(mcid). Matches macula_record:content_key/1. Consumers use
+// this with FindRecords (there may be more than one announcer) before
+// holding any record.
+func ContentKey(mcid []byte) [32]byte {
+	return sha256.Sum256(mcid)
 }
 
 func textField(v cbor.Value, name string) (string, bool) {
