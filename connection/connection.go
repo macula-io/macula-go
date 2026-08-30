@@ -128,6 +128,13 @@ func (s *Session) Call(procedure string, realm []byte, payload cbor.Value, deadl
 	return s.control.Call(procedure, realm, payload, deadlineMs, id, timeout)
 }
 
+// CallWithUCAN is Call, attaching ucanToken (e.g. from ucan.Create) to
+// the outgoing CALL — for invoking a procedure gated by a
+// ucan.Policy.Required policy on the provider side.
+func (s *Session) CallWithUCAN(procedure string, realm []byte, payload cbor.Value, deadlineMs int64, id identity.KeyPair, timeout time.Duration, ucanToken []byte) (frame.CallResponse, error) {
+	return s.control.CallWithUCAN(procedure, realm, payload, deadlineMs, id, timeout, ucanToken)
+}
+
 // Publish sends a signed PUBLISH, carrying the end-to-end
 // `publisher_sig` (over topic/realm/publisher/seq/payload, independent
 // of frame type) so the resulting EVENT survives being relayed beyond

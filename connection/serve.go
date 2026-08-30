@@ -9,6 +9,7 @@ import (
 	"github.com/macula-io/macula-go-sdk/cbor"
 	"github.com/macula-io/macula-go-sdk/frame"
 	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go-sdk/ucan"
 )
 
 // CallHandler answers one inbound CALL. Returning (payload, nil) sends
@@ -28,6 +29,15 @@ type CallHandler func(payload cbor.Value) (cbor.Value, error)
 // since the station only ever forwards a CALL for a procedure this
 // connection actually advertised.
 type CallLookup func(realm []byte, procedure string) (CallHandler, bool)
+
+// PolicyLookup resolves an inbound CALL's (realm, procedure) to the
+// ucan.Policy gating it, consulted BEFORE lookup — see
+// ServeOneCallGated. Defaults to ucan.Open for any (realm, procedure) an
+// implementation doesn't explicitly gate, matching Erlang's own
+// open-by-default (stored as absence to keep its policy map small).
+type PolicyLookup func(realm []byte, procedure string) ucan.Policy
+
+func openPolicy(_ []byte, _ string) ucan.Policy { return ucan.Open }
 
 // ErrServeOneCallTimeout is returned by ServeOneCall when timeout
 // elapses with no inbound CALL frame arriving.
@@ -58,6 +68,19 @@ var ErrServeOneCallTimeout = errors.New("connection: serve_one_call: timed out w
 //	    }
 //	}
 func (s *Session) ServeOneCall(lookup CallLookup, id identity.KeyPair, timeout time.Duration) error {
+	return s.ServeOneCallGated(lookup, openPolicy, id, timeout)
+}
+
+// ServeOneCallGated is ServeOneCall, additionally gating each inbound
+// CALL through policy BEFORE lookup runs — mirrors
+// macula_station_link.erl's handle_inbound_call/2 exactly: an open
+// policy (the default, ucan.Open) behaves identically to plain
+// ServeOneCall; a ucan.Required policy demands a CALL's UcanToken verify
+// against the required issuer, and refuses with BOLT#4 Unauthorized
+// (0x10) WITHOUT ever invoking lookup or a handler if it doesn't — a
+// CallHandler never sees the raw token either way, matching the
+// reference's own handler contract (payload only).
+func (s *Session) ServeOneCallGated(lookup CallLookup, policy PolicyLookup, id identity.KeyPair, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
 		if time.Now().After(deadline) {
@@ -78,16 +101,20 @@ func (s *Session) ServeOneCall(lookup CallLookup, id identity.KeyPair, timeout t
 		if err != nil {
 			continue // a malformed "call"-typed frame -- ignore and keep serving
 		}
-		return s.replyToCall(callInfo, lookup, id)
+		return s.replyToCall(callInfo, lookup, policy, id)
 	}
 }
 
-func (s *Session) replyToCall(callInfo frame.CallInfo, lookup CallLookup, id identity.KeyPair) error {
-	reply := buildCallReply(callInfo, lookup, id.NodeID())
+func (s *Session) replyToCall(callInfo frame.CallInfo, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) error {
+	reply := buildCallReply(callInfo, lookup, policy, id.NodeID())
 	return s.control.SendFrame(frame.Sign(reply, id))
 }
 
-func buildCallReply(callInfo frame.CallInfo, lookup CallLookup, selfPub []byte) cbor.Value {
+func buildCallReply(callInfo frame.CallInfo, lookup CallLookup, policy PolicyLookup, selfPub []byte) cbor.Value {
+	if err := policy(callInfo.Realm, callInfo.Procedure).Check(callInfo.UcanToken); err != nil {
+		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.Unauthorized, selfPub))
+	}
+
 	handler, found := lookup(callInfo.Realm, callInfo.Procedure)
 	if !found {
 		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.UnknownNextPeer, selfPub))

@@ -145,8 +145,9 @@ func FrameCallID(v cbor.Value) ([]byte, bool) {
 
 // CallInfo is the fields a provider needs from an *inbound* CALL — the
 // counterpart to CallResponse for the receiving side. Doesn't carry
-// source_route/retry_budget/ucan_token: nothing in the provider role
-// built so far acts on any of them.
+// source_route/retry_budget: nothing in the provider role built so far
+// acts on either. UcanToken IS carried (added alongside package ucan's
+// policy gating) — empty/nil if the caller attached none.
 type CallInfo struct {
 	CallID     []byte // 16 bytes
 	Procedure  string
@@ -154,6 +155,7 @@ type CallInfo struct {
 	Payload    cbor.Value
 	DeadlineMs int64
 	Caller     []byte // 32 bytes
+	UcanToken  []byte // optional; empty if the caller attached none
 }
 
 // ErrNotACallFrame is returned by ParseCall when frame_type is not
@@ -203,10 +205,17 @@ func ParseCall(v cbor.Value) (CallInfo, error) {
 	if err != nil {
 		return CallInfo{}, err
 	}
+	var ucanToken []byte
+	if uv, ok := v.Get("ucan_token"); ok {
+		if ub, ok := uv.AsBytes(); ok {
+			ucanToken = ub
+		}
+	}
 
 	return CallInfo{
 		CallID: callID, Procedure: string(procedureB), Realm: realm,
 		Payload: payload, DeadlineMs: deadlineMs, Caller: caller,
+		UcanToken: ucanToken,
 	}, nil
 }
 

@@ -80,11 +80,27 @@ func (fs *FrameStream) RecvFrame(deadline time.Time) (cbor.Value, error) {
 // control stream it means Call and Publish/Subscribe used concurrently
 // can race.
 func (fs *FrameStream) Call(procedure string, realm []byte, payload cbor.Value, deadlineMs int64, id identity.KeyPair, timeout time.Duration) (frame.CallResponse, error) {
+	return fs.callSpec(frame.NewCallSpec(nil, procedure, realm, payload, deadlineMs, id.NodeID()), id, timeout)
+}
+
+// CallWithUCAN is Call, additionally attaching ucanToken to the outgoing
+// CALL frame — for invoking a UCAN-gated procedure (see package ucan's
+// Policy). A procedure that isn't gated ignores the token; one that is
+// checks it before ever running its handler (connection.ServeOneCallGated),
+// so an invalid/missing token comes back as a BOLT#4 Unauthorized error
+// frame, not a Go error from this call.
+func (fs *FrameStream) CallWithUCAN(procedure string, realm []byte, payload cbor.Value, deadlineMs int64, id identity.KeyPair, timeout time.Duration, ucanToken []byte) (frame.CallResponse, error) {
+	spec := frame.NewCallSpec(nil, procedure, realm, payload, deadlineMs, id.NodeID())
+	spec.UcanToken = ucanToken
+	return fs.callSpec(spec, id, timeout)
+}
+
+func (fs *FrameStream) callSpec(spec frame.CallSpec, id identity.KeyPair, timeout time.Duration) (frame.CallResponse, error) {
 	callID := make([]byte, 16)
 	if _, err := rand.Read(callID); err != nil {
 		return frame.CallResponse{}, fmt.Errorf("connection: generate call_id: %w", err)
 	}
-	spec := frame.NewCallSpec(callID, procedure, realm, payload, deadlineMs, id.NodeID())
+	spec.CallID = callID
 	signed := frame.Sign(frame.Call(spec), id)
 	if err := fs.SendFrame(signed); err != nil {
 		return frame.CallResponse{}, err
