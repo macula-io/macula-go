@@ -13,7 +13,7 @@ import (
 // live in a rebar3 shell against the same fixed identity
 // reference_vector_test.go already uses for the per-hop SigDomain
 // vector. This is the FIRST publisher_sig implementation in any repo
-// (macula-go, macula-rust-sdk, macula-dotnet-sdk all lacked it as
+// (macula-go, macula-rust, macula-dotnet all lacked it as
 // of 2026-08-29) -- there is no prior port to cross-check against, so
 // this vector is checked straight against the Erlang source of truth.
 const (

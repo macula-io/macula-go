@@ -1,7 +1,7 @@
 // Package stream implements general-purpose streaming RPC, both the
 // caller/consumer role (§13.1) and the provider role (§13.2) of
 // plans/PLAN_WIRE_PROTOCOL.md, ported from macula_stream_sink.erl via
-// macula-rust-sdk's own stream.rs. Like content transfer (package
+// macula-rust's own stream.rs. Like content transfer (package
 // content), this is not a separate wire mechanism: it runs the frame
 // types built in frame/stream.go over a dedicated QUIC stream, opened
 // via connection.Session.OpenDedicatedStream rather than the control

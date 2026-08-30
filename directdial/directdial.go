@@ -322,7 +322,7 @@ func Call(ctx context.Context, resolveVia *connection.Session, id identity.KeyPa
 // station via the DHT record and dials it directly reaches a station with
 // no ordinary ADVERTISE registration to route the CALL to, so ServeOneCall
 // never sees it. Found live 2026-08-30 porting this fix from
-// macula-rust-sdk, which hit it first by verifying an actual RESULT came
+// macula-rust, which hit it first by verifying an actual RESULT came
 // back through direct-dial instead of accepting a clean unknown_next_peer
 // as sufficient (that only proves resolve+dial+trust-chain work, not that
 // a live handler is reachable).

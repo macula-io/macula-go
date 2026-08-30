@@ -13,7 +13,7 @@
 // encoding/base64, matching the reference exactly rather than adopting an
 // incompatible library.
 //
-// A token minted here verifies against macula-rust-sdk, the Erlang
+// A token minted here verifies against macula-rust, the Erlang
 // macula SDK, or vice versa — same header shape, same payload field
 // names (iss/aud/exp/nbf/nnc/cap/fct/prf), same signing input
 // (header_b64 + "." + payload_b64), same signature algorithm. Field

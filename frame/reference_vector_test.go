@@ -8,7 +8,7 @@ import (
 	"github.com/macula-io/macula-go/identity"
 )
 
-// These constants are copied verbatim from macula-rust-sdk's own
+// These constants are copied verbatim from macula-rust's own
 // src/frame.rs test module (connect_frame_matches_the_reference_byte_for_byte),
 // which in turn built the exact same CONNECT frame
 // macula_frame:connect/1 + macula_frame:sign/2 produced in a live

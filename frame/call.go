@@ -30,7 +30,7 @@ func callValue(spec CallSpec, frameID []byte, sentAtMs int64) cbor.Value {
 	fields = withField(fields, "realm", cbor.Bytes(spec.Realm))
 	fields = withField(fields, "call_id", cbor.Bytes(spec.CallID))
 	// procedure := binary() in the Erlang spec -- bytes (major 2), not
-	// text. Confirmed the hard way by macula-rust-sdk's own differential
+	// text. Confirmed the hard way by macula-rust's own differential
 	// vector test catching a signature mismatch from getting this wrong.
 	fields = withField(fields, "procedure", cbor.Bytes([]byte(spec.Procedure)))
 	fields = withField(fields, "payload", spec.Payload)

@@ -32,7 +32,7 @@
 > introspect, policy-gated serving), and automatic **RPC telemetry
 > facts**. The frame layer is cross-checked byte-for-byte — including
 > the Ed25519 signature itself — against
-> [`macula-rust-sdk`](https://github.com/macula-io/macula-rust-sdk)'s own
+> [`macula-rust`](https://github.com/macula-io/macula-rust)'s own
 > fixed reference vector. See [Status](#status) for the full picture.
 
 ## What is this?
@@ -40,7 +40,7 @@
 A Go implementation of the client half of Macula's wire protocol — the
 same protocol [`macula-io/macula`](https://github.com/macula-io/macula)
 (the Erlang/OTP SDK) speaks, and the same protocol
-[`macula-rust-sdk`](https://github.com/macula-io/macula-rust-sdk) already
+[`macula-rust`](https://github.com/macula-io/macula-rust) already
 ports, tracked in the same spec
 ([`plans/PLAN_WIRE_PROTOCOL.md`](plans/PLAN_WIRE_PROTOCOL.md), carried
 over rather than re-derived — the wire protocol isn't language-specific).
@@ -54,7 +54,7 @@ to join it.
 Three independent implementations (Erlang reference, Rust, now Go)
 producing bit-identical wire bytes for the same input is a much stronger
 correctness claim than any one of them alone: `frame/reference_vector_test.go`
-builds the exact same signed CONNECT frame as `macula-rust-sdk`'s own
+builds the exact same signed CONNECT frame as `macula-rust`'s own
 test, from the exact same fixed identity/frame_id/timestamp, and asserts
 the Ed25519 signature — not just the frame shape — matches byte for
 byte. If Go's canonical CBOR encoder or signing domain diverged from the
@@ -247,7 +247,7 @@ binary64 (never the shortest round-tripping width), and map keys sort
 by the bytewise order of their own *encoded* bytes, not their unencoded
 representation. A generic "canonical CBOR" library that follows the RFC
 instead of these rules produces bytes that don't verify against the
-real station — the same reason `macula-rust-sdk` bypasses `ciborium`
+real station — the same reason `macula-rust` bypasses `ciborium`
 entirely. `cbor/` has zero external dependencies as a result; the tests
 in `cbor/cbor_test.go` specifically target the divergent rules and the
 minimal-length-encoding boundaries a naive port is most likely to get
@@ -263,7 +263,7 @@ go test -tags=live ./... -run TestLive -v            # dials the real fleet
 The live suite is gated behind the `live` build tag — excluded from
 `go test ./...` and from CI entirely, since it depends on infrastructure
 this module doesn't control and a station blip must never block an
-unrelated PR. Same convention as `macula-rust-sdk`'s `tests/live_station.rs`.
+unrelated PR. Same convention as `macula-rust`'s `tests/live_station.rs`.
 
 ## Known limitations
 
@@ -312,11 +312,11 @@ test here — see `connection/live_test.go`'s
 streaming case.
 
 The streaming-RPC and content-transfer wire behavior was cross-checked
-against `macula-rust-sdk`'s own live findings along the way — e.g. an
+against `macula-rust`'s own live findings along the way — e.g. an
 unregistered streaming procedure returns the same STREAM_ERROR
 (`unknown_next_peer` / "procedure not advertised") on both SDKs.
 Unary-RPC provider dispatch was built here first and ported back to
-`macula-rust-sdk` in the same pass, so both SDKs now serve RPCs, not
+`macula-rust` in the same pass, so both SDKs now serve RPCs, not
 just call them.
 
 **Live-verified, 2026-08-30 — direct-dial, UCAN, cert-chain, re-advertise,
@@ -341,7 +341,7 @@ traced directly to the Erlang SDK's source.
 
 | Project | Description |
 |---|---|
-| [macula-rust-sdk](https://github.com/macula-io/macula-rust-sdk) | The Rust port — same protocol, built first; also ships mobile bindings (Kotlin/Swift via UniFFI) |
+| [macula-rust](https://github.com/macula-io/macula-rust) | The Rust port — same protocol, built first; also ships mobile bindings (Kotlin/Swift via UniFFI) |
 | [macula](https://github.com/macula-io/macula) | The reference SDK (Erlang/OTP) |
 | [macula-station](https://github.com/macula-io/macula-station) | The station: DHT, SWIM, routing, peering |
 | [macula-realm](https://github.com/macula-io/macula-realm) | Managed-realm identity + certificate authority |

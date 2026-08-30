@@ -1,6 +1,6 @@
 // Package content implements put/get by content-address (§12 of
 // plans/PLAN_WIRE_PROTOCOL.md), ported from macula_content_transfer.erl
-// via macula-rust-sdk's own content.rs. Not a separate wire protocol:
+// via macula-rust's own content.rs. Not a separate wire protocol:
 // nothing here is new frame types, just ordinary CALL/RESULT (§6.4)
 // against four well-known _content.* procedures, sent on a dedicated
 // QUIC stream (connection.Session.OpenDedicatedStream) instead of the

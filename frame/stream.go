@@ -258,7 +258,7 @@ func NewStreamDataSpec(streamID []byte, seq uint64, encoding StreamEncoding, bod
 // frames verify against this pubkey when present at any relay hop
 // beyond the first; absent it, the station falls back to "whichever
 // connection this frame arrived on", which is only correct for the
-// direct client -> first-station edge. Ported from macula-rust-sdk's
+// direct client -> first-station edge. Ported from macula-rust's
 // own fix for the identical gap, confirmed live cross-station
 // (Frankfurt provider, Milan caller) before this port.
 func streamDataValue(spec StreamDataSpec, frameID []byte, sentAtMs int64) cbor.Value {

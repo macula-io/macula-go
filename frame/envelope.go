@@ -1,7 +1,7 @@
 // Package frame implements the Macula application-frame envelope:
 // construction, Ed25519 signing/verification, and the length-prefixed
 // wire codec. Ported from src/peering/macula_frame.erl
-// (macula-io/macula) via macula-rust-sdk/src/frame.rs, per
+// (macula-io/macula) via macula-rust/src/frame.rs, per
 // plans/PLAN_WIRE_PROTOCOL.md §4-5.
 //
 // A wire frame is `<Length:4 bytes big-endian><Cbor>` where Cbor is the

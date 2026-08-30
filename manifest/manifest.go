@@ -1,7 +1,7 @@
 // Package manifest implements fixed-size chunking, Merkle-root
 // computation, and manifest construction for content larger than one
 // storage block — see plans/PLAN_WIRE_PROTOCOL.md §12.2. Mirrors the
-// reference (and macula-rust-sdk's own port) byte-for-byte: same MCID
+// reference (and macula-rust's own port) byte-for-byte: same MCID
 // format, same default chunk size (256 KiB), same Merkle fold
 // (including the odd-leaf-count rule — pair the last hash with
 // itself), same canonical-CBOR MCID derivation.

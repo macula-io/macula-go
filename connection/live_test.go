@@ -9,7 +9,7 @@
 //	go test -tags=live ./connection/... -run TestLive -v
 //
 // DNS gotcha, confirmed directly against the live box (carried over
-// from macula-rust-sdk's own tests/live_station.rs, still true here):
+// from macula-rust's own tests/live_station.rs, still true here):
 // the bare macula.io hostname has an A (IPv4) record but no AAAA
 // record, while station-de-frankfurt's actual QUIC listener is bound to
 // a specific IPv6 address unrelated to that A record. Dialing

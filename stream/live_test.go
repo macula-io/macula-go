@@ -65,7 +65,7 @@ func connectLive(t *testing.T) (*connection.Session, identity.KeyPair) {
 // a chunk, a half-close, and awaiting whatever the station does with an
 // unknown procedure — rather than a specific procedure's behavior.
 //
-// macula-rust-sdk's own equivalent test found empirically (2026-08-28)
+// macula-rust's own equivalent test found empirically (2026-08-28)
 // that the station DOES actively validate streaming procedures,
 // symmetric to CALL: it replies with a real STREAM_ERROR
 // (unknown_next_peer / "procedure not advertised"), which AwaitReply
@@ -422,7 +422,7 @@ func crossStationStreamingRoundTrip(t *testing.T, providerHost string, providerP
 		t.Fatalf("advertise on %s should send: %v", providerLabel, err)
 	}
 
-	// Same wait macula-rust-sdk's own cross-station tests use for the
+	// Same wait macula-rust's own cross-station tests use for the
 	// resolver lookup to actually reach the other station. Bumped from
 	// 5s -> 8s (diagnostic, 2026-08-29): running several of these
 	// subtests back to back in one process intermittently timed out
@@ -496,7 +496,7 @@ func crossStationStreamingRoundTrip(t *testing.T, providerHost string, providerP
 	}
 }
 
-// TestLiveCrossStationStreamingRoundTrip ports macula-rust-sdk's own test
+// TestLiveCrossStationStreamingRoundTrip ports macula-rust's own test
 // of the same name (2026-08-29): provider on Frankfurt, caller on Milan,
 // Bidi mode, both sides exchange data. That test found and fixed a real
 // bug in the Rust SDK -- STREAM_DATA/END/ERROR frames never carried the

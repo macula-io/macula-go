@@ -183,7 +183,7 @@ func TestLiveAdvertiseAndResolve(t *testing.T) {
 // publish only the DHT record and never the ordinary station-side
 // ADVERTISE, so a station resolved via the DHT had nothing to route the
 // CALL to — ServeOneCall would simply never see it. Found live 2026-08-30
-// via the equivalent fix/test in macula-rust-sdk; fixed here to match
+// via the equivalent fix/test in macula-rust; fixed here to match
 // (AdvertiseDirect now calls plain Advertise first, matching
 // macula_response:advertise_direct/6,7's actual two-step behavior).
 func TestLiveDirectDialServeRoundTrip(t *testing.T) {
