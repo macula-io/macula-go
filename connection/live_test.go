@@ -424,3 +424,97 @@ func TestLiveUnaryCallProviderReportsUnknownNextPeerOnLookupMiss(t *testing.T) {
 	}
 	t.Logf("OBSERVED: lookup miss correctly reported as ERROR code=%d name=%s", response.Code, response.Name)
 }
+
+// TestLiveKeepAdvertisedStaysCallableAcrossTicks proves KeepAdvertised
+// actually keeps a procedure reachable past its first tick (not just
+// sent-once), and stops promptly on cancellation. Unlike
+// directdial.KeepAdvertisedDirect (independently verifiable via
+// dht.FindRecord's created_at), a plain ADVERTISE has no external state
+// to query — so the only honest way to prove the registration is still
+// alive after two ticks is to actually call the procedure at that point
+// and get a real reply, the same round trip TestLiveUnaryCallProviderRoundTrip
+// already proves works for a single Advertise.
+func TestLiveKeepAdvertisedStaysCallableAcrossTicks(t *testing.T) {
+	providerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (provider): %v", err)
+	}
+	callerID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (caller): %v", err)
+	}
+
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer connectCancel()
+	providerSession, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, providerID)
+	if err != nil {
+		t.Fatalf("provider handshake should succeed: %v", err)
+	}
+	defer providerSession.Close("normal", nil, providerID)
+	callerSession, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, callerID)
+	if err != nil {
+		t.Fatalf("caller handshake should succeed: %v", err)
+	}
+	defer callerSession.Close("normal", nil, callerID)
+
+	realm := randomBytes(t, 32)
+	procedure := fmt.Sprintf("macula_go_sdk.test_keepalive.%s", hex.EncodeToString(randomBytes(t, 8)))
+	spec := frame.NewAdvertiseSpec(realm, procedure, providerID.NodeID())
+
+	loopCtx, cancelLoop := context.WithCancel(context.Background())
+	loopDone := make(chan struct{})
+	tickErrs := make(chan error, 8)
+	go func() {
+		providerSession.KeepAdvertised(loopCtx, spec, providerID, 1*time.Second, func(err error) {
+			tickErrs <- err
+		})
+		close(loopDone)
+	}()
+
+	// Past the immediate tick AND the ~1s-later second tick, so a
+	// successful call here specifically proves the SECOND advertise
+	// (not just the first) kept the registration alive.
+	time.Sleep(2200 * time.Millisecond)
+	select {
+	case err := <-tickErrs:
+		t.Fatalf("KeepAdvertised tick failed: %v", err)
+	default:
+	}
+
+	lookup := func(gotRealm []byte, gotProcedure string) (CallHandler, bool) {
+		if gotProcedure != procedure {
+			return nil, false
+		}
+		return func(payload cbor.Value) (cbor.Value, error) {
+			return cbor.Text("still-alive"), nil
+		}, true
+	}
+	serveErrCh := make(chan error, 1)
+	go func() {
+		serveErrCh <- providerSession.ServeOneCall(lookup, providerID, 10*time.Second)
+	}()
+
+	response, err := callerSession.Call(procedure, realm, cbor.Null(), nowMs()+10_000, callerID, 10*time.Second)
+	if err != nil {
+		t.Fatalf("Call after two ticks: %v (registration did not survive the keep-alive loop)", err)
+	}
+	if err := <-serveErrCh; err != nil {
+		t.Fatalf("ServeOneCall: %v", err)
+	}
+	if response.IsError {
+		t.Fatalf("expected a RESULT, got ERROR code=%d name=%s", response.Code, response.Name)
+	}
+	txt, ok := response.Payload.AsText()
+	if !ok || txt != "still-alive" {
+		t.Fatalf("payload = %v, want Text(still-alive)", response.Payload)
+	}
+	t.Logf("OBSERVED: procedure answered a real call after two KeepAdvertised ticks")
+
+	cancelLoop()
+	select {
+	case <-loopDone:
+		t.Logf("OBSERVED: KeepAdvertised returned promptly after cancel()")
+	case <-time.After(3 * time.Second):
+		t.Fatalf("KeepAdvertised did not return within 3s of cancel() -- loop is not respecting ctx.Done()")
+	}
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/macula-io/macula-go-sdk/cbor"
 	"github.com/macula-io/macula-go-sdk/connection"
+	"github.com/macula-io/macula-go-sdk/dht"
 	"github.com/macula-io/macula-go-sdk/identity"
 	"github.com/macula-io/macula-go-sdk/transport"
 )
@@ -18,12 +19,12 @@ import (
 // MACULA_LIVE_TEST is set, matching this SDK's other live-fleet tests
 // (see stream/live_test.go).
 //
-// This does NOT prove a full round-trip RPC call succeeds — this SDK has
-// no way to receive and answer an inbound CALL at all yet (Advertise
-// registers a handler with the station, but nothing reads the control
-// stream for inbound CALL frames and replies; that is a separate,
-// larger gap than direct-dial itself, out of scope here). What this DOES
-// prove, against the real network: a record this code signs is accepted
+// This does NOT itself prove a full round-trip RPC call succeeds — no
+// responder is started in THIS test (connection.Session.ServeOneCall
+// exists and is exercised live elsewhere, in connection/live_test.go; it
+// is simply not wired up for the advertised procedure here). What this
+// test DOES prove, against the real network: a record this code signs is
+// accepted
 // by a real station's _dht.put_record, a real station's _dht.find_records
 // returns it back with a signature that verifies, the resolved
 // station_endpoint is real and reachable, and the resulting dial succeeds
@@ -116,4 +117,72 @@ func TestLiveAdvertiseAndResolve(t *testing.T) {
 		return
 	}
 	t.Logf("Call returned a bolt4 error frame as expected past a successful resolve+dial: code=%d", resp.Code)
+}
+
+// TestLiveKeepAdvertisedDirectRepublishes proves KeepAdvertisedDirect
+// actually re-publishes on schedule (not a silent no-op after the first
+// tick) and genuinely stops on cancellation (no further publish after
+// ctx is done), against the real demo fleet.
+func TestLiveKeepAdvertisedDirectRepublishes(t *testing.T) {
+	if os.Getenv("MACULA_LIVE_TEST") == "" {
+		t.Skip("set MACULA_LIVE_TEST=1 to run against the live demo fleet")
+	}
+	host := os.Getenv("MACULA_LIVE_HOST")
+	if host == "" {
+		host = "station-de-falkenstein.macula.io"
+	}
+	const port = 4433
+	const procedure = "directdial_live_test.keepalive_v1"
+	realm := make([]byte, 32)
+
+	id, err := identity.GenerateWithPuzzle(identity.DefaultPuzzleDifficulty)
+	if err != nil {
+		t.Fatalf("identity.GenerateWithPuzzle: %v", err)
+	}
+
+	connCtx, connCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer connCancel()
+	session, err := connection.Connect(connCtx, host, port, transport.WebPKI{}, id)
+	if err != nil {
+		t.Fatalf("Connect to %s:%d: %v", host, port, err)
+	}
+	defer func() { _ = session.Close("normal", nil, id) }()
+
+	key := dht.ProcedureKey(dht.DiscoveryURI(realm, procedure))
+
+	loopCtx, cancel := context.WithCancel(context.Background())
+	var lastErr error
+	go KeepAdvertisedDirect(loopCtx, session, id, realm, procedure, time.Hour, 1*time.Second, func(err error) {
+		lastErr = err
+	})
+
+	fetch := func() dht.Record {
+		rec, err := dht.FindRecord(session, id, key)
+		if err != nil {
+			t.Fatalf("FindRecord after tick: %v", err)
+		}
+		return rec
+	}
+
+	time.Sleep(1200 * time.Millisecond) // past tick 1 (immediate)
+	first := fetch()
+	t.Logf("tick 1: created_at=%d", first.CreatedAt)
+
+	time.Sleep(1200 * time.Millisecond) // past tick 2 (~1s interval)
+	second := fetch()
+	t.Logf("tick 2: created_at=%d", second.CreatedAt)
+	if second.CreatedAt <= first.CreatedAt {
+		t.Fatalf("second tick's created_at (%d) did not advance past the first (%d) -- loop is not actually re-publishing", second.CreatedAt, first.CreatedAt)
+	}
+
+	cancel()
+	time.Sleep(2500 * time.Millisecond) // well past another would-be tick if the loop failed to stop
+	third := fetch()
+	t.Logf("after cancel: created_at=%d (want unchanged from tick 2's %d)", third.CreatedAt, second.CreatedAt)
+	if third.CreatedAt != second.CreatedAt {
+		t.Fatalf("record kept changing (created_at=%d) after cancel() -- loop did not stop", third.CreatedAt)
+	}
+	if lastErr != nil {
+		t.Logf("note: onError observed %v during the run (non-fatal by design)", lastErr)
+	}
 }

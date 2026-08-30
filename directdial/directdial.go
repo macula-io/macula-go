@@ -183,11 +183,12 @@ func Call(ctx context.Context, resolveVia *connection.Session, id identity.KeyPa
 // Session is always exactly one connection, so there is no link-selection
 // step: session's own verified HELLO identity IS the serving station.
 //
-// Unlike the Erlang SDK's supervised macula_response, this does not
-// register a handler or re-advertise on a timer — it publishes the DHT
-// record once. A caller wanting periodic re-advertise (needed because a
-// station's registration for a procedure does not survive the connection
-// that sent it being replaced) must call this again on its own schedule.
+// Unlike the Erlang SDK's supervised macula_response, this publishes the
+// DHT record exactly once per call and registers no handler — it does not
+// itself keep anything alive. A station's registration for a procedure
+// does not survive the connection that sent it being replaced, so a
+// long-lived server needs to call this again on its own schedule; see
+// KeepAdvertisedDirect for that loop.
 func AdvertiseDirect(session *connection.Session, id identity.KeyPair, realm []byte, procedure string, ttl time.Duration) error {
 	uri := dht.DiscoveryURI(realm, procedure)
 	rec, err := dht.NewProcedureAdvertisement(id.NodeID(), uri, session.Station.NodeID, ttl)
@@ -196,6 +197,48 @@ func AdvertiseDirect(session *connection.Session, id identity.KeyPair, realm []b
 	}
 	rec = dht.Sign(rec, id)
 	return dht.PutRecord(session, id, rec)
+}
+
+// KeepAdvertisedDirect calls AdvertiseDirect immediately, then again every
+// interval, until ctx is done. It is the "call this again on its own
+// schedule" loop AdvertiseDirect's own doc says a long-lived server needs —
+// Go has nothing equivalent to macula_response's `reuse_sup` to worry
+// about here, because AdvertiseDirect (unlike Erlang's advertise/5, which
+// spawns a real per-call OTP supervisor) is already a stateless, side-
+// effect-free-on-repeat function: nothing is created per tick that could
+// leak.
+//
+// interval should leave real margin before ttl expires — production
+// practice in hecate-om's own capability re-advertise loop (the actual
+// consumer of advertise_direct's reuse_sup option on the Erlang side) uses
+// a 4x margin: a 30s republish interval against a 120s record TTL.
+//
+// A failed tick (network blip, connection genuinely dead, etc.) is
+// reported via onError (nil is fine — the error is simply dropped) but
+// does NOT stop the loop; it tries again at the next interval regardless,
+// matching hecate-om's own log-and-continue practice around every DHT
+// publish. This loop cannot detect or repair a dead SESSION on its own —
+// if session's underlying connection has actually gone down, every tick
+// will keep failing the same way until ctx is cancelled; reconnecting a
+// dead session is a separate, larger concern this does not attempt to
+// solve.
+func KeepAdvertisedDirect(ctx context.Context, session *connection.Session, id identity.KeyPair, realm []byte, procedure string, ttl, interval time.Duration, onError func(error)) {
+	tick := func() {
+		if err := AdvertiseDirect(session, id, realm, procedure, ttl); err != nil && onError != nil {
+			onError(err)
+		}
+	}
+	tick()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tick()
+		}
+	}
 }
 
 func bytesEqual(a, b []byte) bool {
