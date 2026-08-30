@@ -1,6 +1,6 @@
 package frame
 
-import "github.com/macula-io/macula-go-sdk/cbor"
+import "github.com/macula-io/macula-go/cbor"
 
 func goodbyeValue(reason string, detail *string, frameID []byte, sentAtMs int64) cbor.Value {
 	fields := base("goodbye", 0, frameID, sentAtMs)

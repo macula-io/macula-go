@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
-	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/identity"
 )
 
 func mustKeyPair(t *testing.T) identity.KeyPair {

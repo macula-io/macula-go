@@ -3,8 +3,8 @@ package frame
 import (
 	"testing"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
-	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/identity"
 )
 
 // Full encode->decode round trip with BOTH publisher_sig and the

@@ -28,11 +28,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/bolt4"
-	"github.com/macula-io/macula-go-sdk/cbor"
-	"github.com/macula-io/macula-go-sdk/frame"
-	"github.com/macula-io/macula-go-sdk/identity"
-	"github.com/macula-io/macula-go-sdk/transport"
+	"github.com/macula-io/macula-go/bolt4"
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/transport"
 )
 
 func nowMs() int64 { return time.Now().UnixMilli() }
@@ -146,14 +146,14 @@ func TestLivePubSubRoundTrip(t *testing.T) {
 
 	// A realm+topic scratch value nobody else would collide with.
 	realm := randomBytes(t, 32)
-	topic := fmt.Sprintf("macula-go-sdk.test.%s", hex.EncodeToString(randomBytes(t, 8)))
+	topic := fmt.Sprintf("macula-go.test.%s", hex.EncodeToString(randomBytes(t, 8)))
 
 	if err := session.Subscribe(frame.NewSubscribeSpec(topic, realm, id.NodeID()), id); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
 
 	if err := session.Publish(frame.NewPublishSpec(topic, realm, id.NodeID(), 1,
-		cbor.Text("hello from macula-go-sdk"), nowMs()), id); err != nil {
+		cbor.Text("hello from macula-go"), nowMs()), id); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
@@ -210,7 +210,7 @@ func TestLivePublishSurvivesImmediateClose(t *testing.T) {
 	defer subSession.Close("normal", nil, subID)
 
 	realm := randomBytes(t, 32)
-	topic := fmt.Sprintf("macula-go-sdk.test.immediate-close.%s", hex.EncodeToString(randomBytes(t, 8)))
+	topic := fmt.Sprintf("macula-go.test.immediate-close.%s", hex.EncodeToString(randomBytes(t, 8)))
 
 	if err := subSession.Subscribe(frame.NewSubscribeSpec(topic, realm, subID.NodeID()), subID); err != nil {
 		t.Fatalf("Subscribe: %v", err)
@@ -556,7 +556,7 @@ func TestLiveRunSubscriberAndRunPublisher(t *testing.T) {
 	defer pubSession.Close("normal", nil, pubID)
 
 	realm := randomBytes(t, 32)
-	topic := fmt.Sprintf("macula-go-sdk.test.runsub.%s", hex.EncodeToString(randomBytes(t, 8)))
+	topic := fmt.Sprintf("macula-go.test.runsub.%s", hex.EncodeToString(randomBytes(t, 8)))
 
 	// Independent watch on the well-known meta-fact topic, on its OWN
 	// session, so it cannot be satisfied by anything RunSubscriber itself

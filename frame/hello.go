@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
+	"github.com/macula-io/macula-go/cbor"
 )
 
 // HelloInfo is the parsed contents of a HELLO frame — connect_spec's

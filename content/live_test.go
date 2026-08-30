@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/connection"
-	"github.com/macula-io/macula-go-sdk/identity"
-	"github.com/macula-io/macula-go-sdk/manifest"
-	"github.com/macula-io/macula-go-sdk/transport"
+	"github.com/macula-io/macula-go/connection"
+	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/manifest"
+	"github.com/macula-io/macula-go/transport"
 )
 
 const (

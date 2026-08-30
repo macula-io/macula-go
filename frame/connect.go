@@ -1,6 +1,6 @@
 package frame
 
-import "github.com/macula-io/macula-go-sdk/cbor"
+import "github.com/macula-io/macula-go/cbor"
 
 // ConnectSpec holds the fields for a CONNECT frame — see
 // plans/PLAN_WIRE_PROTOCOL.md §5.

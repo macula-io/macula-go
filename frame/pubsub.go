@@ -1,6 +1,6 @@
 package frame
 
-import "github.com/macula-io/macula-go-sdk/cbor"
+import "github.com/macula-io/macula-go/cbor"
 
 // PublishSpec holds the fields for a PUBLISH frame.
 type PublishSpec struct {

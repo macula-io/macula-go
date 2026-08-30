@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
+	"github.com/macula-io/macula-go/cbor"
 )
 
 func TestParseCallRoundTrips(t *testing.T) {

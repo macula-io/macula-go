@@ -3,11 +3,11 @@ package connection
 import (
 	"testing"
 
-	"github.com/macula-io/macula-go-sdk/bolt4"
-	"github.com/macula-io/macula-go-sdk/cbor"
-	"github.com/macula-io/macula-go-sdk/frame"
-	"github.com/macula-io/macula-go-sdk/identity"
-	"github.com/macula-io/macula-go-sdk/ucan"
+	"github.com/macula-io/macula-go/bolt4"
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // These exercise buildCallReply directly (no network) to prove the

@@ -3,8 +3,8 @@ package frame
 import (
 	"errors"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
-	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/identity"
 )
 
 // Sign signs frame with identity, over SigDomain || canonical_cbor(frame

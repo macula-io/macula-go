@@ -18,7 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
+	"github.com/macula-io/macula-go/cbor"
 )
 
 // SigDomain is the domain separator for the per-frame Ed25519 signature

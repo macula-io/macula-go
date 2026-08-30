@@ -1,6 +1,6 @@
 package frame
 
-import "github.com/macula-io/macula-go-sdk/cbor"
+import "github.com/macula-io/macula-go/cbor"
 
 // AdvertiseSpec holds the fields for an ADVERTISE frame — see
 // plans/PLAN_WIRE_PROTOCOL.md §6.9.

@@ -7,15 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
-	"github.com/macula-io/macula-go-sdk/connection"
-	"github.com/macula-io/macula-go-sdk/content"
-	"github.com/macula-io/macula-go-sdk/dht"
-	"github.com/macula-io/macula-go-sdk/frame"
-	"github.com/macula-io/macula-go-sdk/identity"
-	"github.com/macula-io/macula-go-sdk/manifest"
-	"github.com/macula-io/macula-go-sdk/stream"
-	"github.com/macula-io/macula-go-sdk/transport"
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/connection"
+	"github.com/macula-io/macula-go/content"
+	"github.com/macula-io/macula-go/dht"
+	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/manifest"
+	"github.com/macula-io/macula-go/stream"
+	"github.com/macula-io/macula-go/transport"
 )
 
 // TestLiveOpenStreamDirectRoundTrip proves streaming's direct-dial variant
@@ -198,7 +198,7 @@ func TestLivePutDirectRoundTrip(t *testing.T) {
 	defer func() { _ = resolveVia.Close("normal", nil, putID) }()
 
 	station := resolveVia.Station.NodeID
-	data := []byte("macula-go-sdk PutDirect live test payload, " + time.Now().String())
+	data := []byte("macula-go PutDirect live test payload, " + time.Now().String())
 
 	mcid, err := PutDirect(ctx, resolveVia, putID, station, data, "putdirect-live-test.txt", 15*time.Second)
 	if err != nil {

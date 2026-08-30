@@ -3,8 +3,8 @@ package frame
 import (
 	"errors"
 
-	"github.com/macula-io/macula-go-sdk/bolt4"
-	"github.com/macula-io/macula-go-sdk/cbor"
+	"github.com/macula-io/macula-go/bolt4"
+	"github.com/macula-io/macula-go/cbor"
 )
 
 // CallSpec holds the fields for a CALL frame — see

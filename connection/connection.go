@@ -16,10 +16,10 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
-	"github.com/macula-io/macula-go-sdk/frame"
-	"github.com/macula-io/macula-go-sdk/identity"
-	"github.com/macula-io/macula-go-sdk/transport"
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/transport"
 )
 
 // HandshakeTimeout matches HANDSHAKE_TIMEOUT_MS — its most common

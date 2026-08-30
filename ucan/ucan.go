@@ -32,7 +32,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go/identity"
 )
 
 const (

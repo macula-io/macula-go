@@ -17,11 +17,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
-	"github.com/macula-io/macula-go-sdk/connection"
-	"github.com/macula-io/macula-go-sdk/frame"
-	"github.com/macula-io/macula-go-sdk/identity"
-	"github.com/macula-io/macula-go-sdk/transport"
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/connection"
+	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/transport"
 )
 
 const (
@@ -87,7 +87,7 @@ func TestLiveStreamOpenRoundTrip(t *testing.T) {
 		t.Fatalf("Open: opening a dedicated stream and sending STREAM_OPEN should succeed: %v", err)
 	}
 
-	if err := handle.SendData(frame.Raw, cbor.Bytes([]byte("hello from macula-go-sdk")), id); err != nil {
+	if err := handle.SendData(frame.Raw, cbor.Bytes([]byte("hello from macula-go")), id); err != nil {
 		t.Fatalf("SendData: %v", err)
 	}
 	if err := handle.CloseSend(id); err != nil {

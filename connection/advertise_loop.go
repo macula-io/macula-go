@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/frame"
-	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/identity"
 )
 
 // KeepAdvertised sends an ADVERTISE for spec immediately, then again every

@@ -11,12 +11,12 @@ import (
 	"log"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
-	"github.com/macula-io/macula-go-sdk/connection"
-	"github.com/macula-io/macula-go-sdk/frame"
-	"github.com/macula-io/macula-go-sdk/identity"
-	"github.com/macula-io/macula-go-sdk/transport"
-	"github.com/macula-io/macula-go-sdk/ucan"
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/connection"
+	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/transport"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 const (

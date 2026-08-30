@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go/identity"
 )
 
 func mustIdentity(t *testing.T) identity.KeyPair {

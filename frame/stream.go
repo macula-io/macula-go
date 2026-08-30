@@ -3,7 +3,7 @@ package frame
 import (
 	"errors"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
+	"github.com/macula-io/macula-go/cbor"
 )
 
 // StreamMode is who's expected to push data on a STREAM_OPEN — matches

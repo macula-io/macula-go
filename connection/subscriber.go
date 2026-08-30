@@ -7,8 +7,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/frame"
-	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/identity"
 )
 
 // EventHandler processes one inbound EVENT. Returning a non-nil error stops

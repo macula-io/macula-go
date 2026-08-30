@@ -1,6 +1,6 @@
-# macula-go-sdk
+# macula-go
 
-[![CI](https://img.shields.io/github/actions/workflow/status/macula-io/macula-go-sdk/ci.yml?branch=master&label=CI)](https://github.com/macula-io/macula-go-sdk/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/macula-io/macula-go/ci.yml?branch=master&label=CI)](https://github.com/macula-io/macula-go/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](#license)
 [![Go Reference](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go)](https://go.dev)
 [![no unsafe](https://img.shields.io/badge/unsafe-none-success.svg)](https://pkg.go.dev/unsafe)
@@ -95,10 +95,10 @@ import (
 	"log"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
-	"github.com/macula-io/macula-go-sdk/connection"
-	"github.com/macula-io/macula-go-sdk/identity"
-	"github.com/macula-io/macula-go-sdk/transport"
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/connection"
+	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/transport"
 )
 
 func main() {

@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/bolt4"
-	"github.com/macula-io/macula-go-sdk/cbor"
-	"github.com/macula-io/macula-go-sdk/connection"
-	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go/bolt4"
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/connection"
+	"github.com/macula-io/macula-go/identity"
 )
 
 // dhtRealm is the all-zero 32-byte realm DHT traffic travels under,

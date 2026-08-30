@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go/identity"
 )
 
 // These constants are copied verbatim from macula-rust-sdk's own

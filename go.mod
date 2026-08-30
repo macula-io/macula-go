@@ -1,4 +1,4 @@
-module github.com/macula-io/macula-go-sdk
+module github.com/macula-io/macula-go
 
 go 1.25.0
 

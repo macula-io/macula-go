@@ -21,7 +21,7 @@ import (
 
 	"lukechampine.com/blake3"
 
-	"github.com/macula-io/macula-go-sdk/cbor"
+	"github.com/macula-io/macula-go/cbor"
 )
 
 // DefaultChunkSize is 256 KiB — matches macula_manifest:default_chunk_size/0.

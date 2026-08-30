@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/macula-io/macula-go-sdk/identity"
+	"github.com/macula-io/macula-go/identity"
 )
 
 // servePollInterval bounds how long a single ServeOneCallGated tick
