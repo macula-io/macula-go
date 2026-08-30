@@ -183,13 +183,27 @@ func Call(ctx context.Context, resolveVia *connection.Session, id identity.KeyPa
 // Session is always exactly one connection, so there is no link-selection
 // step: session's own verified HELLO identity IS the serving station.
 //
-// Unlike the Erlang SDK's supervised macula_response, this publishes the
-// DHT record exactly once per call and registers no handler — it does not
-// itself keep anything alive. A station's registration for a procedure
-// does not survive the connection that sent it being replaced, so a
-// long-lived server needs to call this again on its own schedule; see
-// KeepAdvertisedDirect for that loop.
+// Unlike the Erlang SDK's supervised macula_response, this registers no
+// handler of its own and does not keep anything alive across calls. A
+// station's registration for a procedure does not survive the connection
+// that sent it being replaced, so a long-lived server needs to call this
+// again on its own schedule; see KeepAdvertisedDirect for that loop.
+//
+// Mirrors macula_response:advertise_direct/6,7, which calls plain
+// advertise/6 FIRST and only then publishes the DHT record — both, not
+// either. Without the plain Advertise, a caller that resolves this
+// station via the DHT record and dials it directly reaches a station with
+// no ordinary ADVERTISE registration to route the CALL to, so ServeOneCall
+// never sees it. Found live 2026-08-30 porting this fix from
+// macula-rust-sdk, which hit it first by verifying an actual RESULT came
+// back through direct-dial instead of accepting a clean unknown_next_peer
+// as sufficient (that only proves resolve+dial+trust-chain work, not that
+// a live handler is reachable).
 func AdvertiseDirect(session *connection.Session, id identity.KeyPair, realm []byte, procedure string, ttl time.Duration) error {
+	advertiseSpec := frame.NewAdvertiseSpec(realm, procedure, id.NodeID())
+	if err := session.Advertise(advertiseSpec, id); err != nil {
+		return fmt.Errorf("directdial: advertise: %w", err)
+	}
 	uri := dht.DiscoveryURI(realm, procedure)
 	rec, err := dht.NewProcedureAdvertisement(id.NodeID(), uri, session.Station.NodeID, ttl)
 	if err != nil {

@@ -119,6 +119,110 @@ func TestLiveAdvertiseAndResolve(t *testing.T) {
 	t.Logf("Call returned a bolt4 error frame as expected past a successful resolve+dial: code=%d", resp.Code)
 }
 
+// TestLiveDirectDialServeRoundTrip proves AdvertiseDirect actually makes a
+// procedure REACHABLE, not just resolvable — a real handler answers a real
+// call made purely through direct-dial resolution. This is the exact gap
+// TestLiveAdvertiseAndResolve deliberately does NOT cover (see its own
+// doc): that test accepts a clean "no handler" failure as success, which
+// only proves resolve+dial+trust-chain work. AdvertiseDirect used to
+// publish only the DHT record and never the ordinary station-side
+// ADVERTISE, so a station resolved via the DHT had nothing to route the
+// CALL to — ServeOneCall would simply never see it. Found live 2026-08-30
+// via the equivalent fix/test in macula-rust-sdk; fixed here to match
+// (AdvertiseDirect now calls plain Advertise first, matching
+// macula_response:advertise_direct/6,7's actual two-step behavior).
+func TestLiveDirectDialServeRoundTrip(t *testing.T) {
+	if os.Getenv("MACULA_LIVE_TEST") == "" {
+		t.Skip("set MACULA_LIVE_TEST=1 to run against the live demo fleet")
+	}
+	host := os.Getenv("MACULA_LIVE_HOST")
+	if host == "" {
+		host = "station-de-falkenstein.macula.io"
+	}
+	const port = 4433
+	const procedure = "directdial_live_test.serve_round_trip_v1"
+	realm := make([]byte, 32)
+
+	// Distinct identities for provider vs caller, deliberately -- this
+	// fleet enforces one connection per identity and kicks whichever
+	// connects second (confirmed elsewhere this session investigating
+	// macula-mcp). Sharing one identity across provider/resolver/dial-
+	// target would kick the provider's own connection out from under it
+	// the moment the caller side connects, dropping its ADVERTISE
+	// registration right before the call lands -- a real bug in an
+	// earlier draft of this test, not in AdvertiseDirect/ServeOneCall.
+	providerID, err := identity.GenerateWithPuzzle(identity.DefaultPuzzleDifficulty)
+	if err != nil {
+		t.Fatalf("identity.GenerateWithPuzzle (provider): %v", err)
+	}
+	callerID, err := identity.GenerateWithPuzzle(identity.DefaultPuzzleDifficulty)
+	if err != nil {
+		t.Fatalf("identity.GenerateWithPuzzle (caller): %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	provider, err := connection.Connect(ctx, host, port, transport.WebPKI{}, providerID)
+	if err != nil {
+		t.Fatalf("Connect (provider session) to %s:%d: %v", host, port, err)
+	}
+	defer func() { _ = provider.Close("normal", nil, providerID) }()
+
+	if err := AdvertiseDirect(provider, providerID, realm, procedure, time.Hour); err != nil {
+		t.Fatalf("AdvertiseDirect: %v", err)
+	}
+	t.Logf("provider %x advertised (plain + direct) for %q", provider.Station.NodeID, procedure)
+
+	served := make(chan error, 1)
+	go func() {
+		lookup := func(_ []byte, proc string) (connection.CallHandler, bool) {
+			if proc != procedure {
+				return nil, false
+			}
+			return func(payload cbor.Value) (cbor.Value, error) {
+				return cbor.Map([]cbor.MapEntry{{Key: cbor.Text("echo"), Val: payload}}), nil
+			}, true
+		}
+		served <- provider.ServeOneCall(lookup, providerID, 20*time.Second)
+	}()
+
+	resolver, err := connection.Connect(ctx, host, port, transport.WebPKI{}, callerID)
+	if err != nil {
+		t.Fatalf("Connect (resolver session) to %s:%d: %v", host, port, err)
+	}
+	defer func() { _ = resolver.Close("normal", nil, callerID) }()
+
+	station, dialHost, dialPort, err := Resolve(resolver, callerID, realm, procedure)
+	if err != nil {
+		if errors.Is(err, ErrStationEndpointNotFound) {
+			t.Skipf("Resolve found no live, host-bearing station_endpoint -- known external relay-side gap (see TestLiveAdvertiseAndResolve's comment), not a failure of this package: %v", err)
+		}
+		t.Fatalf("Resolve: %v", err)
+	}
+	t.Logf("resolved %q -> station=%x host=%s port=%d", procedure, station, dialHost, dialPort)
+
+	resp, callErr := Call(ctx, resolver, callerID, realm, procedure, cbor.Text("hello direct-dial"), 15*time.Second)
+	if callErr != nil {
+		t.Fatalf("Call: %v (this is the fix under test -- the provider advertised but the call never reached it)", callErr)
+	}
+	if resp.IsError {
+		t.Fatalf("Call returned a bolt4 ERROR frame instead of a real reply: code=%d", resp.Code)
+	}
+	got, ok := resp.Payload.Get("echo")
+	if !ok {
+		t.Fatalf("reply payload missing echo field: %+v", resp.Payload)
+	}
+	if txt, ok := got.AsText(); !ok || txt != "hello direct-dial" {
+		t.Fatalf("echo = %+v, want Text(\"hello direct-dial\")", got)
+	}
+	t.Logf("OBSERVED: real RESULT received through direct-dial resolve+dial+call: %+v", resp.Payload)
+
+	if serveErr := <-served; serveErr != nil {
+		t.Fatalf("ServeOneCall returned an error after apparently answering: %v", serveErr)
+	}
+}
+
 // TestLiveKeepAdvertisedDirectRepublishes proves KeepAdvertisedDirect
 // actually re-publishes on schedule (not a silent no-op after the first
 // tick) and genuinely stops on cancellation (no further publish after
