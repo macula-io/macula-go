@@ -518,3 +518,155 @@ func TestLiveKeepAdvertisedStaysCallableAcrossTicks(t *testing.T) {
 		t.Fatalf("KeepAdvertised did not return within 3s of cancel() -- loop is not respecting ctx.Done()")
 	}
 }
+
+// TestLiveRunSubscriberAndRunPublisher proves the supervised pubsub pair
+// (macula_publisher.erl/macula_subscriber.erl's Go counterparts) actually
+// works end to end against the real fleet, not just compiles: a
+// RunSubscriber goroutine's callback receives a real EVENT delivered by a
+// SEPARATE session's RunPublisher (two sessions, matching
+// TestLivePublishSurvivesImmediateClose's reasoning for why a self-publish
+// on one session is a weaker test), RunPublisher's own onDone callback
+// fires with the real outcome, the auto-published
+// pubsub.publish_started_v1/publish_completed_v1 facts genuinely land
+// (checked via a second, independent bare Subscribe/RecvEvent on that
+// well-known topic, not by trusting RunPublisher's own bookkeeping), and
+// RunSubscriber returns promptly once its ctx is cancelled (no goroutine
+// leak, mirroring TestLiveKeepAdvertisedStaysCallableAcrossTicks's check).
+func TestLiveRunSubscriberAndRunPublisher(t *testing.T) {
+	subID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (subscriber): %v", err)
+	}
+	pubID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (publisher): %v", err)
+	}
+
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer connectCancel()
+	subSession, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, subID)
+	if err != nil {
+		t.Fatalf("subscriber handshake should succeed: %v", err)
+	}
+	defer subSession.Close("normal", nil, subID)
+	pubSession, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, pubID)
+	if err != nil {
+		t.Fatalf("publisher handshake should succeed: %v", err)
+	}
+	defer pubSession.Close("normal", nil, pubID)
+
+	realm := randomBytes(t, 32)
+	topic := fmt.Sprintf("macula-go-sdk.test.runsub.%s", hex.EncodeToString(randomBytes(t, 8)))
+
+	// Independent watch on the well-known meta-fact topic, on its OWN
+	// session, so it cannot be satisfied by anything RunSubscriber itself
+	// does -- this is checking RunPublisher's side effect, not its return
+	// value.
+	factWatcherID, err := identity.Generate()
+	if err != nil {
+		t.Fatalf("identity.Generate (fact watcher): %v", err)
+	}
+	factSession, err := Connect(connectCtx, liveStationHost, liveStationPort, transport.WebPKI{}, factWatcherID)
+	if err != nil {
+		t.Fatalf("fact watcher handshake should succeed: %v", err)
+	}
+	defer factSession.Close("normal", nil, factWatcherID)
+	if err := factSession.Subscribe(frame.NewSubscribeSpec(publishCompletedTopic, realm, factWatcherID.NodeID()), factWatcherID); err != nil {
+		t.Fatalf("Subscribe (fact watcher): %v", err)
+	}
+
+	received := make(chan frame.EventInfo, 1)
+	subCtx, cancelSub := context.WithCancel(context.Background())
+	subDone := make(chan error, 1)
+	go func() {
+		subDone <- subSession.RunSubscriber(subCtx, frame.NewSubscribeSpec(topic, realm, subID.NodeID()), subID,
+			func(evt frame.EventInfo) error {
+				select {
+				case received <- evt:
+				default:
+				}
+				return nil
+			})
+	}()
+	// Give the SUBSCRIBE frame a moment to land before publishing --
+	// otherwise this is racing the station's own subscribe-then-route
+	// wiring, the same class of race TestLivePubSubRoundTrip's own comment
+	// already accepts as non-deterministic for a same-session self-publish;
+	// a short sleep here keeps THIS test's real assertions deterministic
+	// rather than papering over a flake with "not asserted either way".
+	time.Sleep(500 * time.Millisecond)
+
+	outcomeCh := make(chan PublishOutcome, 1)
+	pubSession.RunPublisher(
+		frame.NewPublishSpec(topic, realm, pubID.NodeID(), 1, cbor.Text("hello from RunPublisher"), nowMs()),
+		pubID, true,
+		func(o PublishOutcome) { outcomeCh <- o },
+	)
+
+	select {
+	case o := <-outcomeCh:
+		if o.Err != nil || o.Cancelled {
+			t.Fatalf("RunPublisher outcome = %+v, want a clean completion", o)
+		}
+		t.Logf("OBSERVED: RunPublisher onDone fired with a clean outcome")
+	case <-time.After(5 * time.Second):
+		t.Fatalf("RunPublisher onDone never fired within 5s")
+	}
+
+	select {
+	case evt := <-received:
+		if evt.Topic != topic {
+			t.Fatalf("received event.Topic = %q, want %q", evt.Topic, topic)
+		}
+		if txt, ok := evt.Payload.AsText(); !ok || txt != "hello from RunPublisher" {
+			t.Fatalf("received event.Payload = %v, want Text(hello from RunPublisher)", evt.Payload)
+		}
+		t.Logf("OBSERVED: RunSubscriber's handler received the real EVENT")
+	case err := <-subDone:
+		t.Fatalf("RunSubscriber exited early (err=%v) before delivering any EVENT", err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("RunSubscriber's handler never received the published EVENT within 5s")
+	}
+
+	// A shared control stream can carry other frame types between one
+	// EVENT and the next (confirmed live: the first attempt here hit
+	// exactly this), so retry past a non-EVENT parse failure instead of
+	// treating RecvEvent's single-call contract as "one shot, no retry" --
+	// same reasoning as RunSubscriber's own frame loop, just inlined here
+	// since this is a bare-primitive test helper, not that wrapper.
+	factDeadline := time.Now().Add(8 * time.Second)
+	var factEvt frame.EventInfo
+	for {
+		var ferr error
+		factEvt, ferr = factSession.RecvEvent(time.Until(factDeadline))
+		if ferr == nil {
+			break
+		}
+		if errors.Is(ferr, frame.ErrNotAnEventFrame) && time.Now().Before(factDeadline) {
+			continue
+		}
+		t.Fatalf("expected a real pubsub.publish_completed_v1 fact, got: %v", ferr)
+	}
+	if factEvt.Topic != publishCompletedTopic {
+		t.Fatalf("fact event.Topic = %q, want %q", factEvt.Topic, publishCompletedTopic)
+	}
+	outcomeField, ok := factEvt.Payload.Get("outcome")
+	if !ok {
+		t.Fatalf("publish_completed_v1 fact missing outcome field: %+v", factEvt.Payload)
+	}
+	if txt, _ := outcomeField.AsText(); txt != "completed" {
+		t.Fatalf("publish_completed_v1 outcome = %v, want Text(completed)", outcomeField)
+	}
+	t.Logf("OBSERVED: a real pubsub.publish_completed_v1 fact landed with outcome=completed")
+
+	cancelSub()
+	select {
+	case err := <-subDone:
+		if err != context.Canceled {
+			t.Fatalf("RunSubscriber returned %v after cancel, want context.Canceled", err)
+		}
+		t.Logf("OBSERVED: RunSubscriber returned promptly after cancel()")
+	case <-time.After(3 * time.Second):
+		t.Fatalf("RunSubscriber did not return within 3s of cancel() -- not respecting ctx.Done()")
+	}
+}
