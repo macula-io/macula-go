@@ -88,6 +88,18 @@ func (s *Session) ServeOneCallGated(lookup CallLookup, policy PolicyLookup, id i
 		}
 		value, err := s.control.RecvFrame(deadline)
 		if err != nil {
+			if isRecvTimeout(err) {
+				// A read-deadline timeout IS "timeout elapses with no
+				// inbound CALL frame arriving" -- this used to fall
+				// through to the generic wrap below instead, so
+				// ErrServeOneCallTimeout was never actually reachable
+				// on the ordinary "nothing arrived" path, only on the
+				// narrow race where a non-call frame arrives right at
+				// the deadline and the loop's own re-check catches it.
+				// ServeForever depends on this sentinel to tell "keep
+				// looping" apart from "the connection actually died".
+				return ErrServeOneCallTimeout
+			}
 			return fmt.Errorf("connection: serve_one_call: %w", err)
 		}
 		ft, ok := value.Get("frame_type")
