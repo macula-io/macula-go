@@ -191,7 +191,7 @@ func StationEndpointKey(stationPubkey []byte) [32]byte {
 // same procedure name under different realms doesn't collide in the DHT.
 // The advertiser and every resolver must derive this identically.
 func DiscoveryURI(realm []byte, procedure string) string {
-	const hexDigits = "0123456789abcdef"
+	const hexDigits = "0123456789ABCDEF"
 	hexRealm := make([]byte, len(realm)*2)
 	for i, b := range realm {
 		hexRealm[i*2] = hexDigits[b>>4]
