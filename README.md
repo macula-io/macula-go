@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](#license)
 [![Go Reference](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go)](https://go.dev)
 [![no unsafe](https://img.shields.io/badge/unsafe-none-success.svg)](https://pkg.go.dev/unsafe)
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow.svg)](https://buymeacoffee.com/rlefever)
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-support-ea4aaa.svg?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/rgfaber)
 
 <p align="center">
   <picture>
@@ -363,5 +363,5 @@ additional terms or conditions.
 ---
 
 <p align="center">
-  <sub>Built with the BEAM's protocol, ported to Go — <a href="https://buymeacoffee.com/rlefever">buy me a coffee</a> if this saved you some time</sub>
+  <sub>Built with the BEAM's protocol, ported to Go — <a href="https://github.com/sponsors/rgfaber">sponsor the work</a> if this saved you some time</sub>
 </p>
