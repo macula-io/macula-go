@@ -326,6 +326,16 @@ func Call(ctx context.Context, resolveVia *connection.Session, id identity.KeyPa
 // back through direct-dial instead of accepting a clean unknown_next_peer
 // as sufficient (that only proves resolve+dial+trust-chain work, not that
 // a live handler is reachable).
+//
+// Both steps run on the ONE session passed in, so this must not be called
+// on a session whose receive loop belongs to ServeForever: the put_record
+// CALL's RESULT frame is consumed by that loop and the put times out
+// ("dht: put_record: connection: read stream: deadline exceeded" -- seen
+// live 2026-09-03 from macula-cli's daemon, which did exactly that). A
+// long-lived server that is already serving should Advertise on its
+// serving session and publish the record (NewProcedureAdvertisement +
+// Sign + PutRecord) on a separate calling session, the way macula-cli's
+// daemon Register now does.
 func AdvertiseDirect(session *connection.Session, id identity.KeyPair, realm []byte, procedure string, ttl time.Duration) error {
 	advertiseSpec := frame.NewAdvertiseSpec(realm, procedure, id.NodeID())
 	if err := session.Advertise(advertiseSpec, id); err != nil {
