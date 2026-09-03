@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -18,6 +19,7 @@ import (
 	"github.com/macula-io/macula-go/dht"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/transport"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // testRealmCA and testLeafFor are a minimal, local cert-chain fixture for
@@ -276,6 +278,155 @@ func TestLiveDirectDialServeRoundTrip(t *testing.T) {
 	if serveErr := <-served; serveErr != nil {
 		t.Fatalf("ServeOneCall returned an error after apparently answering: %v", serveErr)
 	}
+}
+
+// TestLiveDirectDialUCANGatedRoundTrip proves CallWithUCAN actually reaches
+// a UCAN-gated procedure that plain Call cannot -- the gap this function
+// closes (PLAN_CLOSE_SERVICE_AUTH_GAPS.md Phase 0, macula-io/macula-architecture):
+// every hecate-om capability is advertised via AdvertiseDirect, and until
+// this function existed, NOTHING in this SDK could attach a token to a
+// direct-dial call at all -- a `ucan_required` capability was reachable in
+// name only. Three real assertions against the live fleet: an unauthorized
+// direct-dial Call is refused, an authorized CallWithUCAN gets a real
+// result, and a token signed by the WRONG issuer is refused too (not just
+// "any non-empty token passes").
+func TestLiveDirectDialUCANGatedRoundTrip(t *testing.T) {
+	if os.Getenv("MACULA_LIVE_TEST") == "" {
+		t.Skip("set MACULA_LIVE_TEST=1 to run against the live demo fleet")
+	}
+	host := os.Getenv("MACULA_LIVE_HOST")
+	if host == "" {
+		host = "station-de-falkenstein.macula.io"
+	}
+	const port = 4433
+	const procedure = "directdial_live_test.ucan_gated_v1"
+	realm := make([]byte, 32)
+
+	providerID, err := identity.GenerateWithPuzzle(identity.DefaultPuzzleDifficulty)
+	if err != nil {
+		t.Fatalf("identity.GenerateWithPuzzle (provider): %v", err)
+	}
+	callerID, err := identity.GenerateWithPuzzle(identity.DefaultPuzzleDifficulty)
+	if err != nil {
+		t.Fatalf("identity.GenerateWithPuzzle (caller): %v", err)
+	}
+	issuerID, err := identity.GenerateWithPuzzle(identity.DefaultPuzzleDifficulty)
+	if err != nil {
+		t.Fatalf("identity.GenerateWithPuzzle (issuer): %v", err)
+	}
+	otherIssuerID, err := identity.GenerateWithPuzzle(identity.DefaultPuzzleDifficulty)
+	if err != nil {
+		t.Fatalf("identity.GenerateWithPuzzle (wrong issuer): %v", err)
+	}
+
+	validToken, err := ucan.Create(
+		hex.EncodeToString(issuerID.NodeID()), hex.EncodeToString(callerID.NodeID()),
+		[]ucan.Capability{{With: "mri:test:live", Can: "call"}}, issuerID, ucan.CreateOpts{})
+	if err != nil {
+		t.Fatalf("ucan.Create (valid): %v", err)
+	}
+	wrongIssuerToken, err := ucan.Create(
+		hex.EncodeToString(otherIssuerID.NodeID()), hex.EncodeToString(callerID.NodeID()),
+		[]ucan.Capability{{With: "mri:test:live", Can: "call"}}, otherIssuerID, ucan.CreateOpts{})
+	if err != nil {
+		t.Fatalf("ucan.Create (wrong issuer): %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	provider, err := connection.Connect(ctx, host, port, transport.WebPKI{}, providerID)
+	if err != nil {
+		t.Fatalf("Connect (provider session) to %s:%d: %v", host, port, err)
+	}
+	defer func() { _ = provider.Close("normal", nil, providerID) }()
+
+	if err := AdvertiseDirect(provider, providerID, realm, procedure, time.Hour); err != nil {
+		t.Fatalf("AdvertiseDirect: %v", err)
+	}
+	t.Logf("provider %x advertised (plain + direct) for %q, gated to issuer %x", provider.Station.NodeID, procedure, issuerID.NodeID())
+
+	requiredPolicy := ucan.Required(issuerID.NodeID())
+	echo := func(payload cbor.Value) (cbor.Value, error) {
+		return cbor.Map([]cbor.MapEntry{{Key: cbor.Text("echo"), Val: payload}}), nil
+	}
+	lookup := func(_ []byte, proc string) (connection.CallHandler, bool) {
+		if proc != procedure {
+			return nil, false
+		}
+		return echo, true
+	}
+	policy := func(_ []byte, proc string) ucan.Policy {
+		if proc == procedure {
+			return requiredPolicy
+		}
+		return ucan.Open
+	}
+
+	serve := func() <-chan error {
+		done := make(chan error, 1)
+		go func() { done <- provider.ServeOneCallGated(lookup, policy, providerID, 15*time.Second) }()
+		return done
+	}
+
+	dial := func(t *testing.T) *connection.Session {
+		t.Helper()
+		s, err := connection.Connect(ctx, host, port, transport.WebPKI{}, callerID)
+		if err != nil {
+			t.Fatalf("Connect (caller session) to %s:%d: %v", host, port, err)
+		}
+		t.Cleanup(func() { _ = s.Close("normal", nil, callerID) })
+		return s
+	}
+
+	// 1. Unauthorized: plain Call cannot even attach a token, so this
+	// proves the negative baseline every gated capability had before
+	// CallWithUCAN existed.
+	served := serve()
+	resolver := dial(t)
+	_, callErr := Call(ctx, resolver, callerID, realm, procedure, cbor.Text("no token"), 12*time.Second)
+	if callErr != nil {
+		t.Fatalf("plain Call: %v (want a bolt4 unauthorized RESULT, not a transport error)", callErr)
+	}
+	if serveErr := <-served; serveErr != nil {
+		t.Fatalf("ServeOneCallGated (unauthorized tick): %v", serveErr)
+	}
+	t.Logf("OBSERVED: plain Call against a gated procedure was refused by the policy, as expected")
+
+	// 2. Wrong issuer: CallWithUCAN exists and attaches a token, but the
+	// token's issuer doesn't match what the procedure requires.
+	served = serve()
+	resolver2 := dial(t)
+	_, callErr = CallWithUCAN(ctx, resolver2, callerID, realm, procedure, cbor.Text("wrong issuer"), 12*time.Second, wrongIssuerToken)
+	if callErr != nil {
+		t.Fatalf("CallWithUCAN (wrong issuer): %v (want a bolt4 unauthorized RESULT, not a transport error)", callErr)
+	}
+	if serveErr := <-served; serveErr != nil {
+		t.Fatalf("ServeOneCallGated (wrong-issuer tick): %v", serveErr)
+	}
+	t.Logf("OBSERVED: CallWithUCAN with a token from the wrong issuer was refused, as expected")
+
+	// 3. Authorized: the actual fix under test.
+	served = serve()
+	resolver3 := dial(t)
+	resp, callErr := CallWithUCAN(ctx, resolver3, callerID, realm, procedure, cbor.Text("hello gated direct-dial"), 12*time.Second, validToken)
+	if callErr != nil {
+		t.Fatalf("CallWithUCAN (authorized): %v (this is the fix under test)", callErr)
+	}
+	if resp.IsError {
+		t.Fatalf("CallWithUCAN (authorized) returned a bolt4 ERROR frame instead of a real reply: code=%d", resp.Code)
+	}
+	got, ok := resp.Payload.Get("echo")
+	if !ok {
+		t.Fatalf("reply payload missing echo field: %+v", resp.Payload)
+	}
+	if txt, ok := got.AsText(); !ok || txt != "hello gated direct-dial" {
+		t.Fatalf("echo = %+v, want Text(\"hello gated direct-dial\")", got)
+	}
+	if serveErr := <-served; serveErr != nil {
+		t.Fatalf("ServeOneCallGated (authorized tick): %v", serveErr)
+	}
+	t.Logf("OBSERVED: a UCAN-gated capability, advertised only via AdvertiseDirect, was reached and answered through CallWithUCAN end to end")
 }
 
 // TestLiveResolveWithCertChain proves the cert_chain field survives a real

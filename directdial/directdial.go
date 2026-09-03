@@ -301,6 +301,37 @@ func Call(ctx context.Context, resolveVia *connection.Session, id identity.KeyPa
 	return target.Call(procedure, realm, payload, time.Now().Add(timeout).UnixMilli(), id, timeout)
 }
 
+// CallWithUCAN is Call, presenting ucanToken to a provider gated with
+// `{ucan_required, Issuer}` (see connection.Session.CallWithUCAN for the
+// wire behavior). Every hecate-om capability is advertised via
+// AdvertiseDirect, so this is the only way a UCAN-gated capability is
+// reachable at all — plain Call cannot resolve or dial it, and Call
+// (this package) cannot attach a token. Split from Call rather than
+// adding an optional token there, matching connection.Session's own
+// Call/CallWithUCAN split.
+func CallWithUCAN(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, payload cbor.Value, timeout time.Duration, ucanToken []byte) (frame.CallResponse, error) {
+	station, host, port, err := Resolve(resolveVia, id, realm, procedure)
+	if err != nil {
+		return frame.CallResponse{}, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
+	}
+
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	target, err := connection.Connect(dialCtx, host, port, transport.Insecure{}, id)
+	if err != nil {
+		return frame.CallResponse{}, fmt.Errorf("directdial: dial resolved station %x at %s:%d: %w", station, host, port, err)
+	}
+	defer func() { _ = target.Close("normal", nil, id) }()
+
+	if !bytesEqual(target.Station.NodeID, station) {
+		return frame.CallResponse{}, fmt.Errorf(
+			"directdial: trust violation — resolved station %x but the dialed peer proved identity %x",
+			station, target.Station.NodeID)
+	}
+
+	return target.CallWithUCAN(procedure, realm, payload, time.Now().Add(timeout).UnixMilli(), id, timeout, ucanToken)
+}
+
 // AdvertiseDirect publishes a signed procedure_advertisement naming
 // session's own currently-connected station (session.Station.NodeID) as
 // procedure's server, discoverable by any caller's Resolve/Call. Mirrors
