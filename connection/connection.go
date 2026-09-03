@@ -11,6 +11,7 @@ package connection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -38,16 +39,65 @@ type Session struct {
 	Station frame.HelloInfo
 }
 
+// Seed is one candidate station to dial — a host/port pair, the same
+// shape the Erlang reference SDK's own seed() type reduces to once a
+// URL form is parsed (macula_client.erl). ConnectSeeds tries a list of
+// these in order; ordering is the caller's fallback priority, not
+// load-balanced or shuffled.
+type Seed struct {
+	Host string
+	Port uint16
+}
+
 // Connect dials host:port and completes the full CONNECT/HELLO
-// handshake: open a QUIC connection, open the control stream, send a
-// signed CONNECT built from identity, and wait for a HELLO whose own
-// signature verifies against the node_id it claims.
+// handshake — a convenience wrapper over ConnectSeeds for the common
+// single-station case; identical behavior to calling ConnectSeeds with
+// a one-element list.
 //
 // identity MUST be puzzle-hardened (identity.Generate or
 // identity.GenerateWithPuzzle) — see that package's doc: an unhardened
 // identity fails this handshake silently in the worst case (QUIC/TLS
 // looks healthy right up until the HELLO never accepts).
 func Connect(ctx context.Context, host string, port uint16, trust transport.Trust, id identity.KeyPair) (*Session, error) {
+	return ConnectSeeds(ctx, []Seed{{Host: host, Port: port}}, trust, id)
+}
+
+// ConnectSeeds dials each seed in order, returning the first successful
+// session. A seed that refuses or times out is not fatal on its own —
+// every remaining seed is still tried — matching the reference SDK's
+// own "first healthy" pool-selection behavior (macula_client.erl's
+// pick_connected_link/call_first_success) at connect time. If every
+// seed fails, the returned error names each one and its failure so a
+// dead seed is never silent (the exact failure mode
+// feedback_three_seed_stations_minimum warns about: a misconfigured
+// seed logging nothing and the caller just seeing "it works" from
+// whichever seeds did answer).
+//
+// ConnectSeeds does not itself detect or recover from a connection
+// dying AFTER a successful handshake — see Session.Done for that
+// signal; reconnecting and replaying subscriptions/advertisements onto
+// a fresh session is the caller's responsibility (deliberately: that
+// policy differs by caller — a one-shot CLI command wants none of it,
+// a long-lived daemon wants exactly the reference SDK's respawn+replay
+// behavior).
+func ConnectSeeds(ctx context.Context, seeds []Seed, trust transport.Trust, id identity.KeyPair) (*Session, error) {
+	if len(seeds) == 0 {
+		return nil, fmt.Errorf("connection: no seeds given")
+	}
+	var errs []error
+	for _, seed := range seeds {
+		session, err := connectOne(ctx, seed.Host, seed.Port, trust, id)
+		if err == nil {
+			return session, nil
+		}
+		errs = append(errs, fmt.Errorf("%s:%d: %w", seed.Host, seed.Port, err))
+	}
+	return nil, fmt.Errorf("connection: all %d seed(s) failed: %w", len(seeds), errors.Join(errs...))
+}
+
+// connectOne is Connect's actual handshake logic, factored out so
+// ConnectSeeds can run it per candidate without duplicating it.
+func connectOne(ctx context.Context, host string, port uint16, trust transport.Trust, id identity.KeyPair) (*Session, error) {
 	ctx, cancel := context.WithTimeout(ctx, HandshakeTimeout)
 	defer cancel()
 
@@ -91,6 +141,19 @@ func Connect(ctx context.Context, host string, port uint16, trust transport.Trus
 
 	session.Station = station
 	return session, nil
+}
+
+// Done returns a channel that closes when this session's underlying
+// connection is gone — cleanly closed or dropped out from under it —
+// so a caller that wants to react to a dead link (redial, alert, stop)
+// doesn't have to wait for its next Call/Subscribe/etc to fail first.
+// Backed by quic-go's own Conn.Context(), whose Done() channel closes
+// exactly on connection loss; this was previously never called
+// anywhere in this SDK. Follows the same ctx-cancellation idiom already
+// used by RunSubscriber, ServeForever and KeepAdvertised rather than
+// introducing a new signal shape.
+func (s *Session) Done() <-chan struct{} {
+	return s.conn.Context().Done()
 }
 
 // OpenDedicatedStream opens a new dedicated QUIC stream on this same
