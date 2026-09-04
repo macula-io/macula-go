@@ -1,7 +1,7 @@
 # macula-go
 
 [![CI](https://img.shields.io/github/actions/workflow/status/macula-io/macula-go/ci.yml?branch=master&label=CI)](https://github.com/macula-io/macula-go/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](#license)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#license)
 [![Go Reference](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go)](https://go.dev)
 [![no unsafe](https://img.shields.io/badge/unsafe-none-success.svg)](https://pkg.go.dev/unsafe)
 [![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-support-ea4aaa.svg?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/rgfaber)
@@ -348,17 +348,12 @@ traced directly to the Erlang SDK's source.
 
 ## License
 
-Licensed under either of
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
-
-at your option.
+Licensed under the Apache License, Version 2.0 ([LICENSE](LICENSE) or
+<http://www.apache.org/licenses/LICENSE-2.0>).
 
 Unless you explicitly state otherwise, any contribution intentionally
-submitted for inclusion in this module by you, as defined in the
-Apache-2.0 license, shall be dual licensed as above, without any
-additional terms or conditions.
+submitted for inclusion in this module by you shall be licensed as
+above, without any additional terms or conditions.
 
 ---
 
