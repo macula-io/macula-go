@@ -333,6 +333,47 @@ func TestEventDeliveredExactlyOnceDespiteDuplicateFrames(t *testing.T) {
 	}
 }
 
+func TestPanickingHandlerDoesNotStopOtherDelivery(t *testing.T) {
+	id := testIdentity(t)
+	dialer := newFakeDialer()
+	s1 := newFakeSession()
+	dialer.script("station.example", 4433, s1)
+
+	p, err := Connect(context.Background(), []Seed{{Host: "station.example", Port: 4433}}, testOpts(id, dialer.dial))
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer p.Close()
+	waitFor(t, time.Second, func() bool { return p.Status().HealthyLinks == 1 })
+
+	realm := fill32(0x99)
+	publisher := fill32(0x88)
+
+	p.Subscribe(realm, "topic.panics", func(_ []byte, _ string, _ cbor.Value) {
+		panic("boom")
+	})
+
+	var mu sync.Mutex
+	var gotSecond bool
+	p.Subscribe(realm, "topic.fine", func(_ []byte, _ string, _ cbor.Value) {
+		mu.Lock()
+		gotSecond = true
+		mu.Unlock()
+	})
+	waitFor(t, time.Second, func() bool { return len(subscribeFrames(s1.Sent())) == 2 })
+
+	s1.recv <- rawEventFrame(t, realm, publisher, "topic.panics", 1, cbor.Text("x"))
+	s1.recv <- rawEventFrame(t, realm, publisher, "topic.fine", 2, cbor.Text("y"))
+
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return gotSecond
+	})
+	// Reaching here at all (not a crashed test binary) is itself part of
+	// what this test asserts.
+}
+
 func TestCallFallsThroughToNextConnectedLink(t *testing.T) {
 	id := testIdentity(t)
 	dialer := newFakeDialer()

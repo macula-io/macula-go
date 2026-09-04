@@ -3,6 +3,7 @@ package pool
 import (
 	"time"
 
+	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
 )
 
@@ -135,8 +136,22 @@ func (p *Pool) deliver(evt inboundEvent) {
 	p.subsMu.Unlock()
 
 	for _, h := range handlers {
-		go h(evt.realm, evt.topic, evt.payload)
+		go deliverOne(h, evt.realm, evt.topic, evt.payload)
 	}
+}
+
+// deliverOne runs one EventHandler on its own goroutine, recovering a
+// panic instead of letting it propagate — an unrecovered panic in ANY
+// goroutine terminates the whole process in Go, unlike Erlang's
+// per-process crash isolation (macula_client.erl's own deliver_one is a
+// plain, non-blocking `Pid ! Msg` specifically because the receiving
+// process's own supervision handles a bad handler; Go's `go h(...)` has
+// no such safety net built in). A subscriber's own bug must cost that
+// one delivery, never every other link and subscriber this pool is
+// carrying.
+func deliverOne(h EventHandler, realm []byte, topic string, payload cbor.Value) {
+	defer func() { recover() }()
+	h(realm, topic, payload)
 }
 
 func (p *Pool) sweepDedup() {
