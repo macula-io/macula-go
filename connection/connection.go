@@ -105,10 +105,22 @@ func connectOne(ctx context.Context, host string, port uint16, trust transport.T
 	if err != nil {
 		return nil, err
 	}
+	// Closes conn on every failure path below unless the handshake
+	// actually completes (ok = true right before the successful return).
+	// Every one of these paths used to return bare, leaking the live
+	// QUIC connection -- confirmed live: a station that refuses every
+	// dial (e.g. puzzle rejection) combined with a caller that retries
+	// on a short fixed backoff leaks one connection per attempt, each
+	// one then kept minimally alive by the transport's own keepalive.
+	ok := false
+	defer func() {
+		if !ok {
+			conn.CloseWithError(0, "handshake failed")
+		}
+	}()
 
 	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
-		conn.CloseWithError(0, "open control stream failed")
 		return nil, fmt.Errorf("connection: open control stream: %w", err)
 	}
 	control := newFrameStream(stream)
@@ -140,6 +152,7 @@ func connectOne(ctx context.Context, host string, port uint16, trust transport.T
 	}
 
 	session.Station = station
+	ok = true
 	return session, nil
 }
 

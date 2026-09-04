@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/quic-go/quic-go"
 )
@@ -86,6 +87,22 @@ func (Insecure) tlsConfig(serverName string) *tls.Config {
 	}
 }
 
+// quicConfig sets the same idle-timeout/keepalive shape the Erlang
+// reference SDK uses (macula_quic.erl's own defaults: idle_timeout_ms
+// 300_000, keep_alive_interval_ms 15_000 — "idle_timeout=300s tolerates
+// short snapshot-RPC gaps without closing the conn; keep_alive=15s sends
+// PING ~10x before any timeout could fire"). quic-go's own zero-value
+// default (previously passed as a literal nil here) is a 30s idle
+// timeout with NO keepalive at all — an idle-but-healthy connection
+// (e.g. a pool link carrying a subscription with no recent traffic)
+// would be torn down by quic-go itself well before anything at the
+// application layer noticed, and a NATed path's mapping can silently
+// expire in that same window with nothing to refresh it.
+var quicConfig = &quic.Config{
+	MaxIdleTimeout:  300_000 * time.Millisecond,
+	KeepAlivePeriod: 15_000 * time.Millisecond,
+}
+
 // Dial establishes a raw QUIC connection to host:port with ALPN
 // "macula" and the given trust mode.
 //
@@ -98,7 +115,7 @@ func (Insecure) tlsConfig(serverName string) *tls.Config {
 func Dial(ctx context.Context, host string, port uint16, trust Trust) (*quic.Conn, error) {
 	addr := net.JoinHostPort(host, strconv.Itoa(int(port)))
 	tlsConf := trust.tlsConfig(host)
-	conn, err := quic.DialAddr(ctx, addr, tlsConf, nil)
+	conn, err := quic.DialAddr(ctx, addr, tlsConf, quicConfig)
 	if err != nil {
 		return nil, fmt.Errorf("transport: dial %s: %w", addr, err)
 	}
