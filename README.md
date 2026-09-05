@@ -310,19 +310,6 @@ unrelated PR. Same convention as `macula-rust`'s `tests/live_station.rs`.
 
 ## Known limitations
 
-- **`frame.ClientStream` mode's reply path (`SendReply`/`AwaitReply`) is
-  correct on this SDK's side but currently blocked by a `macula-station`
-  bug.** `stream/live_test.go`'s `TestLiveClientStreamReplyRoundTrip`
-  reproduces it reliably: the provider receives the caller's data and
-  end-of-stream correctly and `SendReply` returns no error, but the
-  caller's `AwaitReply` gets a raw transport EOF. Root cause is on the
-  relay side — the caller and provider each hold a separate dedicated
-  QUIC stream to the station, bridged by the station's own relay logic,
-  and the station appears to close the caller-facing leg's write side as
-  soon as it relays the caller's `STREAM_END`, before the provider's
-  reply can flow back the other way. Not fixable in this module. The
-  test skips with a clear diagnostic rather than failing, so it stops
-  blocking CI without losing the regression check.
 - **`directdial.GetDirect` can only resolve a `content_announcement`
   that something has actually published** — and nothing in this
   ecosystem currently does, since (per the design note above) only a

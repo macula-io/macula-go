@@ -13,7 +13,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -228,25 +227,30 @@ func TestLiveStreamingProviderRoundTrip(t *testing.T) {
 // PROVIDER drains with Recv and finishes with SendReply, and the caller's
 // AwaitReply is what's actually being proven here.
 //
-// FOUND, 2026-08-30, reproduced 3/3 runs: the provider receives the
+// FOUND, 2026-08-30, reproduced 3/3 runs: the provider received the
 // caller's data AND end-of-stream correctly, and its own SendReply
-// returns no error — but the caller's AwaitReply never sees the reply,
-// failing with "connection: read stream: EOF". This is NOT a bug in this
-// SDK's own code: CloseSend (stream.go) only ever sends an application-
-// level STREAM_END frame — it never touches the underlying QUIC stream's
-// read or write side. The caller and provider each hold a SEPARATE
-// dedicated QUIC stream to the station (OpenDedicatedStream /
-// AcceptDedicatedStream in connection.go), bridged by the station's own
-// relay logic — the EOF is on the caller's leg of that relay, which only
-// the station controls. The evidence points at the station closing its
-// write side of the caller-facing leg as soon as it relays the caller's
-// STREAM_END, rather than keeping that leg open for an eventual reply
-// flowing the other direction — a real macula-station (relay, separate
-// Erlang repo) bug, not something fixable here. Skips rather than fails
-// once this specific failure is detected, so it stops blocking CI without
-// silently losing the regression check: once macula-station fixes this,
-// the skip condition stops firing and the real assertions below start
-// running for real.
+// returned no error — but the caller's AwaitReply never saw the reply,
+// failing with "connection: read stream: EOF". Not a bug in this SDK's
+// own code: CloseSend (stream.go) only ever sends an application-level
+// STREAM_END frame, never touching the underlying QUIC stream's read or
+// write side — the caller and provider each hold a SEPARATE dedicated
+// QUIC stream to the station (OpenDedicatedStream/AcceptDedicatedStream
+// in connection.go), bridged by the station's own relay logic, and the
+// EOF was on the caller's leg of that relay: macula_station_peer_observer.erl's
+// maybe_close_stream_route/3 tore down the ENTIRE bidirectional route on
+// the caller's STREAM_END regardless of the frame's `role` field, instead
+// of recognizing a half-close (role=send) as non-terminal for
+// client_stream/bidi modes.
+//
+// FIXED, 2026-09-05, macula-station commit 07db0d8 (mode-aware
+// half-close: a half-close's terminality is now decided per stream mode
+// instead of by a symmetric counter). Re-verified live against the real
+// fleet after that fix landed: passes cleanly, no skip path hit. The
+// skip fallback this test used to carry (detecting the specific
+// "read stream: EOF" failure and skipping rather than failing so a real
+// station bug wouldn't block CI) is removed now that the bug it worked
+// around is actually fixed — a real macula-station regression here
+// should fail this test again, not be silently skipped.
 func TestLiveClientStreamReplyRoundTrip(t *testing.T) {
 	providerID, err := identity.Generate()
 	if err != nil {
@@ -345,11 +349,6 @@ func TestLiveClientStreamReplyRoundTrip(t *testing.T) {
 
 	payload, respondedBy, err := callerHandle.AwaitReply(5 * time.Second)
 	if err != nil {
-		if strings.Contains(err.Error(), "read stream: EOF") {
-			t.Skipf("KNOWN macula-station relay bug (see this test's doc comment): "+
-				"the station closed the caller's leg after relaying STREAM_END, "+
-				"before the provider's reply could be relayed back: %v", err)
-		}
 		t.Fatalf("caller should receive the reply: %v", err)
 	}
 	text, ok := payload.AsText()
