@@ -71,7 +71,7 @@ func decodeOne(data []byte) (Value, int, error) {
 			return Value{}, 0, fmt.Errorf("cbor: decode list length: %w", err)
 		}
 		pos := used
-		items := make([]Value, 0, count)
+		items := make([]Value, 0, preallocCap(count))
 		for i := uint64(0); i < count; i++ {
 			item, n, err := decodeOne(rest[pos:])
 			if err != nil {
@@ -89,7 +89,22 @@ func decodeOne(data []byte) (Value, int, error) {
 		}
 		pos := used
 		// Last-write-wins on duplicate keys, per §4 — not an error.
-		entries := make([]MapEntry, 0, count)
+		//
+		// Dedup is keyed on each key's own re-encoded canonical bytes via a
+		// map, not a linear scan: a linear scan (the previous
+		// setLastWriteWins, which even re-encoded every existing key on
+		// every comparison) makes this O(n^2) in the key count — a pre-auth
+		// algorithmic-complexity DoS, reachable during frame decode before
+		// any signature check. Confirmed on the equivalent pattern in the
+		// reference Rust NIF (macula-io/macula, native/macula_cbor_nif):
+		// a map with 80,000 distinct keys took over a minute to decode,
+		// scaling quadratically. Re-encoding a decoded key for its
+		// canonical identity is already this codec's own definition of
+		// "the same key" (see Encode's map-key sort, "bytewise order of
+		// their own encoded bytes"), so hashing that byte string is
+		// correctness-preserving, not a new dedup rule.
+		entries := make([]MapEntry, 0, preallocCap(count))
+		indexOfKey := make(map[string]int, preallocCap(count))
 		for i := uint64(0); i < count; i++ {
 			key, kn, err := decodeOne(rest[pos:])
 			if err != nil {
@@ -101,7 +116,13 @@ func decodeOne(data []byte) (Value, int, error) {
 				return Value{}, 0, fmt.Errorf("cbor: decode map value %d: %w", i, err)
 			}
 			pos += vn
-			entries = setLastWriteWins(entries, key, val)
+			kb := string(Encode(key))
+			if idx, ok := indexOfKey[kb]; ok {
+				entries[idx].Val = val
+			} else {
+				indexOfKey[kb] = len(entries)
+				entries = append(entries, MapEntry{Key: key, Val: val})
+			}
 		}
 		return Map(entries), 1 + pos, nil
 
@@ -113,27 +134,28 @@ func decodeOne(data []byte) (Value, int, error) {
 	}
 }
 
-func setLastWriteWins(entries []MapEntry, key, val Value) []MapEntry {
-	kb := Encode(key)
-	for i := range entries {
-		if bytesEqual(Encode(entries[i].Key), kb) {
-			entries[i].Val = val
-			return entries
-		}
-	}
-	return append(entries, MapEntry{Key: key, Val: val})
-}
+// maxPreallocHint bounds a wire-supplied element count before it's used
+// as a slice/map capacity hint. `count` comes straight from readAIValue
+// on attacker-controlled bytes and is NOT validated against how many
+// bytes actually follow -- a ~10-byte frame can claim count = 2^64-1.
+// Passing that directly to make() either panics ("makeslice: cap out of
+// range") or allocates gigabytes, before the per-element loop below ever
+// bounds-checks against the real remaining input. This decode path has
+// no recover() between it and its connection goroutine (RecvFrame ->
+// frame.Decode -> cbor.Decode), so an unrecovered panic here kills the
+// whole process -- a single small malformed frame as a remote DoS, found
+// during review of the majorMap dedup fix above. Mirrors
+// deterministic.rs's `count.min(1024)` on the equivalent
+// Vec::with_capacity calls in the reference Rust NIF. The loop still
+// runs the full `count` iterations; this only bounds the allocation
+// hint, not correctness.
+const maxPreallocHint = 1024
 
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
+func preallocCap(count uint64) int {
+	if count > maxPreallocHint {
+		return maxPreallocHint
 	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return int(count)
 }
 
 // readAIValue reads the value ai directly encodes (ai<=23) or the

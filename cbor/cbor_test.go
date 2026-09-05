@@ -3,6 +3,7 @@ package cbor
 import (
 	"bytes"
 	"testing"
+	"time"
 )
 
 func TestEncodeMinimalLengthBoundaries(t *testing.T) {
@@ -183,5 +184,78 @@ func TestDuplicateMapKeysLastWriteWins(t *testing.T) {
 	n, _ := got.AsInt64()
 	if n != 2 {
 		t.Errorf("duplicate key: got %d, want 2 (last write)", n)
+	}
+}
+
+// TestDecodeMapDedupIsNotQuadratic guards against a regression to the
+// pre-2026-09-05 linear-scan dedup in decodeOne's majorMap case, which
+// made decoding O(n^2) in the key count -- a pre-auth algorithmic-
+// complexity DoS (reachable during frame decode, before any signature
+// check). Measured before the fix: 16,000 distinct keys took ~6.5s and
+// scaling was clearly quadratic (each doubling of n roughly quadrupled
+// the time); after the fix, the same input decodes in single-digit
+// milliseconds. This budget is generous on purpose -- it only needs to
+// catch a return to O(n^2), not enforce a specific constant factor.
+func TestDecodeMapDedupIsNotQuadratic(t *testing.T) {
+	const n = 20000
+	entries := make([]MapEntry, 0, n)
+	for i := 0; i < n; i++ {
+		entries = append(entries, MapEntry{Key: Uint64(uint64(i)), Val: Uint64(uint64(i))})
+	}
+	wire := Encode(Map(entries))
+
+	start := time.Now()
+	v, _, err := Decode(wire)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("decoding a %d-key map took %v -- looks quadratic again (O(n) should take single-digit ms)", n, elapsed)
+	}
+	if len(v.mapV) != n {
+		t.Fatalf("decoded map has %d entries, want %d", len(v.mapV), n)
+	}
+	last, _ := v.mapV[n-1].Val.AsInt64()
+	if last != int64(n-1) {
+		t.Errorf("decoded value for last key: got %d, want %d", last, n-1)
+	}
+}
+
+// TestDecodeRejectsHugeClaimedCountWithoutPanicking guards against a
+// process-killing DoS found while reviewing the fix above: `count` comes
+// straight off the wire via readAIValue and is never checked against how
+// many bytes actually follow, so a 9-byte frame can claim a map or list
+// of 2^64-1 entries. Before preallocCap, `make([]MapEntry, 0, count)`
+// (and the sibling majorList/indexOfKey allocations) took that count
+// directly as a capacity hint, which panics with "makeslice: cap out of
+// range" -- and nothing between here and the connection goroutine
+// (RecvFrame -> frame.Decode -> cbor.Decode) recovers, so a single
+// malformed frame killed the whole process. Decode must return an error,
+// never panic, on attacker-controlled input.
+func TestDecodeRejectsHugeClaimedCountWithoutPanicking(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  []byte
+	}{
+		// major 5 (map, head 0xA0), ai=27 (0x1B): next 8 bytes are the
+		// full uint64 count. 0xFFFFFFFFFFFFFFFF entries claimed, 0 bytes
+		// of actual key/value data follow.
+		{"map claims 2^64-1 entries", []byte{0xBB, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}},
+		// major 4 (list, head 0x80) with the same ai/length shape.
+		{"list claims 2^64-1 entries", []byte{0x9B, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("Decode panicked on attacker-controlled input: %v", r)
+				}
+			}()
+			_, _, err := Decode(tc.raw)
+			if err == nil {
+				t.Fatal("expected a decode error for an under-filled huge-count frame, got nil")
+			}
+		})
 	}
 }
