@@ -39,6 +39,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	mathrand "math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -69,6 +70,12 @@ const (
 	// DefaultConnectTimeout bounds one link's CONNECT/HELLO handshake --
 	// matches connection.HandshakeTimeout.
 	DefaultConnectTimeout = 30 * time.Second
+	// DefaultStationDiscoveryRefreshInterval/DefaultStationDiscoveryMaxLinks
+	// match macula_client.erl's own station_discovery defaults
+	// (refresh_ms/max_links) exactly, only applied when
+	// StationDiscovery.Enabled is true.
+	DefaultStationDiscoveryRefreshInterval = 30 * time.Minute
+	DefaultStationDiscoveryMaxLinks        = 5
 )
 
 // Seed is one seed station to dial at Connect -- re-exported so callers
@@ -82,6 +89,78 @@ type EventHandler func(realm []byte, topic string, payload cbor.Value)
 
 // SubID identifies one Subscribe call, for a later Unsubscribe.
 type SubID uint64
+
+// LinkSelection picks how Call/Publish order the pool's currently-
+// connected links before applying their own existing first-match/
+// replication-factor logic -- it changes ORDER only, never how many
+// links get used. CallStation is deliberately NOT in scope: it dials
+// one specific target, not a selection among several, so there is no
+// order for this option to affect. Matches macula_client.erl's own
+// link_selection option exactly (first_success/random), so a caller
+// porting config from the Erlang reference (or another SDK) doesn't
+// have to re-learn the shape.
+type LinkSelection int
+
+const (
+	// LinkSelectionAuto (the zero value) derives the actual policy from
+	// StationDiscovery.Enabled: LinkSelectionFirstSuccess if discovery is
+	// off (today's exact behavior, unchanged), LinkSelectionRandom if
+	// it's on. Set LinkSelection explicitly to override that pairing
+	// either way.
+	LinkSelectionAuto LinkSelection = iota
+	// LinkSelectionFirstSuccess tries links in whatever order
+	// connectedActors() currently returns them, first non-error wins --
+	// this package's original, pre-existing behavior. Note that order
+	// was never actually deliberate: p.links is a map, and Go
+	// randomizes map iteration, so this policy already had incidental,
+	// undocumented variation baked in -- LinkSelectionFirstSuccess makes
+	// that historical accident irrelevant by not caring about order at
+	// all beyond "whatever connectedActors() hands back."
+	LinkSelectionFirstSuccess
+	// LinkSelectionRandom uniformly shuffles the connected-links list
+	// before the same first-match (Call) or take-first-N (Publish)
+	// logic runs. This is a real, deliberate, tested rotation -- not an
+	// accident of a map -- and composes safely with a small
+	// ReplicationFactor (shuffling a 1-element slice is a no-op).
+	LinkSelectionRandom
+)
+
+// StationDiscoveryOpts configures opt-in discovery of additional
+// stations via hecate_stations.list_stations, layered on top of the
+// caller-supplied bootstrap Seeds. Absent (the zero value, Enabled ==
+// false) is a complete no-op -- zero config means zero behavior
+// change, matching macula_client.erl's own station_discovery option.
+//
+// Bootstrap Seeds keep their exact current meaning: dialed first,
+// permanent fallback if discovery never succeeds, never replaced.
+// Discovery only ADDS links (via the pool's own addLink, which is
+// already a no-op for an already-known host:port) -- a station
+// missing from a later refresh does NOT tear down an existing link;
+// removal stays tied to the existing crash/DOWN cleanup only, never
+// to absence from a discovery response (replication lag in the
+// station directory isn't evidence a station is gone).
+type StationDiscoveryOpts struct {
+	Enabled bool
+	// RefreshInterval between discovery attempts once at least one
+	// bootstrap link is up. 0 -> DefaultStationDiscoveryRefreshInterval.
+	RefreshInterval time.Duration
+	// MaxLinks bounds discovery's OWN adds only, not this Pool's total
+	// link count: discovery adds a link only while linkCount() (every
+	// link this Pool holds, from any source -- Seeds, CallStation
+	// direct-dial targets, and previously discovered ones, healthy or
+	// not) is still below MaxLinks. Connect dials every bootstrap Seed
+	// regardless of MaxLinks (more Seeds than MaxLinks means discovery
+	// simply adds nothing, ever), and CallStation adds its own link
+	// regardless too -- but once added, a CallStation link DOES count
+	// toward the total linkCount() compares against, consuming
+	// discovery's budget even though CallStation itself never checks
+	// MaxLinks. A link discovery added that never connects (e.g. a
+	// station whose only known address isn't dialable under this
+	// Pool's Trust) still occupies a slot against this cap even while
+	// permanently unhealthy -- there is no separate "healthy slots"
+	// budget. 0 -> DefaultStationDiscoveryMaxLinks.
+	MaxLinks int
+}
 
 // Opts configures a Pool. Zero-value Opts is invalid -- Identity has no
 // safe default the way Erlang's resolve_identity generates a
@@ -117,6 +196,15 @@ type Opts struct {
 	// same reasoning as event delivery's own per-handler goroutine.
 	OnLinkEvent func(linkKey string, up bool, err error)
 
+	// LinkSelection picks Call/Publish's link ordering policy -- see
+	// LinkSelection's own doc. Zero value (LinkSelectionAuto) derives it
+	// from StationDiscovery.Enabled.
+	LinkSelection LinkSelection
+	// StationDiscovery opts into resolving additional stations via
+	// hecate_stations.list_stations -- see StationDiscoveryOpts' own
+	// doc. Zero value (Enabled == false) is a complete no-op.
+	StationDiscovery StationDiscoveryOpts
+
 	dial dialFunc // test-only seam; nil -> dialSession
 }
 
@@ -141,6 +229,21 @@ func (o Opts) withDefaults() Opts {
 	}
 	if o.LivenessMaxMisses <= 0 {
 		o.LivenessMaxMisses = DefaultLivenessMaxMisses
+	}
+	if o.LinkSelection == LinkSelectionAuto {
+		if o.StationDiscovery.Enabled {
+			o.LinkSelection = LinkSelectionRandom
+		} else {
+			o.LinkSelection = LinkSelectionFirstSuccess
+		}
+	}
+	if o.StationDiscovery.Enabled {
+		if o.StationDiscovery.RefreshInterval <= 0 {
+			o.StationDiscovery.RefreshInterval = DefaultStationDiscoveryRefreshInterval
+		}
+		if o.StationDiscovery.MaxLinks <= 0 {
+			o.StationDiscovery.MaxLinks = DefaultStationDiscoveryMaxLinks
+		}
 	}
 	if o.dial == nil {
 		o.dial = dialSession
@@ -226,6 +329,17 @@ func Connect(ctx context.Context, seeds []Seed, opts Opts) (*Pool, error) {
 		p.addLink(seed.Host, seed.Port, opts.Trust)
 	}
 
+	// wg.Add happens here, synchronously, before Connect returns and
+	// before any concurrent Close() could observe the WaitGroup at
+	// zero -- same safe pattern the 3 fixed goroutines above already
+	// use. Bootstrap Seeds keep their exact current meaning either way
+	// (dialed above, permanent fallback) -- discovery is additive on
+	// top, never a replacement; see StationDiscoveryOpts' own doc.
+	if opts.StationDiscovery.Enabled {
+		p.wg.Add(1)
+		go func() { defer p.wg.Done(); p.discoverStations() }()
+	}
+
 	return p, nil
 }
 
@@ -303,4 +417,29 @@ func (p *Pool) connectedActors() []*actor {
 		}
 	}
 	return actors
+}
+
+// selectLinks returns connectedActors() ordered per p.opts.LinkSelection --
+// the single shared choke point Call and Publish both route through, so
+// the two operations can never drift onto different selection policies
+// by accident. LinkSelectionFirstSuccess passes the list through
+// unchanged (today's original behavior: whatever order connectedActors()
+// happens to return, which was always map-iteration-random and never
+// actually deliberate -- see LinkSelectionFirstSuccess's own doc).
+// LinkSelectionRandom uniformly shuffles a COPY of the list (never the
+// slice connectedActors() just built in place, and never anything
+// touching p.links itself) via math/rand/v2, which needs no seeding and
+// is safe for concurrent use from multiple goroutines calling Call/
+// Publish at once -- unlike math/rand's global source pre-v2, which
+// needed its own lock and a deliberate seed to avoid every process
+// producing the identical shuffle sequence.
+func (p *Pool) selectLinks() []*actor {
+	actors := p.connectedActors()
+	if p.opts.LinkSelection != LinkSelectionRandom || len(actors) <= 1 {
+		return actors
+	}
+	shuffled := make([]*actor, len(actors))
+	copy(shuffled, actors)
+	mathrand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+	return shuffled
 }

@@ -20,9 +20,14 @@ const publishEnqueueTimeout = 5 * time.Second
 // CallStation's own wait for a freshly-dialed direct-dial link.
 const connectPollInterval = 50 * time.Millisecond
 
-// Publish fans spec out to ReplicationFactor currently-connected links.
-// Partial success counts as success, matching macula_client.erl's own
-// publish/5 exactly; only a zero-healthy-link pool is an error.
+// Publish fans spec out to ReplicationFactor currently-connected links,
+// selected per Opts.LinkSelection (selectLinks) -- LinkSelectionRandom
+// changes WHICH links get picked (a shuffled subset), never how many;
+// ReplicationFactor stays the sole count control, so this composes
+// safely with a small ReplicationFactor (shuffling ahead of a
+// single-element slice is a no-op). Partial success counts as success,
+// matching macula_client.erl's own publish/5 exactly; only a
+// zero-healthy-link pool is an error.
 //
 // payload is checked for wire admissibility HERE, in the caller's own
 // goroutine, before any link is touched -- matches macula_client.erl's
@@ -34,7 +39,7 @@ func (p *Pool) Publish(realm []byte, topic string, payload cbor.Value) error {
 	if err := frame.CheckPayload(payload); err != nil {
 		return err
 	}
-	actors := p.connectedActors()
+	actors := p.selectLinks()
 	if len(actors) == 0 {
 		return ErrNoHealthyStation
 	}
@@ -83,12 +88,17 @@ func (p *Pool) publishVia(a *actor, spec frame.PublishSpec) error {
 }
 
 // Call tries each currently-connected link in turn (call_first_success)
-// and returns the first non-error reply.
+// and returns the first non-error reply. Which order it tries them in
+// is Opts.LinkSelection's call (selectLinks) -- LinkSelectionFirstSuccess
+// (the default absent station discovery) leaves connectedActors()'s
+// order untouched; LinkSelectionRandom shuffles it first. Either way,
+// the FIRST non-error reply wins -- LinkSelection changes which link
+// gets tried first, never this method's own first-match semantics.
 func (p *Pool) Call(ctx context.Context, realm []byte, procedure string, payload cbor.Value, timeout time.Duration) (frame.CallResponse, error) {
 	if err := frame.CheckPayload(payload); err != nil {
 		return frame.CallResponse{}, err
 	}
-	actors := p.connectedActors()
+	actors := p.selectLinks()
 	if len(actors) == 0 {
 		return frame.CallResponse{}, ErrNoHealthyStation
 	}

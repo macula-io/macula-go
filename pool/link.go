@@ -49,8 +49,9 @@ type link struct {
 	events  chan<- inboundEvent
 	notify  chan<- linkEvent
 
-	mu    sync.Mutex
-	actor *actor
+	mu         sync.Mutex
+	actor      *actor
+	peerNodeID []byte // updated on every successful dial (a redial can legitimately prove a different node id, e.g. a DNS name repointed); kept across a later respawn/backoff in between, never cleared -- see PeerNodeID's own doc
 }
 
 func newLink(host string, port uint16, trust transport.Trust, id identity.KeyPair, dial dialFunc, backoff, livenessInterval time.Duration, livenessMaxMisses int, events chan<- inboundEvent, notify chan<- linkEvent) *link {
@@ -85,12 +86,12 @@ func (l *link) supervise(ctx context.Context) {
 			continue
 		}
 
-		// dr.nodeID (the peer's identity, read synchronously off the
-		// already-verified HELLO) is not yet consulted for reuse -- see
-		// CallStation's own doc on the gap this would close.
 		a := newActor(l.key, dr.session, l.id, l.events, l.livenessInterval, l.livenessMaxMisses)
 		l.mu.Lock()
 		l.actor = a
+		if len(dr.nodeID) > 0 {
+			l.peerNodeID = dr.nodeID
+		}
 		l.mu.Unlock()
 
 		select {
@@ -126,6 +127,20 @@ func (l *link) CurrentActor() *actor {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.actor
+}
+
+// PeerNodeID returns the last node id this link's target proved at
+// handshake, or nil if it has never dialed successfully even once.
+// Deliberately NOT cleared when the actor dies (unlike CurrentActor) --
+// a link mid-backoff/redial is still, as far as anyone dealing in
+// station identity is concerned, "the same station we already have a
+// link to," which is exactly what station-discovery's own dedupe-by-
+// node-id needs to keep being true through a respawn, not just while
+// actor happens to be non-nil. Safe from any goroutine.
+func (l *link) PeerNodeID() []byte {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.peerNodeID
 }
 
 func linkKey(host string, port uint16) string {

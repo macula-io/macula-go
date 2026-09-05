@@ -24,11 +24,14 @@ const (
 	findRecordsByTypeProc = "_dht.find_records_by_type"
 )
 
-// toRPCValue builds the FULL-field-name map macula.erl's put_record/2
+// ToRPCValue builds the FULL-field-name map macula.erl's put_record/2
 // sends as a CALL's args (and find_record/find_records return as a
 // RESULT) — distinct from canonicalUnsigned's compact single-letter
-// envelope, which exists only to be signed/verified, never sent as such.
-func (r Record) toRPCValue() cbor.Value {
+// envelope, which exists only to be signed/verified, never sent as
+// such. Exported for the same reason as RecordFromRPCValue: a test (or
+// any caller) building a fake find_records_by_type reply needs to
+// produce this exact wire shape without duplicating it.
+func (r Record) ToRPCValue() cbor.Value {
 	entries := []cbor.MapEntry{
 		{Key: cbor.Text("type"), Val: cbor.Uint64(uint64(r.Type))},
 		{Key: cbor.Text("key"), Val: cbor.Bytes(r.Key)},
@@ -43,7 +46,14 @@ func (r Record) toRPCValue() cbor.Value {
 	return cbor.Map(entries)
 }
 
-func recordFromRPCValue(v cbor.Value) (Record, error) {
+// RecordFromRPCValue decodes one Record from the same full-field-name
+// map shape ToRPCValue produces -- exported so a caller that already
+// has a raw find_records_by_type reply (e.g. package pool's station
+// discovery, which must route its own DHT queries through Pool.Call
+// rather than a bare *connection.Session -- see that package's own
+// doc on why one link can't have two independent readers) can decode
+// it without duplicating this parsing.
+func RecordFromRPCValue(v cbor.Value) (Record, error) {
 	typV, ok := v.Get("type")
 	if !ok {
 		return Record{}, fmt.Errorf("dht: record reply missing type")
@@ -99,7 +109,7 @@ func deadlineMs(timeout time.Duration) int64 {
 // PutRecord stores a signed record in the mesh DHT. Mirrors
 // macula:put_record/2 — the relay validates the signature on receipt.
 func PutRecord(session *connection.Session, id identity.KeyPair, rec Record) error {
-	resp, err := session.Call(putRecordProc, dhtRealm, rec.toRPCValue(), deadlineMs(dhtTimeout), id, dhtTimeout)
+	resp, err := session.Call(putRecordProc, dhtRealm, rec.ToRPCValue(), deadlineMs(dhtTimeout), id, dhtTimeout)
 	if err != nil {
 		return fmt.Errorf("dht: put_record: %w", err)
 	}
@@ -125,7 +135,7 @@ func FindRecord(session *connection.Session, id identity.KeyPair, key [32]byte) 
 	if t, ok := resp.Payload.AsText(); ok && t == "not_found" {
 		return Record{}, ErrNotFound
 	}
-	return recordFromRPCValue(resp.Payload)
+	return RecordFromRPCValue(resp.Payload)
 }
 
 // FindRecords fetches every record stored at key — the full signer-deduped
@@ -147,7 +157,7 @@ func FindRecords(session *connection.Session, id identity.KeyPair, key [32]byte)
 	}
 	out := make([]Record, 0, len(list))
 	for _, item := range list {
-		rec, rerr := recordFromRPCValue(item)
+		rec, rerr := RecordFromRPCValue(item)
 		if rerr != nil {
 			continue // skip a malformed entry rather than fail the whole batch
 		}
@@ -174,7 +184,7 @@ func FindRecordsByType(session *connection.Session, id identity.KeyPair, typ uin
 	}
 	out := make([]Record, 0, len(list))
 	for _, item := range list {
-		rec, rerr := recordFromRPCValue(item)
+		rec, rerr := RecordFromRPCValue(item)
 		if rerr != nil {
 			continue
 		}

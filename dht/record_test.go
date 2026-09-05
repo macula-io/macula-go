@@ -145,10 +145,10 @@ func TestRecordRPCValueRoundTrip(t *testing.T) {
 	}
 	signed := Sign(rec, advertiser)
 
-	wire := signed.toRPCValue()
-	back, err := recordFromRPCValue(wire)
+	wire := signed.ToRPCValue()
+	back, err := RecordFromRPCValue(wire)
 	if err != nil {
-		t.Fatalf("recordFromRPCValue: %v", err)
+		t.Fatalf("RecordFromRPCValue: %v", err)
 	}
 
 	if back.Type != signed.Type {

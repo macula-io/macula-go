@@ -112,16 +112,29 @@ type fakeDialer struct {
 	mu      sync.Mutex
 	scripts map[string][]*fakeSession // host:port -> sessions to hand out in order
 	dials   map[string]int
+	nodeIDs map[string][]byte // host:port -> node id dial() reports; unset -> "fake-node-id" for every target
 }
 
 func newFakeDialer() *fakeDialer {
-	return &fakeDialer{scripts: make(map[string][]*fakeSession), dials: make(map[string]int)}
+	return &fakeDialer{scripts: make(map[string][]*fakeSession), dials: make(map[string]int), nodeIDs: make(map[string][]byte)}
 }
 
 func (d *fakeDialer) script(host string, port uint16, sessions ...*fakeSession) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.scripts[linkKey(host, port)] = sessions
+}
+
+// scriptNodeID overrides the node id dial() reports for host:port --
+// without this, every target reports the same constant "fake-node-id",
+// which is fine for tests that don't care about peer identity but
+// collapses any test asserting dedup-by-node-id across multiple
+// targets (they'd all look like the same peer). Must be called before
+// Connect/addLink dials that target.
+func (d *fakeDialer) scriptNodeID(host string, port uint16, nodeID []byte) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.nodeIDs[linkKey(host, port)] = nodeID
 }
 
 func (d *fakeDialer) dialCount(host string, port uint16) int {
@@ -140,7 +153,11 @@ func (d *fakeDialer) dial(_ context.Context, host string, port uint16, _ transpo
 	if n >= len(sessions) {
 		return dialResult{}, errNoMoreScriptedSessions
 	}
-	return dialResult{session: sessions[n], nodeID: []byte("fake-node-id"), remote: "fake"}, nil
+	nodeID := d.nodeIDs[key]
+	if nodeID == nil {
+		nodeID = []byte("fake-node-id")
+	}
+	return dialResult{session: sessions[n], nodeID: nodeID, remote: "fake"}, nil
 }
 
 func testIdentity(t *testing.T) identity.KeyPair {
