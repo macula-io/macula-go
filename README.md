@@ -84,7 +84,11 @@ aspirational (`grep -rl '"unsafe"' --include='*.go'` comes back empty).
 
 ## Quick start
 
-Also lives as a runnable example — `go run ./examples/quickstart`:
+Also lives as a runnable example — `go run ./examples/quickstart`.
+Advertises and calls its own trivial echo procedure (two identities, a
+provider and a caller, since a station kicks a connection the instant a
+second one arrives under the same identity) rather than depending on any
+particular procedure already being advertised on the fleet:
 
 ```go
 package main
@@ -97,34 +101,73 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/connection"
+	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/transport"
 )
 
 func main() {
-	// Puzzle-hardened identity — required. An unhardened identity fails
+	// Puzzle-hardened identities — required. An unhardened identity fails
 	// the handshake silently (QUIC/TLS looks healthy, HELLO never accepts).
-	id, err := identity.Generate()
+	providerID, err := identity.Generate()
 	if err != nil {
-		log.Fatalf("identity.Generate: %v", err)
+		log.Fatalf("identity.Generate (provider): %v", err)
+	}
+	callerID, err := identity.Generate()
+	if err != nil {
+		log.Fatalf("identity.Generate (caller): %v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	session, err := connection.Connect(ctx, "station-de-frankfurt.macula.io", 4433, transport.WebPKI{}, id)
+	provider, err := connection.Connect(ctx, "station-de-frankfurt.macula.io", 4433, transport.WebPKI{}, providerID)
 	if err != nil {
-		log.Fatalf("connection.Connect: %v", err)
+		log.Fatalf("connection.Connect (provider): %v", err)
 	}
-	defer session.Close("normal", nil, id)
+	defer provider.Close("normal", nil, providerID)
 
 	realm := make([]byte, 32)
-	deadlineMs := time.Now().Add(5 * time.Second).UnixMilli()
-	response, err := session.Call("io.macula.echo", realm, cbor.Text("hello"), deadlineMs, id, 5*time.Second)
+	// Unique per run — reusing a fixed procedure name across rapid
+	// repeated runs can hit stale DHT routing state from the prior run's
+	// now-dead advertiser.
+	procedure := fmt.Sprintf("macula_go.quickstart_echo.%d", time.Now().UnixNano())
+
+	lookup := func(realm []byte, proc string) (connection.CallHandler, bool) {
+		if proc != procedure {
+			return nil, false
+		}
+		return func(payload cbor.Value) (cbor.Value, error) {
+			return payload, nil
+		}, true
+	}
+
+	if err := provider.Advertise(frame.NewAdvertiseSpec(realm, procedure, providerID.NodeID()), providerID); err != nil {
+		log.Fatalf("provider.Advertise: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond) // ADVERTISE is fire-and-forget; give it a moment to land
+
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- provider.ServeOneCall(lookup, providerID, 10*time.Second)
+	}()
+
+	caller, err := connection.Connect(ctx, "station-de-frankfurt.macula.io", 4433, transport.WebPKI{}, callerID)
 	if err != nil {
-		log.Fatalf("session.Call: %v", err)
+		log.Fatalf("connection.Connect (caller): %v", err)
+	}
+	defer caller.Close("normal", nil, callerID)
+
+	deadlineMs := time.Now().Add(5 * time.Second).UnixMilli()
+	response, err := caller.Call(procedure, realm, cbor.Text("hello"), deadlineMs, callerID, 5*time.Second)
+	if err != nil {
+		log.Fatalf("caller.Call: %v", err)
 	}
 	fmt.Printf("call response: is_error=%v payload=%s\n", response.IsError, response.Payload)
+
+	if err := <-serveErr; err != nil {
+		log.Fatalf("provider.ServeOneCall: %v", err)
+	}
 }
 ```
 
