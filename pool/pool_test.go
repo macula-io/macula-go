@@ -86,6 +86,16 @@ func (f *fakeSession) Sent() []cbor.Value {
 
 func (f *fakeSession) Done() <-chan struct{} { return f.done }
 
+// Close always returns immediately, deliberately not honoring
+// blockSend -- this models connection.Session.Close's contract (bounded
+// by its own internal write deadline, see connection.go's
+// closeSendTimeout) rather than the bug that contract was fixed to
+// close. The real Session.Close's bounded-write behavior against an
+// actual stalled QUIC peer is exercised directly by
+// connection.TestSendFrameIsBoundedByWriteDeadline (a loopback test,
+// no macula protocol needed) -- this fake's job is only to let a
+// pool-level test exercise what the pool does GIVEN a well-behaved
+// Close, not to re-prove the primitive it depends on.
 func (f *fakeSession) Close(string, *string, identity.KeyPair) error { return nil }
 
 func (f *fakeSession) RemoteAddr() string { return "fake" }
@@ -492,6 +502,123 @@ func TestStalledWriterRespawnsInsteadOfWedging(t *testing.T) {
 	if a.session != sessionLike(fresh) {
 		t.Fatalf("connected actor is not using the respawned session")
 	}
+}
+
+func TestConnectRejectsZeroValueIdentity(t *testing.T) {
+	dialer := newFakeDialer()
+	_, err := Connect(context.Background(), []Seed{{Host: "station.example", Port: 4433}}, Opts{
+		Trust: transport.WebPKI{},
+		dial:  dialer.dial,
+	})
+	if err == nil {
+		t.Fatalf("Connect with a zero-value Identity should fail, not panic later on a background goroutine")
+	}
+}
+
+func TestPublishRejectsBadPayloadWithoutTouchingAnyActor(t *testing.T) {
+	id := testIdentity(t)
+	dialer := newFakeDialer()
+	s := newFakeSession()
+	dialer.script("station.example", 4433, s)
+
+	p, err := Connect(context.Background(), []Seed{{Host: "station.example", Port: 4433}}, testOpts(id, dialer.dial))
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer p.Close()
+	waitFor(t, time.Second, func() bool { return p.Status().HealthyLinks == 1 })
+
+	dup := cbor.Map([]cbor.MapEntry{
+		{Key: cbor.Text("dup"), Val: cbor.Uint64(1)},
+		{Key: cbor.Text("dup"), Val: cbor.Uint64(2)},
+	})
+	if err := p.Publish(fill32(0x01), "some.topic", dup); err == nil {
+		t.Fatalf("Publish with a duplicate-key payload should be rejected, got nil error")
+	}
+	if len(s.Sent()) != 0 {
+		t.Fatalf("a rejected payload must never reach the wire, got %d frames sent", len(s.Sent()))
+	}
+}
+
+func TestCallRejectsBadPayloadWithoutTouchingAnyActor(t *testing.T) {
+	id := testIdentity(t)
+	dialer := newFakeDialer()
+	s := newFakeSession()
+	dialer.script("station.example", 4433, s)
+
+	p, err := Connect(context.Background(), []Seed{{Host: "station.example", Port: 4433}}, testOpts(id, dialer.dial))
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer p.Close()
+	waitFor(t, time.Second, func() bool { return p.Status().HealthyLinks == 1 })
+
+	big := make([]byte, 17_000_000)
+	_, err = p.Call(context.Background(), fill32(0x01), "some.procedure", cbor.Bytes(big), time.Second)
+	if err == nil {
+		t.Fatalf("Call with an oversized payload should be rejected, got nil error")
+	}
+	if len(s.Sent()) != 0 {
+		t.Fatalf("a rejected payload must never reach the wire, got %d frames sent", len(s.Sent()))
+	}
+}
+
+func TestOnLinkEventFiresWithAnErrorOnAFailedDial(t *testing.T) {
+	id := testIdentity(t)
+	dialer := newFakeDialer() // no script registered -- every dial attempt fails
+
+	var mu sync.Mutex
+	var gotErrorEvent bool
+	opts := testOpts(id, dialer.dial)
+	opts.OnLinkEvent = func(_ string, up bool, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !up && err != nil {
+			gotErrorEvent = true
+		}
+	}
+
+	p, err := Connect(context.Background(), []Seed{{Host: "station.example", Port: 4433}}, opts)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer p.Close()
+
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return gotErrorEvent
+	})
+}
+
+func TestOnLinkEventFiresUpOnSuccessfulConnect(t *testing.T) {
+	id := testIdentity(t)
+	dialer := newFakeDialer()
+	s := newFakeSession()
+	dialer.script("station.example", 4433, s)
+
+	var mu sync.Mutex
+	var gotUp bool
+	opts := testOpts(id, dialer.dial)
+	opts.OnLinkEvent = func(_ string, up bool, _ error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if up {
+			gotUp = true
+		}
+	}
+
+	p, err := Connect(context.Background(), []Seed{{Host: "station.example", Port: 4433}}, opts)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer p.Close()
+
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return gotUp
+	})
 }
 
 func TestLivenessProbeRespawnsAfterConsecutiveMisses(t *testing.T) {

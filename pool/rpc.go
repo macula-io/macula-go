@@ -23,7 +23,17 @@ const connectPollInterval = 50 * time.Millisecond
 // Publish fans spec out to ReplicationFactor currently-connected links.
 // Partial success counts as success, matching macula_client.erl's own
 // publish/5 exactly; only a zero-healthy-link pool is an error.
+//
+// payload is checked for wire admissibility HERE, in the caller's own
+// goroutine, before any link is touched -- matches macula_client.erl's
+// own publish/5, which does the identical check before ever calling
+// into the pool, for the same reason: encoding happens later, in the
+// actor's writer goroutine, with nothing there to attribute a bad
+// payload back to this call instead of just killing the link.
 func (p *Pool) Publish(realm []byte, topic string, payload cbor.Value) error {
+	if err := frame.CheckPayload(payload); err != nil {
+		return err
+	}
 	actors := p.connectedActors()
 	if len(actors) == 0 {
 		return ErrNoHealthyStation
@@ -75,6 +85,9 @@ func (p *Pool) publishVia(a *actor, spec frame.PublishSpec) error {
 // Call tries each currently-connected link in turn (call_first_success)
 // and returns the first non-error reply.
 func (p *Pool) Call(ctx context.Context, realm []byte, procedure string, payload cbor.Value, timeout time.Duration) (frame.CallResponse, error) {
+	if err := frame.CheckPayload(payload); err != nil {
+		return frame.CallResponse{}, err
+	}
 	actors := p.connectedActors()
 	if len(actors) == 0 {
 		return frame.CallResponse{}, ErrNoHealthyStation
@@ -121,6 +134,9 @@ func (p *Pool) Call(ctx context.Context, realm []byte, procedure string, payload
 // link.go's own doc on the Erlang bug (dropping a per-call trust
 // override on first respawn) this avoids repeating.
 func (p *Pool) CallStation(ctx context.Context, host string, port uint16, trust transport.Trust, realm []byte, procedure string, payload cbor.Value, timeout time.Duration) (frame.CallResponse, error) {
+	if err := frame.CheckPayload(payload); err != nil {
+		return frame.CallResponse{}, err
+	}
 	l := p.addLink(host, port, trust)
 
 	// Captured once and reused below -- l.CurrentActor() can transition

@@ -285,6 +285,19 @@ func (s *Session) RemoteAddr() string {
 // latency, not a full round trip's worth of protocol drain.
 const closeDrainMs = 250 * time.Millisecond
 
+// closeSendTimeout bounds the best-effort GOODBYE write itself. Found
+// live 2026-09-05, via adversarial review of macula-go/pool: quic-go's
+// Stream.Write can block indefinitely on flow-control credit (nothing
+// in this package ever called SetWriteDeadline before), and Close is
+// called from exactly the cleanup paths where a peer might be in that
+// state — a pool actor's shutdown, triggered because its own outbound
+// queue backed up past bound, i.e. because the peer stopped draining.
+// Without this, that Close call never returns, so the goroutine
+// running it never does either — for the pool, that's the actor's
+// whole run() loop, which means the link never respawns and the
+// pool's own Close() (which waits for it) never returns either.
+const closeSendTimeout = 1 * time.Second
+
 // Close sends a signed GOODBYE and closes the underlying QUIC
 // connection, matching macula_peering_conn.erl's connected -> draining
 // transition (minus the full drain-timeout bookkeeping, since this
@@ -309,8 +322,9 @@ const closeDrainMs = 250 * time.Millisecond
 // PUBLISH in the first place).
 func (s *Session) Close(reason string, detail *string, id identity.KeyPair) error {
 	goodbye := frame.Sign(frame.Goodbye(reason, detail), id)
-	_ = s.control.SendFrame(goodbye) // best-effort -- the connection is closing regardless
-	_ = s.control.stream.Close()     // signal no more writes; still async, see doc above
+	_ = s.control.stream.SetWriteDeadline(time.Now().Add(closeSendTimeout)) // bounds the write below -- see closeSendTimeout's own doc
+	_ = s.control.SendFrame(goodbye)                                        // best-effort -- the connection is closing regardless
+	_ = s.control.stream.Close()                                            // signal no more writes; still async, see doc above
 	time.Sleep(closeDrainMs)
 	return s.conn.CloseWithError(0, reason)
 }

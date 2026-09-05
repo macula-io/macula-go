@@ -83,6 +83,20 @@ func (p *Pool) watchLinks() {
 			if ev.up {
 				p.replayOnto(ev.actor)
 			}
+			if p.opts.OnLinkEvent != nil {
+				// Per-event goroutine, same as deliverOne's own choice
+				// for event delivery -- fire-and-forget, deliberately
+				// not tracked in p.wg (Close doesn't wait for it,
+				// matching event delivery's own documented
+				// non-guarantee), and NOT ordered relative to other
+				// link-event callbacks: a link flapping quickly can
+				// call this with "down" before an earlier "up" is
+				// observed by the caller. Needs recover() for the same
+				// reason deliverOne does -- an unrecovered panic in ANY
+				// goroutine kills the whole process, and this runs
+				// caller-supplied code.
+				go callOnLinkEvent(p.opts.OnLinkEvent, ev.link.key, ev.up, ev.err)
+			}
 		}
 	}
 }
@@ -152,6 +166,13 @@ func (p *Pool) deliver(evt inboundEvent) {
 func deliverOne(h EventHandler, realm []byte, topic string, payload cbor.Value) {
 	defer func() { recover() }()
 	h(realm, topic, payload)
+}
+
+// callOnLinkEvent runs one Opts.OnLinkEvent callback on its own
+// goroutine, recovering a panic for the same reason deliverOne does.
+func callOnLinkEvent(cb func(string, bool, error), linkKey string, up bool, err error) {
+	defer func() { recover() }()
+	cb(linkKey, up, err)
 }
 
 func (p *Pool) sweepDedup() {

@@ -74,6 +74,11 @@ func (l *link) supervise(ctx context.Context) {
 
 		dr, err := l.dial(ctx, l.host, l.port, l.trust, l.id)
 		if err != nil {
+			select {
+			case l.notify <- linkEvent{link: l, up: false, err: err}:
+			case <-ctx.Done():
+				return
+			}
 			if !sleepOrDone(ctx, l.backoff) {
 				return
 			}

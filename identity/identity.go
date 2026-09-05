@@ -39,6 +39,20 @@ func (k KeyPair) NodeID() []byte {
 	return []byte(k.Public)
 }
 
+// Valid reports whether k has real Ed25519 key material (the exact
+// sizes Generate/Load/FromSeed always produce), as opposed to an
+// unconstructed zero-value KeyPair{}. Signing with a zero-value KeyPair
+// panics inside ed25519.Sign; a caller accepting a KeyPair from
+// somewhere else (a config struct, a pool's Opts) should check this
+// before using it, so a caller's mistake surfaces as a clear error
+// instead of a panic on whatever goroutine happens to sign first —
+// found live 2026-09-05 doing exactly that inside a connection pool's
+// own background dial goroutine, well after the call that accepted the
+// bad identity had already returned success.
+func (k KeyPair) Valid() bool {
+	return len(k.Public) == ed25519.PublicKeySize && len(k.Private) == ed25519.PrivateKeySize
+}
+
 // PuzzleEvidence is SHA-256(NodeID) — a plain, deterministic hash of the
 // node's own public key, carried in every CONNECT frame's
 // puzzle_evidence field. No nonce, no per-connection computation: this

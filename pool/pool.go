@@ -104,6 +104,19 @@ type Opts struct {
 	LivenessInterval  time.Duration
 	LivenessMaxMisses int
 
+	// OnLinkEvent, if set, is called on every link lifecycle transition —
+	// a dial failure, a successful (re)connect, or a live link dying —
+	// with linkKey identifying which configured target (host:port) it
+	// concerns, up true only for a successful (re)connect, and err set
+	// for everything else. Optional; nil is a no-op. Without this, a
+	// link that fails to dial over and over (wrong port, an identity the
+	// station's puzzle check rejects, TLS refusal) is completely silent
+	// from outside the pool — Status only ever reports it as "not
+	// healthy," never why. Called on its own goroutine so a slow or
+	// panicking callback can never stall replay for every other link —
+	// same reasoning as event delivery's own per-handler goroutine.
+	OnLinkEvent func(linkKey string, up bool, err error)
+
 	dial dialFunc // test-only seam; nil -> dialSession
 }
 
@@ -181,6 +194,9 @@ func Connect(ctx context.Context, seeds []Seed, opts Opts) (*Pool, error) {
 	if opts.Trust == nil {
 		return nil, fmt.Errorf("pool: opts.Trust is required")
 	}
+	if !opts.Identity.Valid() {
+		return nil, fmt.Errorf("pool: opts.Identity is required (zero-value KeyPair)")
+	}
 	opts = opts.withDefaults()
 
 	poolCtx, cancel := context.WithCancel(ctx)
@@ -201,10 +217,10 @@ func Connect(ctx context.Context, seeds []Seed, opts Opts) (*Pool, error) {
 	// dedup window.
 	p.publishSeq.Store(uint64(time.Now().UnixMicro()))
 
-	p.wg.Add(2)
+	p.wg.Add(3)
 	go func() { defer p.wg.Done(); p.watchLinks() }()
 	go func() { defer p.wg.Done(); p.fanoutEvents() }()
-	go p.sweepDedup()
+	go func() { defer p.wg.Done(); p.sweepDedup() }()
 
 	for _, seed := range seeds {
 		p.addLink(seed.Host, seed.Port, opts.Trust)
@@ -234,7 +250,16 @@ func (p *Pool) addLink(host string, port uint16, trust transport.Trust) *link {
 	return l
 }
 
-// Close cancels every link and actor and waits for them to unwind.
+// Close cancels every link and waits for each link's supervise loop
+// (and its current actor's run(), which that loop calls synchronously)
+// to return. It does NOT explicitly join an actor's own reader/writer
+// goroutines -- they're stopped via the same cancelled context, and
+// every send they could still attempt is itself guarded against that
+// context, so they can't block past it, but a brief window where one
+// is still returning after run() itself has already returned is
+// possible. Harmless: nothing is shared between one generation's
+// goroutines and the next, only the (already dead) session they were
+// reading/writing.
 func (p *Pool) Close() error {
 	p.cancel()
 	p.wg.Wait()
