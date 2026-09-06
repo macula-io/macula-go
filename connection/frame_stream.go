@@ -3,6 +3,7 @@ package connection
 import (
 	"crypto/rand"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -16,13 +17,27 @@ import (
 // accumulating a frame.
 const readChunkSize = 4096
 
+// quicStream is the subset of *quic.Stream FrameStream actually uses —
+// narrowed to an interface (rather than the concrete type directly) so
+// RecvFrame's io.Reader edge-case handling (see its own comment) can be
+// exercised in tests against a fake stream, without a real QUIC
+// connection. *quic.Stream satisfies this implicitly; no change needed
+// at any real call site.
+type quicStream interface {
+	io.Reader
+	io.Writer
+	io.Closer
+	SetReadDeadline(t time.Time) error
+	SetWriteDeadline(t time.Time) error
+}
+
 // FrameStream sends and receives signed application frames on one QUIC
 // stream. The control stream (inside Session) and every dedicated
 // stream (content transfer, streaming RPC) opened via
 // Session.OpenDedicatedStream / Session.AcceptDedicatedStream are each
 // one of these — see plans/PLAN_WIRE_PROTOCOL.md §3, §12, §13.
 type FrameStream struct {
-	stream *quic.Stream
+	stream quicStream
 	buf    []byte // bytes read but not yet consumed by a decoded frame
 }
 
@@ -40,6 +55,20 @@ func (fs *FrameStream) SendFrame(v cbor.Value) error {
 		return fmt.Errorf("connection: write frame: %w", err)
 	}
 	return nil
+}
+
+// CloseSend closes the send-direction of the underlying QUIC stream —
+// a real transport-level FIN, distinct from (and additional to) any
+// application-level half-close frame already written over it. The
+// receive direction is untouched; RecvFrame keeps working afterward.
+//
+// Without this, a peer relying on the QUIC transport's own end-of-data
+// signal for this stream's send side (rather than only on the parsed
+// application frame) never sees one — the underlying stream looks
+// like it might still have more coming, even after the application
+// has fully agreed the exchange is one-way-done.
+func (fs *FrameStream) CloseSend() error {
+	return fs.stream.Close()
 }
 
 // RecvFrame reads the next complete application frame off the stream,
@@ -64,7 +93,16 @@ func (fs *FrameStream) RecvFrame(deadline time.Time) (cbor.Value, error) {
 		if n > 0 {
 			fs.buf = append(fs.buf, chunk[:n]...)
 		}
-		if err != nil {
+		// Per io.Reader's contract, a Read that delivers the stream's
+		// final bytes is explicitly permitted to return them together
+		// with io.EOF in the same call — quic-go does exactly this
+		// when the peer's last STREAM frame carries both the final
+		// data and the FIN bit. Those bytes must still be checked for
+		// a complete frame (the loop's next iteration does that)
+		// before the error is allowed to end it; discarding them here
+		// turned an already-fully-delivered reply into a bogus EOF
+		// error. Only give up once a read truly comes back empty.
+		if n == 0 && err != nil {
 			return cbor.Value{}, fmt.Errorf("connection: read stream: %w", err)
 		}
 	}

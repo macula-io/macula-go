@@ -121,11 +121,19 @@ func (h *Handle) SendData(encoding frame.StreamEncoding, body cbor.Value, id ide
 	return h.fs.SendFrame(frame.Sign(frame.StreamData(spec), id))
 }
 
-// CloseSend half-closes: signal this side is done sending. For
+// CloseSend half-closes: signal this side is done sending, both at the
+// application level (a signed STREAM_END frame the peer's relay logic
+// acts on) and at the QUIC transport level (a real FIN on this
+// stream's send side) — the two were previously out of sync, leaving
+// the transport thinking more data might still come after the
+// application had already agreed the exchange was one-way-done. For
 // ClientStream/Bidi modes, follow with AwaitReply.
 func (h *Handle) CloseSend(id identity.KeyPair) error {
 	spec := frame.NewStreamEndSpec(h.StreamID, frame.Send, id.NodeID())
-	return h.fs.SendFrame(frame.Sign(frame.StreamEnd(spec), id))
+	if err := h.fs.SendFrame(frame.Sign(frame.StreamEnd(spec), id)); err != nil {
+		return err
+	}
+	return h.fs.CloseSend()
 }
 
 // Item is one value Recv hands back: a chunk, or a clean end-of-stream.
