@@ -50,6 +50,9 @@ func main() {
 	defer provider.Close("normal", nil, providerID)
 
 	realm := make([]byte, 32)
+	// Unique per run — reusing a fixed procedure name across rapid
+	// repeated runs can hit stale DHT routing state from the prior run's
+	// now-dead advertiser.
 	procedure := fmt.Sprintf("macula_go.quickstart_echo.%d", time.Now().UnixNano())
 
 	lookup := func(realm []byte, proc string) (connection.CallHandler, bool) {

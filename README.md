@@ -108,7 +108,8 @@ import (
 
 func main() {
 	// Puzzle-hardened identities — required. An unhardened identity fails
-	// the handshake silently (QUIC/TLS looks healthy, HELLO never accepts).
+	// the handshake silently in the worst case (QUIC/TLS looks healthy,
+	// HELLO never accepts).
 	providerID, err := identity.Generate()
 	if err != nil {
 		log.Fatalf("identity.Generate (provider): %v", err)
