@@ -56,14 +56,25 @@ func TestVerifyMcidChecksTheFieldsMaculaChecks(t *testing.T) {
 	}
 }
 
+// A whole manifest's chunks are cut the way Create cuts content: ceil(size /
+// chunk_size) of them, chunk i at offset i x chunk_size and chunk_size long,
+// the last holding what is left, between 1 and chunk_size bytes.
 func TestCheckWholeRefusesChunksThatDoNotDescribeTheContentWhole(t *testing.T) {
 	m := threeChunks()
+	empty, _ := Create(nil, DefaultCreateOptions())
 	cases := []struct {
 		name     string
 		manifest Manifest
 		whole    bool
 	}{
 		{"as created", m, true},
+		{"empty content, as created", empty, true},
+		{"a chunk cut short before the last, with the count still right", edited(m, func(c *Manifest) {
+			c.Chunks[0].Size--
+			c.Chunks[1].Offset--
+			c.Chunks[2].Offset--
+			c.Chunks[2].Size++
+		}), false},
 		{"a chunk counted that isn't listed", edited(m, func(c *Manifest) { c.ChunkCount++ }), false},
 		{"chunks out of index order", edited(m, func(c *Manifest) { c.Chunks[0].Index, c.Chunks[1].Index = 1, 0 }), false},
 		{"a gap between chunks", edited(m, func(c *Manifest) { c.Chunks[1].Offset++ }), false},

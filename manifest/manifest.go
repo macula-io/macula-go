@@ -210,31 +210,40 @@ func VerifyMcid(m Manifest, mcid Mcid) error {
 	return nil
 }
 
-// CheckWhole checks that m's chunks describe its content whole: ChunkCount
-// of them, in index order, each starting where the one before it ended,
-// none empty or larger than a positive ChunkSize, together Size bytes.
+// CheckWhole checks that m's chunks describe its content whole, cut the way
+// Create cuts content: ChunkSize is positive, and there are ceil(Size /
+// ChunkSize) chunks, which is ChunkCount; chunk i has index i, starts at
+// i x ChunkSize and is ChunkSize bytes long, except the last, which holds
+// what is left of Size, between 1 and ChunkSize bytes.
 func CheckWhole(m Manifest) error {
-	if m.ChunkSize <= 0 || m.ChunkCount != len(m.Chunks) {
-		return fmt.Errorf("%w: chunk size %d, %d chunks counted, %d listed", ErrManifestNotWhole, m.ChunkSize, m.ChunkCount, len(m.Chunks))
+	if m.ChunkSize <= 0 || m.ChunkCount != len(m.Chunks) || uint64(m.ChunkCount) != chunksFor(m.Size, m.ChunkSize) {
+		return fmt.Errorf("%w: chunk size %d, size %d, %d chunks counted, %d listed", ErrManifestNotWhole, m.ChunkSize, m.Size, m.ChunkCount, len(m.Chunks))
 	}
-	var offset uint64
 	for i, c := range m.Chunks {
-		next := offset + uint64(c.Size)
-		if !chunkFollows(c, i, offset, m.ChunkSize) || next < offset {
+		if !cutAt(c, i, m) {
 			return fmt.Errorf("%w: chunk %d", ErrManifestNotWhole, i)
 		}
-		offset = next
-	}
-	if offset != m.Size {
-		return fmt.Errorf("%w: the chunks hold %d bytes, the manifest says %d", ErrManifestNotWhole, offset, m.Size)
 	}
 	return nil
 }
 
-// chunkFollows reports whether c is chunk i, starting at offset, neither
-// empty nor larger than chunkSize.
-func chunkFollows(c ChunkInfo, i int, offset uint64, chunkSize int) bool {
-	return c.Index == i && c.Offset >= 0 && uint64(c.Offset) == offset && c.Size > 0 && c.Size <= chunkSize
+// chunksFor is how many chunks of chunkSize bytes size bytes make:
+// ceil(size / chunkSize), and 0 for no bytes.
+func chunksFor(size uint64, chunkSize int) uint64 {
+	n := size / uint64(chunkSize)
+	if size%uint64(chunkSize) != 0 {
+		n++
+	}
+	return n
+}
+
+// cutAt reports whether c is chunk i of m as Create cuts it. It relies on
+// m already having ceil(Size / ChunkSize) chunks, so chunk i starts inside
+// Size.
+func cutAt(c ChunkInfo, i int, m Manifest) bool {
+	offset := uint64(i) * uint64(m.ChunkSize)
+	size := min(uint64(m.ChunkSize), m.Size-offset)
+	return c.Index == i && c.Offset >= 0 && uint64(c.Offset) == offset && c.Size > 0 && uint64(c.Size) == size
 }
 
 func doChunk(data []byte, chunkSize int) [][]byte {
