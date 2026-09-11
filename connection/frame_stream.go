@@ -278,6 +278,19 @@ func (fs *FrameStream) replyTo(value cbor.Value, callID []byte) (frame.CallRespo
 	return frame.CallResponse{}, false
 }
 
+// StreamReplyVerifies reports whether value, a STREAM_REPLY read from this
+// stream, is signed by the key its responded_by names. One that isn't is
+// warned about as a dropped reply on the stream's session, with its stream_id
+// prefix.
+func (fs *FrameStream) StreamReplyVerifies(value cbor.Value) bool {
+	reason := signatureReason(value, "responded_by")
+	if reason == "" {
+		return true
+	}
+	fs.warnDrop(dropReply, reason, streamIDDetail(bytesField(value, "stream_id")))
+	return false
+}
+
 // warnDrop warns about a drop on the session the stream belongs to, if any.
 func (fs *FrameStream) warnDrop(kind dropKind, reason dropReason, detail slog.Attr) {
 	if fs.session != nil {

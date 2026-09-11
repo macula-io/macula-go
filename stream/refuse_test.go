@@ -37,6 +37,8 @@ func (r *refusingStream) CloseSend() error {
 
 func (r *refusingStream) Abort(code uint64) { r.did = append(r.did, fmt.Sprintf("abort %d", code)) }
 
+func (r *refusingStream) StreamReplyVerifies(cbor.Value) bool { return true }
+
 func (r *refusingStream) StopReceiving(code uint64) {
 	r.did = append(r.did, fmt.Sprintf("stop receiving %d", code))
 }

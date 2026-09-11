@@ -159,6 +159,15 @@ func callIDDetail(callID []byte) slog.Attr {
 	return slog.String("call_id", fmt.Sprintf("%X", callID[:min(4, len(callID))]))
 }
 
+// streamIDDetail is a dropped STREAM_REPLY's stream_id: its first 4 bytes in
+// upper-case hex, or nothing when the reply has none.
+func streamIDDetail(streamID []byte) slog.Attr {
+	if len(streamID) == 0 {
+		return slog.Attr{}
+	}
+	return slog.String("stream_id", fmt.Sprintf("%X", streamID[:min(4, len(streamID))]))
+}
+
 // cutAtRuneStart cuts s to at most limit bytes without splitting a UTF-8
 // sequence.
 func cutAtRuneStart(s string, limit int) string {

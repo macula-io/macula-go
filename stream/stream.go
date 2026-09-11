@@ -67,6 +67,7 @@ type frameStream interface {
 	CloseSend() error
 	Abort(code uint64)
 	StopReceiving(code uint64)
+	StreamReplyVerifies(v cbor.Value) bool
 }
 
 // Open opens a dedicated stream on session's connection and sends a
@@ -179,6 +180,10 @@ var ErrStreamIDMismatch = errors.New("stream: received a frame for a different s
 var ErrUnexpectedFrame = errors.New("stream: received a frame not valid in this context")
 
 // Recv receives the next chunk or end-of-stream, bounded by timeout.
+//
+// STREAM_DATA, STREAM_END and STREAM_ERROR name no signer on the wire, so what
+// Recv hands back isn't checked against a key: it is taken as coming from the
+// peer of the dedicated stream its verified STREAM_OPEN set up.
 func (h *Handle) Recv(timeout time.Duration) (Item, error) {
 	value, err := h.fs.RecvFrame(time.Now().Add(timeout))
 	if err != nil {
@@ -211,12 +216,25 @@ func (h *Handle) Recv(timeout time.Duration) (Item, error) {
 
 // AwaitReply blocks for the provider's terminal STREAM_REPLY
 // (ClientStream/Bidi modes only) — call after CloseSend. Returns the
-// reply payload and the responding node's id.
+// reply payload and the responding node's id. A STREAM_REPLY that isn't
+// signed by the key its responded_by names is dropped, with a drop warning,
+// and AwaitReply goes on waiting for the genuine one until timeout.
 func (h *Handle) AwaitReply(timeout time.Duration) (cbor.Value, []byte, error) {
-	value, err := h.fs.RecvFrame(time.Now().Add(timeout))
-	if err != nil {
-		return cbor.Value{}, nil, fmt.Errorf("stream: await_reply: %w", err)
+	deadline := time.Now().Add(timeout)
+	for {
+		value, err := h.fs.RecvFrame(deadline)
+		if err != nil {
+			return cbor.Value{}, nil, fmt.Errorf("stream: await_reply: %w", err)
+		}
+		if frameTypeOf(value) == "stream_reply" && !h.fs.StreamReplyVerifies(value) {
+			continue
+		}
+		return h.replyFrom(value)
 	}
+}
+
+// replyFrom is what AwaitReply returns for value, a frame it didn't drop.
+func (h *Handle) replyFrom(value cbor.Value) (cbor.Value, []byte, error) {
 	ev, err := frame.ParseStreamEvent(value)
 	if err != nil {
 		return cbor.Value{}, nil, fmt.Errorf("stream: await_reply: %w", err)
@@ -235,6 +253,12 @@ func (h *Handle) AwaitReply(timeout time.Duration) (cbor.Value, []byte, error) {
 	default: // Data or End
 		return cbor.Value{}, nil, ErrUnexpectedFrame
 	}
+}
+
+func frameTypeOf(v cbor.Value) string {
+	ft, _ := v.Get("frame_type")
+	t, _ := ft.AsText()
+	return t
 }
 
 func (h *Handle) checkStreamID(streamID []byte) error {

@@ -97,3 +97,32 @@ func TestADedicatedStreamReplyDroppedIsWarnedAboutOnItsSession(t *testing.T) {
 		t.Fatalf("drop warnings = %q, want the forged reply at once and the misaddressed one in the closing line", lines)
 	}
 }
+
+// A STREAM_REPLY that isn't signed by the key its responded_by names doesn't
+// verify, and is warned about on the stream's session as a dropped reply with
+// its stream_id prefix; a genuine one verifies without a warning.
+func TestAStreamReplyThatDoesNotVerifyIsWarnedAboutAsADroppedReply(t *testing.T) {
+	s, _, _ := readingSession(t)
+	logged := &lockedBuffer{}
+	s.SetLogger(slog.New(slog.NewTextHandler(logged, nil)))
+	intervals := captureDropIntervals(s)
+	responder, other := fakeResponder(t), registryIdentity(t)
+	fs := &FrameStream{stream: &fakeQUICStream{}, session: s}
+	streamID := append([]byte{0xab, 0xcd, 0xef, 0x01}, make([]byte, 12)...)
+	reply := frame.StreamReply(frame.NewStreamReplySpec(streamID, cbor.Text("done"), responder.NodeID()))
+
+	if !fs.StreamReplyVerifies(frame.Sign(reply, responder)) {
+		t.Fatal("a STREAM_REPLY signed by its responder didn't verify")
+	}
+	if fs.StreamReplyVerifies(reply) || fs.StreamReplyVerifies(frame.Sign(reply, other)) {
+		t.Fatal("a STREAM_REPLY that isn't signed by its responder verified")
+	}
+	intervals.endAll()
+
+	lines := dropWarnings(logged)
+	if len(lines) != 2 ||
+		!hasFields(lines[0], "kind=dropped_reply", "count=1", "reason=unsigned", "stream_id=ABCDEF01") ||
+		!hasFields(lines[1], "kind=dropped_reply", "count=1", "reason=invalid_signature", "stream_id=ABCDEF01") {
+		t.Fatalf("drop warnings = %q, want the unsigned reply at once and the forged one in the closing line", lines)
+	}
+}
