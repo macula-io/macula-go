@@ -131,18 +131,28 @@ func verifiedCall(value cbor.Value) (frame.CallInfo, dropReason) {
 }
 
 // signatureReason says why value's signature doesn't verify against the key
-// in its signerField, or returns "" when it does.
+// in its signerField, or returns "" when it does: unsigned when the signature
+// is missing or isn't 64 bytes, or the signer is missing or isn't a 32-byte
+// key, and invalid_signature when both are well formed and it doesn't verify.
 func signatureReason(value cbor.Value, signerField string) dropReason {
-	_, signed := value.Get("signature")
-	signerValue, named := value.Get(signerField)
-	if !signed || !named {
+	signer := bytesField(value, signerField)
+	if len(bytesField(value, "signature")) != 64 || len(signer) != 32 {
 		return reasonUnsigned
 	}
-	signer, ok := signerValue.AsBytes()
-	if !ok || len(signer) != 32 || frame.Verify(value, signer) != nil {
+	if frame.Verify(value, signer) != nil {
 		return reasonInvalidSignature
 	}
 	return ""
+}
+
+// bytesField is value's field when it holds a byte string, and nil otherwise.
+func bytesField(value cbor.Value, field string) []byte {
+	v, ok := value.Get(field)
+	if !ok {
+		return nil
+	}
+	b, _ := v.AsBytes()
+	return b
 }
 
 // buildCallReply fires rpc.received_v1/rpc.replied_v1 around dispatch,

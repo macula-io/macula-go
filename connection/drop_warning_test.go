@@ -158,9 +158,10 @@ func TestASingleDropLogsOnlyTheImmediateLine(t *testing.T) {
 	}
 }
 
-// An inbound CALL is dropped for the first thing wrong with it: no signature
-// or no caller, then a signature that doesn't verify against the caller,
-// then a field missing or of the wrong type.
+// An inbound CALL is dropped for the first thing wrong with it: a signature
+// that is missing or isn't 64 bytes, or a caller that is missing or isn't a
+// 32-byte key, then a signature that doesn't verify against the caller, then
+// a field missing or of the wrong type.
 func TestAnInboundCallIsDroppedForTheFirstThingWrongWithIt(t *testing.T) {
 	caller, other := registryIdentity(t), registryIdentity(t)
 	call := droppableCall(t, caller, nil, "p")
@@ -171,9 +172,10 @@ func TestAnInboundCallIsDroppedForTheFirstThingWrongWithIt(t *testing.T) {
 	}{
 		{"signed by its caller", frame.Sign(call, caller), ""},
 		{"no signature", call, reasonUnsigned},
+		{"a signature that isn't 64 bytes", withField(call, "signature", cbor.Bytes(make([]byte, 63))), reasonUnsigned},
 		{"no caller", frame.Sign(withoutField(call, "caller"), caller), reasonUnsigned},
+		{"a caller that isn't a key", frame.Sign(withField(call, "caller", cbor.Text("me")), caller), reasonUnsigned},
 		{"signed by another", frame.Sign(call, other), reasonInvalidSignature},
-		{"a caller that isn't a key", frame.Sign(withField(call, "caller", cbor.Text("me")), caller), reasonInvalidSignature},
 		{"no deadline", frame.Sign(withoutField(call, "deadline_ms"), caller), reasonMalformed},
 	}
 	for _, tc := range cases {
@@ -185,7 +187,7 @@ func TestAnInboundCallIsDroppedForTheFirstThingWrongWithIt(t *testing.T) {
 
 // A signed RESULT that doesn't parse, or that nothing waits for, is counted
 // as unrouted and warned about as a dropped reply carrying its call_id's
-// first 4 bytes, not with the unrouted-frame line.
+// first 4 bytes in upper-case hex, not with the unrouted-frame line.
 func TestAReplyNothingWaitsForIsWarnedAboutAsADroppedReply(t *testing.T) {
 	s, fc, id := readingSession(t)
 	logged := &lockedBuffer{}
@@ -202,8 +204,8 @@ func TestAReplyNothingWaitsForIsWarnedAboutAsADroppedReply(t *testing.T) {
 
 	lines := dropWarnings(logged)
 	if len(lines) != 2 ||
-		!hasFields(lines[0], "kind=dropped_reply", "count=1", "reason=unknown_call_id", "call_id=deadbeef") ||
-		!hasFields(lines[1], "kind=dropped_reply", "count=1", "reason=malformed", "call_id=deadbeef") {
+		!hasFields(lines[0], "kind=dropped_reply", "count=1", "reason=unknown_call_id", "call_id=DEADBEEF") ||
+		!hasFields(lines[1], "kind=dropped_reply", "count=1", "reason=malformed", "call_id=DEADBEEF") {
 		t.Fatalf("drop warnings = %q, want the unknown call_id at once and the malformed reply in the closing line", lines)
 	}
 	if n := s.Unrouted()["result"]; n != 2 {

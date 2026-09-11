@@ -2,6 +2,7 @@ package connection
 
 import (
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"time"
 	"unicode/utf8"
@@ -28,11 +29,11 @@ const (
 	dropCall              dropKind = "dropped_call"
 	dropReply             dropKind = "dropped_reply"
 
-	// reasonUnsigned is a frame with no signature, or no field naming its
-	// signer.
+	// reasonUnsigned is a frame whose signature is missing or isn't 64 bytes,
+	// or whose signer field is missing or isn't a 32-byte key.
 	reasonUnsigned dropReason = "unsigned"
-	// reasonInvalidSignature is a signature that isn't 64 bytes, a signer
-	// that isn't a 32-byte key, or a signature that doesn't verify.
+	// reasonInvalidSignature is a well-formed signature and signer that don't
+	// verify.
 	reasonInvalidSignature dropReason = "invalid_signature"
 	// reasonMalformed is a frame missing a field it needs, or holding one of
 	// the wrong type.
@@ -149,13 +150,13 @@ func procedureDetail(v cbor.Value) slog.Attr {
 	return slog.String("procedure", cutAtRuneStart(string(procedure), maxDropProcedure))
 }
 
-// callIDDetail is a dropped reply's call_id: its first 4 bytes in hex, or
-// nothing when the reply has no call_id.
+// callIDDetail is a dropped reply's call_id: its first 4 bytes in upper-case
+// hex, or nothing when the reply has no call_id.
 func callIDDetail(callID []byte) slog.Attr {
 	if len(callID) == 0 {
 		return slog.Attr{}
 	}
-	return slog.String("call_id", hex.EncodeToString(callID[:min(4, len(callID))]))
+	return slog.String("call_id", fmt.Sprintf("%X", callID[:min(4, len(callID))]))
 }
 
 // cutAtRuneStart cuts s to at most limit bytes without splitting a UTF-8
