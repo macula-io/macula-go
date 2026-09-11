@@ -31,10 +31,8 @@ func (s *Session) RecvAny(deadline time.Time) (cbor.Value, error) {
 // response correlation (instead of Call's built-in send-then-block-for-
 // the-matching-reply) needs to issue the request half on its own.
 //
-// Same "one writer must own each send" expectation as the rest of this
-// package: FrameStream.SendFrame has no internal lock, so two goroutines
-// calling SendAny concurrently on one session could interleave bytes
-// mid-frame on the wire.
+// FrameStream.SendFrame writes each frame whole, so goroutines calling
+// SendAny concurrently on one session don't interleave bytes on the wire.
 func (s *Session) SendAny(v cbor.Value) error {
 	return s.control.SendFrame(v)
 }

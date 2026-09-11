@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -38,19 +39,25 @@ type quicStream interface {
 // one of these — see plans/PLAN_WIRE_PROTOCOL.md §3, §12, §13.
 type FrameStream struct {
 	stream quicStream
-	buf    []byte // bytes read but not yet consumed by a decoded frame
+	buf    []byte     // bytes read but not yet consumed by a decoded frame
+	sendMu sync.Mutex // held for one frame's write; see SendFrame
 }
 
 func newFrameStream(stream *quic.Stream) *FrameStream {
 	return &FrameStream{stream: stream}
 }
 
-// SendFrame encodes and writes v to the stream.
+// SendFrame encodes and writes v to the stream. Frames sent from several
+// goroutines at once are written whole, one after another, without relying
+// on the stream to serialize concurrent writes: quic-go documents concurrent
+// Write on a stream as not permitted.
 func (fs *FrameStream) SendFrame(v cbor.Value) error {
 	encoded, err := frame.Encode(v)
 	if err != nil {
 		return fmt.Errorf("connection: encode frame: %w", err)
 	}
+	fs.sendMu.Lock()
+	defer fs.sendMu.Unlock()
 	if _, err := fs.stream.Write(encoded); err != nil {
 		return fmt.Errorf("connection: write frame: %w", err)
 	}

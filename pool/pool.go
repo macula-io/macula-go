@@ -11,7 +11,7 @@
 // directly": confirmed by reading connection/frame_stream.go,
 // subscriber.go and serve.go that a Session's control stream supports
 // exactly ONE concurrent reader (Call, RunSubscriber and ServeOneCall
-// each document this) and has no write-side lock either. A pool that
+// each document this). A pool that
 // needs one link to carry N tracked subscriptions plus outbound Call
 // fan-out needs to demux those itself — see actor.go's own doc for the
 // reader/writer/actor split this package uses to do that (reviewed
