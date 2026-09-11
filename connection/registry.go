@@ -12,7 +12,7 @@ import (
 // per identity and closes the older one when a newer handshake under the same
 // identity completes, so work that would dial a station this process already
 // holds a session to, under the same identity, uses that session instead (see
-// SessionFor). Entries are weak: the registry never keeps a session reachable.
+// Acquire). Entries are weak: the registry never keeps a session reachable.
 var openSessions = struct {
 	sync.Mutex
 	byKey map[sessionKey]weak.Pointer[Session]
@@ -51,9 +51,9 @@ func forget(key sessionKey, ref weak.Pointer[Session]) {
 	}
 }
 
-// SessionFor returns the session this process holds to station under id, if
-// there is one whose connection hasn't ended.
-func SessionFor(id identity.KeyPair, station []byte) (*Session, bool) {
+// registeredSession returns the session this process holds to station under
+// id, if there is one whose connection hasn't ended.
+func registeredSession(id identity.KeyPair, station []byte) (*Session, bool) {
 	key := sessionKey{identity: string(id.NodeID()), station: string(station)}
 	openSessions.Lock()
 	ref, found := openSessions.byKey[key]

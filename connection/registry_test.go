@@ -46,13 +46,13 @@ func TestASessionIsFoundByItsIdentityAndStation(t *testing.T) {
 	s, _ := handshaked(t, id, stationNode(1))
 	register(s)
 
-	if got, ok := SessionFor(id, stationNode(1)); !ok || got != s {
-		t.Fatalf("SessionFor(id, station 1) = %p, %v; want the registered session %p", got, ok, s)
+	if got, ok := registeredSession(id, stationNode(1)); !ok || got != s {
+		t.Fatalf("registeredSession(id, station 1) = %p, %v; want the registered session %p", got, ok, s)
 	}
-	if _, ok := SessionFor(id, stationNode(2)); ok {
+	if _, ok := registeredSession(id, stationNode(2)); ok {
 		t.Fatal("SessionFor found a session for a station this identity never reached")
 	}
-	if _, ok := SessionFor(other, stationNode(1)); ok {
+	if _, ok := registeredSession(other, stationNode(1)); ok {
 		t.Fatal("SessionFor found a session for an identity that never connected")
 	}
 }
@@ -64,7 +64,7 @@ func TestTheNewestSessionPerIdentityAndStationWins(t *testing.T) {
 	register(older)
 	register(newer)
 
-	if got, ok := SessionFor(id, stationNode(1)); !ok || got != newer {
+	if got, ok := registeredSession(id, stationNode(1)); !ok || got != newer {
 		t.Fatalf("SessionFor = %p, %v; want the newer session %p", got, ok, newer)
 	}
 }
@@ -79,7 +79,7 @@ func TestClosingAnOlderSessionLeavesTheNewerOneRegistered(t *testing.T) {
 	register(newer)
 	unregister(older)
 
-	if got, ok := SessionFor(id, stationNode(1)); !ok || got != newer {
+	if got, ok := registeredSession(id, stationNode(1)); !ok || got != newer {
 		t.Fatalf("SessionFor = %p, %v; want the newer session %p", got, ok, newer)
 	}
 }
@@ -90,7 +90,7 @@ func TestAClosedSessionIsNoLongerFound(t *testing.T) {
 	register(s)
 	unregister(s)
 
-	if _, ok := SessionFor(id, stationNode(1)); ok {
+	if _, ok := registeredSession(id, stationNode(1)); ok {
 		t.Fatal("SessionFor found a session that was closed")
 	}
 }
@@ -103,7 +103,7 @@ func TestASessionWhoseConnectionEndsIsNoLongerFoundForReuse(t *testing.T) {
 	register(s)
 	end()
 
-	if _, ok := SessionFor(id, stationNode(1)); ok {
+	if _, ok := registeredSession(id, stationNode(1)); ok {
 		t.Fatal("SessionFor found a session whose connection ended")
 	}
 	deadline := time.Now().Add(2 * time.Second)

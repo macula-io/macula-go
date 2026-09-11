@@ -34,13 +34,14 @@ const HandshakeTimeout = 30 * time.Second
 // control stream (CONNECT/HELLO already exchanged) and the station's
 // identity as verified by the HELLO frame's own signature. A session is
 // registered by the identity it connected as and the station it reached
-// until it closes or its connection ends; see SessionFor.
+// until it closes or its connection ends; see Acquire.
 type Session struct {
 	conn     *quic.Conn
 	control  *FrameStream
 	Station  frame.HelloInfo
 	identity []byte          // the node id this session connected as
 	done     <-chan struct{} // closed when the connection ends
+	leases   *leases         // nil unless DialLeased opened the session
 }
 
 // Seed is one candidate station to dial — a host/port pair, the same
@@ -90,7 +91,7 @@ func ConnectSeeds(ctx context.Context, seeds []Seed, trust transport.Trust, id i
 	}
 	var errs []error
 	for _, seed := range seeds {
-		session, err := connectOne(ctx, seed.Host, seed.Port, trust, id)
+		session, err := connectOne(ctx, seed.Host, seed.Port, trust, id, false)
 		if err == nil {
 			return session, nil
 		}
@@ -101,7 +102,7 @@ func ConnectSeeds(ctx context.Context, seeds []Seed, trust transport.Trust, id i
 
 // connectOne is Connect's actual handshake logic, factored out so
 // ConnectSeeds can run it per candidate without duplicating it.
-func connectOne(ctx context.Context, host string, port uint16, trust transport.Trust, id identity.KeyPair) (*Session, error) {
+func connectOne(ctx context.Context, host string, port uint16, trust transport.Trust, id identity.KeyPair, leased bool) (*Session, error) {
 	ctx, cancel := context.WithTimeout(ctx, HandshakeTimeout)
 	defer cancel()
 
@@ -157,6 +158,9 @@ func connectOne(ctx context.Context, host string, port uint16, trust transport.T
 
 	session.Station = station
 	ok = true
+	if leased {
+		session.leases = &leases{held: 1, close: func() { _ = session.Close("normal", nil, id) }}
+	}
 	register(session)
 	return session, nil
 }
