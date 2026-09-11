@@ -190,9 +190,7 @@ func decodeMap(rest []byte, ai byte, depth int, withIdentity bool) (Value, keyId
 		pos += vn
 		if idx, ok := indexOfKey[keyID]; ok {
 			entries[idx].Val = val
-			if withIdentity {
-				identities[idx].val = valID
-			}
+			setValueIdentity(identities, idx, valID)
 			continue
 		}
 		indexOfKey[keyID] = len(entries)
@@ -202,6 +200,14 @@ func decodeMap(rest []byte, ai byte, depth int, withIdentity bool) (Value, keyId
 		}
 	}
 	return Map(entries), mapIdentity(identities, withIdentity), 1 + pos, nil
+}
+
+// setValueIdentity records entry idx's value identity, when identities are
+// kept at all.
+func setValueIdentity(identities []entryIdentities, idx int, val keyIdentity) {
+	if identities != nil {
+		identities[idx].val = val
+	}
 }
 
 // mapIdentity is the key identity of a map with these entries, once its

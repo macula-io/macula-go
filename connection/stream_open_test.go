@@ -92,10 +92,10 @@ func TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt(t *testing.T) {
 				t.Fatal("the accepted stream was cancelled")
 			}
 			lines := dropWarnings(logged)
+			if tc.warning == nil && len(lines) != 0 {
+				t.Fatalf("drop warnings = %q, want none", lines)
+			}
 			if tc.warning == nil {
-				if len(lines) != 0 {
-					t.Fatalf("drop warnings = %q, want none", lines)
-				}
 				return
 			}
 			if len(lines) != 1 || !hasFields(lines[0], append([]string{"kind=refused_stream_open", "count=1"}, tc.warning...)...) {
