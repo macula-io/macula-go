@@ -29,6 +29,7 @@ const (
 	dropAbortedStream     dropKind = "aborted_stream"
 	dropCall              dropKind = "dropped_call"
 	dropReply             dropKind = "dropped_reply"
+	dropOtherFrame        dropKind = "dropped_frame"
 
 	// reasonUnsigned is a frame whose signature is missing or isn't 64 bytes,
 	// or whose signer field is missing or isn't a 32-byte key.
@@ -42,6 +43,11 @@ const (
 	// reasonNotAStreamOpen is a dedicated stream whose first frame is of
 	// another type.
 	reasonNotAStreamOpen dropReason = "not_a_stream_open"
+	// reasonUnrouted is a frame no subscription or handler matches.
+	reasonUnrouted dropReason = "unrouted"
+	// reasonUnexpectedType is a frame of a type not valid on the stream it
+	// arrived on.
+	reasonUnexpectedType dropReason = "unexpected_type"
 	// reasonUnknownCallID is a RESULT or ERROR for no pending call.
 	reasonUnknownCallID dropReason = "unknown_call_id"
 )
@@ -134,21 +140,22 @@ func (s *Session) logDrop(logger *slog.Logger, kind dropKind, count uint64, reas
 
 // procedureDetail is a drop warning's procedure: v's procedure field cut to
 // maxDropProcedure bytes without splitting a character, or nothing when v
-// has none.
+// has none as a byte string.
 func procedureDetail(v cbor.Value) slog.Attr {
-	field, ok := v.Get("procedure")
-	if !ok {
+	procedure := bytesField(v, "procedure")
+	if procedure == nil {
 		return slog.Attr{}
 	}
-	procedure, isBytes := field.AsBytes()
-	if !isBytes {
-		text, isText := field.AsText()
-		if !isText {
-			return slog.Attr{}
-		}
-		procedure = []byte(text)
-	}
 	return slog.String("procedure", cutAtRuneStart(string(procedure), maxDropProcedure))
+}
+
+// frameTypeDetail is a dropped frame's frame_type, cut like a procedure, or
+// nothing when the frame has none.
+func frameTypeDetail(frameType string) slog.Attr {
+	if frameType == "" {
+		return slog.Attr{}
+	}
+	return slog.String("frame_type", cutAtRuneStart(frameType, maxDropProcedure))
 }
 
 // callIDDetail is a dropped reply's call_id: its first 4 bytes in upper-case

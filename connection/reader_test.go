@@ -662,22 +662,33 @@ func TestALinkCallPublishesNoRPCFacts(t *testing.T) {
 	}
 }
 
+// A frame of a type the control stream doesn't carry is counted by type, and
+// warned about as a dropped frame of an unexpected type, with the most
+// recent type in the closing line and no per-type line of its own.
 func TestAnUnroutedFrameIsCountedByType(t *testing.T) {
 	s, fc, id := readingSession(t)
 	logged := &lockedBuffer{}
 	s.SetLogger(slog.New(slog.NewTextHandler(logged, nil)))
+	intervals := captureDropIntervals(s)
 
 	fc.send(t, bareFrame("stream_data"))
 	fc.send(t, bareFrame("stream_data"))
 	fc.send(t, bareFrame("advertise"))
 	roundTrip(t, s, fc, id)
+	intervals.endAll()
 
 	counts := s.Unrouted()
 	if counts["stream_data"] != 2 || counts["advertise"] != 1 {
 		t.Fatalf("Unrouted() = %v, want stream_data 2 and advertise 1", counts)
 	}
-	if got := strings.Count(logged.String(), "macula: dropped 1 unrouted stream_data frame(s) in the last minute"); got != 1 {
-		t.Fatalf("log lines for stream_data = %d, want 1 in the minute; log:\n%s", got, logged.String())
+	lines := dropWarnings(logged)
+	if len(lines) != 2 ||
+		!hasFields(lines[0], "kind=dropped_frame", "count=1", "reason=unexpected_type", "frame_type=stream_data") ||
+		!hasFields(lines[1], "kind=dropped_frame", "count=2", "reason=unexpected_type", "frame_type=advertise") {
+		t.Fatalf("drop warnings = %q, want stream_data at once and the other two in the closing line", lines)
+	}
+	if perType := linesWith(logged.String(), "in the last minute"); len(perType) != 0 {
+		t.Fatalf("per-type unrouted lines = %q, want none", perType)
 	}
 }
 

@@ -215,3 +215,52 @@ func TestAReplyNothingWaitsForIsWarnedAboutAsADroppedReply(t *testing.T) {
 		t.Fatalf("unrouted-frame lines for results = %q, want none", unrouted)
 	}
 }
+
+// An EVENT that doesn't parse is a dropped frame for malformed, and one no
+// subscription matches a dropped frame for unrouted; both count as unrouted
+// events.
+func TestADroppedEventIsWarnedAboutWithItsReason(t *testing.T) {
+	s, fc, id := readingSession(t)
+	logged := &lockedBuffer{}
+	s.SetLogger(slog.New(slog.NewTextHandler(logged, nil)))
+	intervals := captureDropIntervals(s)
+
+	fc.send(t, bareFrame("event"))
+	fc.send(t, eventFrame("nobody.listens.here", 1))
+	roundTrip(t, s, fc, id)
+	intervals.endAll()
+
+	lines := dropWarnings(logged)
+	if len(lines) != 2 ||
+		!hasFields(lines[0], "kind=dropped_frame", "count=1", "reason=malformed", "frame_type=event") ||
+		!hasFields(lines[1], "kind=dropped_frame", "count=1", "reason=unrouted", "frame_type=event") {
+		t.Fatalf("drop warnings = %q, want the malformed EVENT at once and the unmatched one in the closing line", lines)
+	}
+	if n := s.Unrouted()["event"]; n != 2 {
+		t.Fatalf("unrouted events = %d, want both counted", n)
+	}
+}
+
+// A drop warning names a procedure only when the frame carries it as a byte
+// string: a procedure sent as text, or none at all, is left out.
+func TestADropWarningNamesOnlyABinaryProcedure(t *testing.T) {
+	call := droppableCall(t, registryIdentity(t), nil, "the.procedure")
+	cases := []struct {
+		name  string
+		frame cbor.Value
+		want  string
+	}{
+		{"bytes", call, "the.procedure"},
+		{"text", withField(call, "procedure", cbor.Text("the.procedure")), ""},
+		{"missing", withoutField(call, "procedure"), ""},
+	}
+	for _, tc := range cases {
+		got := procedureDetail(tc.frame)
+		if tc.want == "" && got.Key != "" {
+			t.Errorf("%s: procedure field %v, want it left out", tc.name, got)
+		}
+		if tc.want != "" && got.Value.String() != tc.want {
+			t.Errorf("%s: procedure field %v, want %q", tc.name, got, tc.want)
+		}
+	}
+}
