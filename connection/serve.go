@@ -19,6 +19,12 @@ import (
 // macula_station_link.erl's own safe_invoke_handler mapping exactly
 // (including sending no detail on a crash, since the reference doesn't
 // either — it only logs locally).
+//
+// A map payload reaches the handler with the caller's 32-byte node id,
+// as bytes, under the text key "caller": the identity whose signature on
+// the CALL verified, replacing any "caller" the sender wrote, as
+// macula_station_link:with_caller/2 does. A payload that is not a map
+// reaches the handler as it was sent and carries no caller.
 type CallHandler func(payload cbor.Value) (cbor.Value, error)
 
 // CallLookup resolves an inbound CALL's (realm, procedure) to a
@@ -155,6 +161,24 @@ func bytesField(value cbor.Value, field string) []byte {
 	return b
 }
 
+// withCaller is payload as a handler receives it: a map carries caller
+// under the text key "caller", replacing any entry the sender put there;
+// anything else is returned unchanged.
+func withCaller(payload cbor.Value, caller []byte) cbor.Value {
+	entries, ok := payload.AsMap()
+	if !ok {
+		return payload
+	}
+	merged := make([]cbor.MapEntry, 0, len(entries)+1)
+	for _, e := range entries {
+		if key, isText := e.Key.AsText(); isText && key == "caller" {
+			continue
+		}
+		merged = append(merged, e)
+	}
+	return cbor.Map(append(merged, cbor.MapEntry{Key: cbor.Text("caller"), Val: cbor.Bytes(caller)}))
+}
+
 // buildCallReply fires rpc.received_v1/rpc.replied_v1 around dispatch,
 // matching macula_response.erl's own per-request child exactly: RECEIVED
 // only after policy and lookup both pass (mirroring the child only
@@ -178,7 +202,7 @@ func buildCallReply(s *Session, callInfo frame.CallInfo, lookup CallLookup, poli
 	requestID := randomID()
 	announceRPCReceived(s, callInfo.Realm, id, requestID)
 
-	payload, err, crashed := invokeCallHandler(handler, callInfo.Payload)
+	payload, err, crashed := invokeCallHandler(handler, withCaller(callInfo.Payload, callInfo.Caller))
 	switch {
 	case crashed:
 		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.TemporaryRelayFailure, selfPub))
