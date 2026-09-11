@@ -265,8 +265,9 @@ before a handler ever runs:
 
 ```go
 // Mint (typically done by whoever issues capabilities, not the caller
-// of ServeOneCallGated):
-token, err := ucan.Create("did:macula:issuer", "did:macula:audience", nil, issuerID, ucan.CreateOpts{})
+// of ServeOneCallGated). The audience is the identity that will present
+// the token: its node ID as lowercase hex.
+token, err := ucan.Create("did:macula:issuer", hex.EncodeToString(callerID.NodeID()), nil, issuerID, ucan.CreateOpts{})
 
 // Provider: gate one (realm, procedure) behind a required issuer. An
 // open Policy (the zero value, ucan.Open) behaves exactly like plain
@@ -285,10 +286,12 @@ resp, err := session.CallWithUCAN("gated.procedure", realm, payload, deadlineMs,
 
 `ucan.Create`/`Verify`/`Decode`/`GetIssuer`/`GetAudience`/`GetCapabilities`/
 `GetExpiration`/`GetProofs`/`IsExpired` mirror `macula_ucan_nif`'s exact
-surface (JWT-shaped UCAN 0.10.0, EdDSA) — no more, no less. `issuer`/
-`audience` are opaque DID strings; this package doesn't validate or
-resolve DID structure (that's `macula_did_nif`'s scope on the Erlang
-side).
+surface (JWT-shaped UCAN 0.10.0, EdDSA) — no more, no less. `issuer` is
+an opaque string; this package doesn't validate or resolve DID structure
+(that's `macula_did_nif`'s scope on the Erlang side). `audience` is the
+node ID of the identity that will present the token, as lowercase hex: a
+gated provider accepts the token only from that caller, and refuses a
+token without an audience or a call without a caller.
 
 ## The CBOR codec is hand-rolled on purpose
 

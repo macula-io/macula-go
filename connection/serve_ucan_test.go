@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"encoding/hex"
 	"testing"
 
 	"github.com/macula-io/macula-go/bolt4"
@@ -130,7 +131,7 @@ func TestBuildCallReplyGatedPolicyAcceptsValidTokenAndInvokesHandler(t *testing.
 			return payload, nil
 		}, true
 	}
-	goodToken, err := ucan.Create("iss", "aud", []ucan.Capability{{With: "x", Can: "y"}}, requiredIssuer, ucan.CreateOpts{})
+	goodToken, err := ucan.Create("iss", hex.EncodeToString(selfID.NodeID()), []ucan.Capability{{With: "x", Can: "y"}}, requiredIssuer, ucan.CreateOpts{})
 	if err != nil {
 		t.Fatalf("ucan.Create: %v", err)
 	}
@@ -160,5 +161,83 @@ func TestServeOneCallStillOpenByDefault(t *testing.T) {
 	// behavior so a future edit can't quietly make it gated.
 	if p := openPolicy(nil, ""); p.Gated {
 		t.Fatalf("openPolicy returned a gated policy: %+v", p)
+	}
+}
+
+// gatedCall builds a CALL from caller carrying token for a procedure gated
+// on issuer, and reports whether the handler ran and the reply's code.
+func gatedCall(t *testing.T, issuer identity.KeyPair, caller []byte, token []byte) (invoked bool, isErr bool, code uint8) {
+	t.Helper()
+	selfID := mustID(t)
+	lookup := func(_ []byte, _ string) (CallHandler, bool) {
+		return func(payload cbor.Value) (cbor.Value, error) {
+			invoked = true
+			return payload, nil
+		}, true
+	}
+	policy := func(_ []byte, _ string) ucan.Policy { return ucan.Required(issuer.NodeID()) }
+	callInfo := frame.CallInfo{
+		CallID: make([]byte, 16), Procedure: "gated.proc", Realm: make([]byte, 32),
+		Payload: cbor.Text("hi"), Caller: caller, UcanToken: token,
+	}
+	isErr, code = responseCode(t, buildCallReply(nil, callInfo, lookup, policy, selfID))
+	return invoked, isErr, code
+}
+
+// tokenFor mints a token signed by issuer whose audience is audience.
+func tokenFor(t *testing.T, issuer identity.KeyPair, audience string) []byte {
+	t.Helper()
+	token, err := ucan.Create(hex.EncodeToString(issuer.NodeID()), audience, nil, issuer, ucan.CreateOpts{})
+	if err != nil {
+		t.Fatalf("ucan.Create: %v", err)
+	}
+	return token
+}
+
+// A token names its audience as the caller's key in lowercase hex, and is
+// refused when another caller presents it.
+func TestBuildCallReplyGatedPolicyRefusesATokenPresentedByAnotherCaller(t *testing.T) {
+	issuer, audience, other := mustID(t), mustID(t), mustID(t)
+	token := tokenFor(t, issuer, hex.EncodeToString(audience.NodeID()))
+
+	invoked, isErr, code := gatedCall(t, issuer, other.NodeID(), token)
+	if !isErr || bolt4.Code(code) != bolt4.Unauthorized {
+		t.Fatalf("token presented by another caller: isError=%v code=%d, want ERROR Unauthorized(0x%02x)", isErr, code, bolt4.Unauthorized)
+	}
+	if invoked {
+		t.Fatalf("handler ran for a token presented by a caller other than its audience")
+	}
+}
+
+// The same token is accepted from the caller it names.
+func TestBuildCallReplyGatedPolicyAcceptsATokenFromItsAudience(t *testing.T) {
+	issuer, audience := mustID(t), mustID(t)
+	token := tokenFor(t, issuer, hex.EncodeToString(audience.NodeID()))
+
+	invoked, isErr, _ := gatedCall(t, issuer, audience.NodeID(), token)
+	if isErr || !invoked {
+		t.Fatalf("token presented by its audience: isError=%v invoked=%v, want the handler to run", isErr, invoked)
+	}
+}
+
+// A token without an audience is refused.
+func TestBuildCallReplyGatedPolicyRefusesATokenWithoutAudience(t *testing.T) {
+	issuer, caller := mustID(t), mustID(t)
+	token := tokenFor(t, issuer, "")
+
+	invoked, isErr, code := gatedCall(t, issuer, caller.NodeID(), token)
+	if !isErr || bolt4.Code(code) != bolt4.Unauthorized || invoked {
+		t.Fatalf("token without audience: isError=%v code=%d invoked=%v, want ERROR Unauthorized and no handler", isErr, code, invoked)
+	}
+}
+
+// A call that names no caller is refused, whatever its token's audience.
+func TestBuildCallReplyGatedPolicyRefusesACallWithoutCaller(t *testing.T) {
+	issuer, audience := mustID(t), mustID(t)
+	token := tokenFor(t, issuer, hex.EncodeToString(audience.NodeID()))
+
+	invoked, isErr, code := gatedCall(t, issuer, nil, token)
+	if !isErr || bolt4.Code(code) != bolt4.Unauthorized || invoked {
+		t.Fatalf("call without caller: isError=%v code=%d invoked=%v, want ERROR Unauthorized and no handler", isErr, code, invoked)
 	}
 }

@@ -133,7 +133,7 @@ func (s *Session) replyToCall(callInfo frame.CallInfo, lookup CallLookup, policy
 // this matches that omission rather than "improving" on it.
 func buildCallReply(s *Session, callInfo frame.CallInfo, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) cbor.Value {
 	selfPub := id.NodeID()
-	if err := policy(callInfo.Realm, callInfo.Procedure).Check(callInfo.UcanToken); err != nil {
+	if err := policy(callInfo.Realm, callInfo.Procedure).Check(callInfo.UcanToken, callInfo.Caller); err != nil {
 		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.Unauthorized, selfPub))
 	}
 

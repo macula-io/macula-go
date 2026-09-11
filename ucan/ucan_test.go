@@ -277,10 +277,10 @@ func TestComputeCIDMatchesReferenceScheme(t *testing.T) {
 }
 
 func TestPolicyOpenAlwaysPasses(t *testing.T) {
-	if err := Open.Check(nil); err != nil {
+	if err := Open.Check(nil, nil); err != nil {
 		t.Fatalf("Open.Check(nil) = %v, want nil", err)
 	}
-	if err := Open.Check([]byte("anything, ignored")); err != nil {
+	if err := Open.Check([]byte("anything, ignored"), nil); err != nil {
 		t.Fatalf("Open.Check(token) = %v, want nil (open ignores tokens entirely)", err)
 	}
 }
@@ -290,7 +290,7 @@ func TestPolicyRequiredAcceptsValidToken(t *testing.T) {
 	callerID := mustIdentity(t)
 	token, err := Create(
 		"did:macula:"+encodeHex(issuerID.NodeID()),
-		"did:macula:"+encodeHex(callerID.NodeID()),
+		encodeHex(callerID.NodeID()),
 		[]Capability{{With: "mri:mailbox:x", Can: "deposit_letter"}},
 		issuerID, CreateOpts{ExpiresAt: ptr(time.Now().Add(time.Hour).Unix())},
 	)
@@ -298,7 +298,7 @@ func TestPolicyRequiredAcceptsValidToken(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	policy := Required(issuerID.NodeID())
-	if err := policy.Check(token); err != nil {
+	if err := policy.Check(token, callerID.NodeID()); err != nil {
 		t.Fatalf("Required(issuer).Check(valid token) = %v, want nil", err)
 	}
 }
@@ -306,10 +306,10 @@ func TestPolicyRequiredAcceptsValidToken(t *testing.T) {
 func TestPolicyRequiredRejectsMissingToken(t *testing.T) {
 	issuerID := mustIdentity(t)
 	policy := Required(issuerID.NodeID())
-	if err := policy.Check(nil); !errors.Is(err, ErrNoToken) {
+	if err := policy.Check(nil, issuerID.NodeID()); !errors.Is(err, ErrNoToken) {
 		t.Fatalf("Required(issuer).Check(nil) = %v, want ErrNoToken", err)
 	}
-	if err := policy.Check([]byte{}); !errors.Is(err, ErrNoToken) {
+	if err := policy.Check([]byte{}, issuerID.NodeID()); !errors.Is(err, ErrNoToken) {
 		t.Fatalf("Required(issuer).Check(empty) = %v, want ErrNoToken", err)
 	}
 }
@@ -322,7 +322,7 @@ func TestPolicyRequiredRejectsTokenFromWrongIssuer(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	policy := Required(requiredIssuerID.NodeID())
-	if err := policy.Check(token); !errors.Is(err, ErrInvalidSignature) {
+	if err := policy.Check(token, actualSignerID.NodeID()); !errors.Is(err, ErrInvalidSignature) {
 		t.Fatalf("Required(issuer).Check(token from a different signer) = %v, want ErrInvalidSignature", err)
 	}
 }
@@ -335,4 +335,52 @@ func encodeHex(b []byte) string {
 		out[i*2+1] = hexdigits[c&0x0f]
 	}
 	return string(out)
+}
+
+// A token is accepted only from the identity its audience names: that
+// caller's key as lowercase hex.
+func TestPolicyRequiredRefusesATokenForAnotherAudience(t *testing.T) {
+	issuerID, audienceID, otherID := mustIdentity(t), mustIdentity(t), mustIdentity(t)
+	token, err := Create(encodeHex(issuerID.NodeID()), encodeHex(audienceID.NodeID()), nil, issuerID, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	policy := Required(issuerID.NodeID())
+	if err := policy.Check(token, otherID.NodeID()); !errors.Is(err, ErrWrongAudience) {
+		t.Fatalf("Check(token for A, caller B) = %v, want ErrWrongAudience", err)
+	}
+	if err := policy.Check(token, audienceID.NodeID()); err != nil {
+		t.Fatalf("Check(token for A, caller A) = %v, want nil", err)
+	}
+}
+
+// The audience must be lowercase hex exactly; a missing audience or caller
+// is unauthorized.
+func TestPolicyRequiredRefusesAMissingOrMalformedAudienceOrCaller(t *testing.T) {
+	issuerID, callerID := mustIdentity(t), mustIdentity(t)
+	policy := Required(issuerID.NodeID())
+	mint := func(audience string) []byte {
+		t.Helper()
+		token, err := Create(encodeHex(issuerID.NodeID()), audience, nil, issuerID, CreateOpts{})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		return token
+	}
+	cases := []struct {
+		name   string
+		token  []byte
+		caller []byte
+		want   error
+	}{
+		{"no audience", mint(""), callerID.NodeID(), ErrWrongAudience},
+		{"uppercase audience", mint(strings.ToUpper(encodeHex(callerID.NodeID()))), callerID.NodeID(), ErrWrongAudience},
+		{"did-prefixed audience", mint("did:macula:" + encodeHex(callerID.NodeID())), callerID.NodeID(), ErrWrongAudience},
+		{"no caller", mint(encodeHex(callerID.NodeID())), nil, ErrNoCaller},
+	}
+	for _, c := range cases {
+		if err := policy.Check(c.token, c.caller); !errors.Is(err, c.want) {
+			t.Errorf("%s: Check = %v, want %v", c.name, err, c.want)
+		}
+	}
 }

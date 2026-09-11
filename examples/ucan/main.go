@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"time"
@@ -37,7 +38,9 @@ func main() {
 
 	// providerID doubles as the token issuer here -- the policy requires
 	// a token signed by whichever key the provider decides to trust.
-	token, err := ucan.Create("did:macula:example-issuer", "did:macula:example-audience", nil, providerID, ucan.CreateOpts{})
+	// The audience is the caller that will present the token: its key as
+	// lowercase hex. The provider refuses the token from anyone else.
+	token, err := ucan.Create("did:macula:example-issuer", hex.EncodeToString(callerID.NodeID()), nil, providerID, ucan.CreateOpts{})
 	if err != nil {
 		log.Fatalf("ucan.Create: %v", err)
 	}

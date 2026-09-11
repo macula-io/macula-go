@@ -64,6 +64,14 @@ var (
 	// unauthorized clause (an empty/absent token is refused before ever
 	// attempting to verify anything).
 	ErrNoToken = errors.New("ucan: no token presented for a gated procedure")
+
+	// ErrNoCaller is returned by Policy.Check when a gated CALL names no
+	// caller to match the token's audience against.
+	ErrNoCaller = errors.New("ucan: no caller to match the token's audience against")
+
+	// ErrWrongAudience is returned by Policy.Check when the token's audience
+	// is not the calling identity's key as lowercase hex.
+	ErrWrongAudience = errors.New("ucan: token audience is not the caller")
 )
 
 // Capability is one entry in a UCAN token's capability list — mirrors
@@ -116,11 +124,14 @@ type CreateOpts struct {
 	Proofs    []string
 }
 
-// Create mints a new UCAN token, self-issued and signed by id. issuer and
-// audience are opaque DID strings (e.g. "did:macula:io.macula.acme") —
-// this package does not validate or resolve DID structure, matching
-// macula_ucan_nif:create/4,5's own scope exactly (that's
-// macula_did_nif's job on the Erlang side, out of scope here). id signs
+// Create mints a new UCAN token, self-issued and signed by id. issuer is
+// an opaque string (e.g. "did:macula:io.macula.acme"); this package does
+// not validate or resolve DID structure, matching
+// macula_ucan_nif:create/4,5's own scope exactly (that's macula_did_nif's
+// job on the Erlang side, out of scope here). audience names the identity
+// that will present the token: its 32-byte node ID as lowercase hex, i.e.
+// hex.EncodeToString(caller.NodeID()). A gated provider (Policy.Check)
+// accepts the token only from that caller. id signs
 // with its own Ed25519 private key; the resulting token verifies against
 // id's public key (NodeID), same convention every advertised capability
 // in this SDK already uses.

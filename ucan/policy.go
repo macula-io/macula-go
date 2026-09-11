@@ -1,5 +1,7 @@
 package ucan
 
+import "encoding/hex"
+
 // Policy describes what a service requires to answer one (realm,
 // procedure): open (any identified caller, the default) or UCAN-gated
 // (the caller's token must verify against RequiredIssuer). Mirrors
@@ -23,23 +25,35 @@ type Policy struct {
 var Open = Policy{}
 
 // Required builds a UCAN-gated policy: a caller must present a token
-// that verifies (signature, exp, nbf) against issuerPublicKey.
+// that verifies (signature, exp, nbf) against issuerPublicKey and whose
+// audience is that caller's own key as lowercase hex.
 // Equivalent to Erlang's `{ucan_required, issuerPublicKey}`.
 func Required(issuerPublicKey []byte) Policy {
 	return Policy{Gated: true, RequiredIssuer: issuerPublicKey}
 }
 
-// Check applies p to an inbound CALL's ucanToken, returning nil if the
-// call is authorized to proceed to lookup/dispatch. An open policy
-// always passes; a gated policy requires ucanToken to Verify against
-// RequiredIssuer.
-func (p Policy) Check(ucanToken []byte) error {
+// Check applies p to an inbound CALL's ucanToken and the caller that CALL
+// names, returning nil if the call is authorized to proceed to
+// lookup/dispatch. An open policy always passes. A gated policy requires
+// ucanToken to Verify against RequiredIssuer, and its audience to be
+// caller's key as lowercase hex: a token is accepted only from the identity
+// it was issued to. A missing caller or audience is unauthorized.
+func (p Policy) Check(ucanToken []byte, caller []byte) error {
 	if !p.Gated {
 		return nil
 	}
 	if len(ucanToken) == 0 {
 		return ErrNoToken
 	}
-	_, err := Verify(ucanToken, p.RequiredIssuer)
-	return err
+	payload, err := Verify(ucanToken, p.RequiredIssuer)
+	if err != nil {
+		return err
+	}
+	if len(caller) == 0 {
+		return ErrNoCaller
+	}
+	if payload.Audience == "" || payload.Audience != hex.EncodeToString(caller) {
+		return ErrWrongAudience
+	}
+	return nil
 }
