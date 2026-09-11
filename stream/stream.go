@@ -179,11 +179,14 @@ var ErrStreamIDMismatch = errors.New("stream: received a frame for a different s
 // STREAM_DATA/STREAM_END before any reply.
 var ErrUnexpectedFrame = errors.New("stream: received a frame not valid in this context")
 
-// Recv receives the next chunk or end-of-stream, bounded by timeout.
+// Recv receives the next chunk or end-of-stream, bounded by timeout. A frame
+// that doesn't decode aborts the stream (see connection.FrameStream.RecvFrame).
 //
-// STREAM_DATA, STREAM_END and STREAM_ERROR name no signer on the wire, so what
-// Recv hands back isn't checked against a key: it is taken as coming from the
-// peer of the dedicated stream its verified STREAM_OPEN set up.
+// STREAM_DATA, STREAM_END and STREAM_ERROR have no signer field in macula's
+// frame spec. Go fills one and signs them, but a receiver can't rely on
+// either, so what Recv hands back isn't checked against a key: it is taken as
+// coming from the peer of the dedicated stream its verified STREAM_OPEN set
+// up.
 func (h *Handle) Recv(timeout time.Duration) (Item, error) {
 	value, err := h.fs.RecvFrame(time.Now().Add(timeout))
 	if err != nil {

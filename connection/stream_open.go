@@ -28,7 +28,7 @@ func (s *Session) acceptStreamOpen(ctx context.Context, firstFrameTimeout time.D
 		if err != nil {
 			return nil, frame.StreamOpenInfo{}, err
 		}
-		first, err := fs.RecvFrame(time.Now().Add(firstFrameTimeout))
+		first, err := fs.recvFrame(time.Now().Add(firstFrameTimeout))
 		switch {
 		case errors.Is(err, ErrMalformedFrame):
 			s.refuseStream(fs, reasonMalformed, slog.Attr{})

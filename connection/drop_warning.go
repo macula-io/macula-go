@@ -26,6 +26,7 @@ type (
 
 const (
 	dropRefusedStreamOpen dropKind = "refused_stream_open"
+	dropAbortedStream     dropKind = "aborted_stream"
 	dropCall              dropKind = "dropped_call"
 	dropReply             dropKind = "dropped_reply"
 

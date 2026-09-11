@@ -83,6 +83,11 @@ var ErrMalformedFrame = errors.New("connection: malformed frame")
 // stream is reset and stopped with, the same code in every macula stack.
 const StreamRefusedCode = 2
 
+// StreamProtocolErrorCode is the QUIC application error code an established
+// dedicated stream is reset and stopped with when a frame on it doesn't
+// decode, the same code in every macula stack.
+const StreamProtocolErrorCode = 3
+
 // sendFrame writes v once no other frame is being written on this stream.
 // waitUntil bounds that wait (zero waits as long as it takes) and stop ends it
 // early (nil never does). writeFor bounds the write itself (zero sets no
@@ -166,8 +171,28 @@ func (fs *FrameStream) StopReceiving(code uint64) {
 
 // RecvFrame reads the next complete application frame off the stream,
 // using (and updating) fs.buf. deadline bounds the read (Stream.Read
-// doesn't take a context directly); a zero deadline means no bound.
+// doesn't take a context directly); a zero deadline means no bound. On a
+// dedicated stream, a frame that doesn't decode ends the stream: it is reset
+// and stopped with StreamProtocolErrorCode, its buffer is released, and a
+// drop warning says so. The error wraps ErrMalformedFrame either way.
 func (fs *FrameStream) RecvFrame(deadline time.Time) (cbor.Value, error) {
+	v, err := fs.recvFrame(deadline)
+	if errors.Is(err, ErrMalformedFrame) && fs.session != nil {
+		fs.abortMalformed()
+	}
+	return v, err
+}
+
+// abortMalformed ends a dedicated stream whose bytes no longer decode.
+func (fs *FrameStream) abortMalformed() {
+	fs.buf = nil
+	fs.Abort(StreamProtocolErrorCode)
+	fs.warnDrop(dropAbortedStream, reasonMalformed, slog.Attr{})
+}
+
+// recvFrame is RecvFrame without ending a dedicated stream whose frame
+// doesn't decode, for a stream's first frame, which is refused instead.
+func (fs *FrameStream) recvFrame(deadline time.Time) (cbor.Value, error) {
 	if err := fs.stream.SetReadDeadline(deadline); err != nil {
 		return cbor.Value{}, fmt.Errorf("connection: set read deadline: %w", err)
 	}
@@ -209,7 +234,9 @@ func (fs *FrameStream) RecvFrame(deadline time.Time) (cbor.Value, error) {
 // other reply is dropped, with a drop warning on the stream's session, and
 // the call keeps waiting. A frame of another type is passed over, which is
 // harmless on a dedicated stream (content transfer, streaming RPC), since
-// nothing else arrives there.
+// nothing else arrives there. A frame that doesn't decode ends the call with
+// an error wrapping ErrMalformedFrame and, on a dedicated stream, aborts the
+// stream (see RecvFrame).
 func (fs *FrameStream) Call(procedure string, realm []byte, payload cbor.Value, deadlineMs int64, id identity.KeyPair, timeout time.Duration) (frame.CallResponse, error) {
 	return fs.callSpec(frame.NewCallSpec(nil, procedure, realm, payload, deadlineMs, id.NodeID()), id, timeout)
 }
