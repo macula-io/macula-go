@@ -79,5 +79,9 @@ func withFieldOnValue(v cbor.Value, key string, val cbor.Value) cbor.Value {
 	if !ok {
 		return v
 	}
-	return cbor.Map(withField(entries, key, val))
+	// A copy, because v may be a frame someone else holds: setting the field
+	// in its own entries would change that frame too.
+	copied := make([]cbor.MapEntry, len(entries), len(entries)+1)
+	copy(copied, entries)
+	return cbor.Map(withField(copied, key, val))
 }
