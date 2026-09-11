@@ -24,8 +24,9 @@ type (
 )
 
 const (
-	dropCall  dropKind = "dropped_call"
-	dropReply dropKind = "dropped_reply"
+	dropRefusedStreamOpen dropKind = "refused_stream_open"
+	dropCall              dropKind = "dropped_call"
+	dropReply             dropKind = "dropped_reply"
 
 	// reasonUnsigned is a frame with no signature, or no field naming its
 	// signer.
@@ -36,6 +37,9 @@ const (
 	// reasonMalformed is a frame missing a field it needs, or holding one of
 	// the wrong type.
 	reasonMalformed dropReason = "malformed"
+	// reasonNotAStreamOpen is a dedicated stream whose first frame is of
+	// another type.
+	reasonNotAStreamOpen dropReason = "not_a_stream_open"
 	// reasonUnknownCallID is a RESULT or ERROR for no pending call.
 	reasonUnknownCallID dropReason = "unknown_call_id"
 )

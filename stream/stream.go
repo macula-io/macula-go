@@ -26,7 +26,9 @@
 //     frame.StreamOpenInfo (check its Procedure — a single connection's
 //     dedicated streams aren't partitioned by which procedure they're
 //     for, so a session that's advertised more than one needs this to
-//     route).
+//     route). Accept only hands back a STREAM_OPEN whose signature
+//     verified against its caller; turn down one you won't serve with
+//     Refuse.
 //  3. Drive it exactly like the caller side, from the opposite chair:
 //     ServerStream mode pushes with SendData/CloseSend; ClientStream
 //     mode drains with Recv and finishes with SendReply.
@@ -51,10 +53,20 @@ import (
 // which side opened it, so SendData/Recv/CloseSend/Abort all mean the
 // same thing either way. SendReply is the one provider-only addition.
 type Handle struct {
-	fs       *connection.FrameStream
+	fs       frameStream
 	StreamID []byte
 	Mode     frame.StreamMode
 	seqOut   uint64
+}
+
+// frameStream is what a Handle needs from its dedicated stream: a
+// connection.FrameStream, or a test's in-memory stand-in.
+type frameStream interface {
+	SendFrame(v cbor.Value) error
+	RecvFrame(deadline time.Time) (cbor.Value, error)
+	CloseSend() error
+	Abort(code uint64)
+	StopReceiving(code uint64)
 }
 
 // Open opens a dedicated stream on session's connection and sends a
@@ -84,23 +96,21 @@ func Open(ctx context.Context, session *connection.Session, procedure string, re
 // otherwise the station has nothing to route here. Returns the
 // ready-to-use handle alongside the parsed frame.StreamOpenInfo (check
 // its Procedure if this session advertised more than one).
+//
+// Accept has no procedure lookup or policy of its own. Every STREAM_OPEN it
+// returns is one whose signature verified against its caller: a dedicated
+// stream whose first frame isn't that is refused before Accept sees it (see
+// connection.Session.AcceptStreamOpen). Deciding whether to serve a returned
+// stream is the provider's, and a provider that won't serve one turns it
+// down with Handle.Refuse.
 func Accept(session *connection.Session, timeout time.Duration) (*Handle, frame.StreamOpenInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	fs, err := session.AcceptDedicatedStream(ctx)
+	fs, open, err := session.AcceptStreamOpen(ctx, timeout)
 	if err != nil {
-		return nil, frame.StreamOpenInfo{}, fmt.Errorf("stream: accept dedicated stream: %w", err)
+		return nil, frame.StreamOpenInfo{}, fmt.Errorf("stream: accept: %w", err)
 	}
-	first, err := fs.RecvFrame(time.Now().Add(timeout))
-	if err != nil {
-		return nil, frame.StreamOpenInfo{}, fmt.Errorf("stream: reading the stream's first frame: %w", err)
-	}
-	open, err := frame.ParseStreamOpen(first)
-	if err != nil {
-		return nil, frame.StreamOpenInfo{}, fmt.Errorf("stream: expected a stream_open frame: %w", err)
-	}
-	handle := &Handle{fs: fs, StreamID: open.StreamID, Mode: open.Mode}
-	return handle, open, nil
+	return &Handle{fs: fs, StreamID: open.StreamID, Mode: open.Mode}, open, nil
 }
 
 // SendReply is the provider role: send the terminal STREAM_REPLY a
@@ -242,4 +252,27 @@ func (h *Handle) Abort(code, message string, id identity.KeyPair) {
 	spec := frame.NewStreamErrorSpec(h.StreamID, code, message, id.NodeID())
 	signed := frame.Sign(frame.StreamErrorFrame(spec), id)
 	_ = h.fs.SendFrame(signed) // best-effort -- the stream is aborting regardless
+}
+
+// Refuse is the provider turning down a stream Accept handed it, the way
+// every macula stack refuses a verified STREAM_OPEN: it writes a
+// STREAM_ERROR with code and message, finishes its side of the stream so the
+// error reaches the caller, and stops receiving with
+// connection.StreamRefusedCode. Use "not_found" with "procedure not
+// advertised" for a procedure the provider doesn't serve, and "unauthorized"
+// with "not authorized for this procedure" for a caller it won't serve. When
+// the STREAM_ERROR can't be written, the stream is reset and stopped with the
+// refusal code instead.
+func (h *Handle) Refuse(code, message string, id identity.KeyPair) error {
+	spec := frame.NewStreamErrorSpec(h.StreamID, code, message, id.NodeID())
+	if err := h.fs.SendFrame(frame.Sign(frame.StreamErrorFrame(spec), id)); err != nil {
+		h.fs.Abort(connection.StreamRefusedCode)
+		return fmt.Errorf("stream: refuse: %w", err)
+	}
+	err := h.fs.CloseSend()
+	h.fs.StopReceiving(connection.StreamRefusedCode)
+	if err != nil {
+		return fmt.Errorf("stream: refuse: %w", err)
+	}
+	return nil
 }

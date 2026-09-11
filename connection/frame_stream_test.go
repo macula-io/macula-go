@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"github.com/quic-go/quic-go"
 	"io"
 	"testing"
 	"time"
@@ -13,9 +14,12 @@ import (
 // read loop without a real QUIC connection. Read results are consumed
 // in order, one per call.
 type fakeQUICStream struct {
-	reads [][]byte
-	errs  []error
-	idx   int
+	cancelledRead  *quic.StreamErrorCode
+	cancelledWrite *quic.StreamErrorCode
+	reads          [][]byte
+	errs           []error
+	idx            int
+	written        int
 }
 
 func (f *fakeQUICStream) Read(p []byte) (int, error) {
@@ -28,10 +32,28 @@ func (f *fakeQUICStream) Read(p []byte) (int, error) {
 	return copy(p, data), err
 }
 
-func (f *fakeQUICStream) Write(p []byte) (int, error)      { return len(p), nil }
-func (f *fakeQUICStream) Close() error                     { return nil }
-func (f *fakeQUICStream) SetReadDeadline(time.Time) error  { return nil }
-func (f *fakeQUICStream) SetWriteDeadline(time.Time) error { return nil }
+func (f *fakeQUICStream) Write(p []byte) (int, error) {
+	f.written += len(p)
+	return len(p), nil
+}
+
+func (f *fakeQUICStream) Close() error                          { return nil }
+func (f *fakeQUICStream) SetReadDeadline(time.Time) error       { return nil }
+func (f *fakeQUICStream) SetWriteDeadline(time.Time) error      { return nil }
+func (f *fakeQUICStream) CancelRead(code quic.StreamErrorCode)  { f.cancelledRead = &code }
+func (f *fakeQUICStream) CancelWrite(code quic.StreamErrorCode) { f.cancelledWrite = &code }
+
+func TestAbortingAFrameStreamCancelsBothDirectionsWithItsCode(t *testing.T) {
+	stream := &fakeQUICStream{}
+	fs := &FrameStream{stream: stream}
+	fs.Abort(0x42)
+	if stream.cancelledRead == nil || *stream.cancelledRead != 0x42 {
+		t.Fatalf("receive side cancelled with %v, want code 0x42", stream.cancelledRead)
+	}
+	if stream.cancelledWrite == nil || *stream.cancelledWrite != 0x42 {
+		t.Fatalf("send side cancelled with %v, want code 0x42", stream.cancelledWrite)
+	}
+}
 
 // TestRecvFrame_FinalChunkWithEOF is a regression test for a real bug:
 // RecvFrame's read loop discarded the bytes from a Read call that

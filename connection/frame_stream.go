@@ -31,6 +31,8 @@ type quicStream interface {
 	io.Closer
 	SetReadDeadline(t time.Time) error
 	SetWriteDeadline(t time.Time) error
+	CancelRead(code quic.StreamErrorCode)
+	CancelWrite(code quic.StreamErrorCode)
 }
 
 // FrameStream sends and receives signed application frames on one QUIC
@@ -66,6 +68,16 @@ var (
 	// was free: nothing was written.
 	errSendStopped = errors.New("connection: stopped waiting to write")
 )
+
+// ErrMalformedFrame is a frame whose bytes don't decode: a claimed length over
+// the frame cap, or CBOR that doesn't parse or doesn't fill its length. A
+// control stream that carries one ends its session, and a dedicated stream
+// whose first frame is one is refused.
+var ErrMalformedFrame = errors.New("connection: malformed frame")
+
+// StreamRefusedCode is the QUIC application error code a refused dedicated
+// stream is reset and stopped with, the same code in every macula stack.
+const StreamRefusedCode = 2
 
 // sendFrame writes v once no other frame is being written on this stream.
 // waitUntil bounds that wait (zero waits as long as it takes) and stop ends it
@@ -133,6 +145,21 @@ func (fs *FrameStream) CloseSend() error {
 	return fs.stream.Close()
 }
 
+// Abort ends the stream in both directions at once with the application
+// error code code: its send side is reset and its receive side stopped, so
+// the peer sees the code on both, and nothing more is written or read.
+func (fs *FrameStream) Abort(code uint64) {
+	fs.stream.CancelWrite(quic.StreamErrorCode(code))
+	fs.stream.CancelRead(quic.StreamErrorCode(code))
+}
+
+// StopReceiving stops the stream's receive side with the application error
+// code code: the peer stops sending, and the stream is released once its send
+// side is done too.
+func (fs *FrameStream) StopReceiving(code uint64) {
+	fs.stream.CancelRead(quic.StreamErrorCode(code))
+}
+
 // RecvFrame reads the next complete application frame off the stream,
 // using (and updating) fs.buf. deadline bounds the read (Stream.Read
 // doesn't take a context directly); a zero deadline means no bound.
@@ -144,7 +171,7 @@ func (fs *FrameStream) RecvFrame(deadline time.Time) (cbor.Value, error) {
 	for {
 		decoded, err := frame.Decode(fs.buf)
 		if err != nil {
-			return cbor.Value{}, fmt.Errorf("connection: decode: %w", err)
+			return cbor.Value{}, fmt.Errorf("%w: %w", ErrMalformedFrame, err)
 		}
 		if decoded.Complete {
 			fs.buf = fs.buf[decoded.Consumed:]

@@ -205,6 +205,8 @@ func (s *Session) OpenDedicatedStream(ctx context.Context) (*FrameStream, error)
 // §7 of plans/PLAN_WIRE_PROTOCOL.md says to read the stream's own first
 // frame to learn its purpose, which is exactly what a caller of this
 // method does next via the returned FrameStream's own RecvFrame.
+// AcceptStreamOpen does that for streaming RPC, and refuses a stream whose
+// first frame isn't a STREAM_OPEN that verifies.
 func (s *Session) AcceptDedicatedStream(ctx context.Context) (*FrameStream, error) {
 	stream, err := s.conn.AcceptStream(ctx)
 	if err != nil {

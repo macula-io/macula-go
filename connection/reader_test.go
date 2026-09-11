@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/quic-go/quic-go"
 	"io"
 	"log/slog"
 	"strings"
@@ -96,7 +97,9 @@ func (f *fakeControl) Close() error {
 	return nil
 }
 
-func (f *fakeControl) SetReadDeadline(time.Time) error { return nil }
+func (f *fakeControl) SetReadDeadline(time.Time) error  { return nil }
+func (f *fakeControl) CancelRead(quic.StreamErrorCode)  {}
+func (f *fakeControl) CancelWrite(quic.StreamErrorCode) {}
 
 func (f *fakeControl) SetWriteDeadline(t time.Time) error {
 	f.mu.Lock()
