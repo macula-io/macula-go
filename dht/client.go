@@ -124,8 +124,15 @@ func PutRecord(session *connection.Session, id identity.KeyPair, rec Record) err
 // signature should still be checked via Verify before the payload is
 // trusted; this function does not verify on the caller's behalf.
 func FindRecord(session *connection.Session, id identity.KeyPair, key [32]byte) (Record, error) {
+	return FindRecordTimeout(session, id, key, dhtTimeout)
+}
+
+// FindRecordTimeout is FindRecord with the lookup bounded by timeout
+// instead of the default 5 seconds, for a caller that bounds its work by a
+// deadline of its own.
+func FindRecordTimeout(session *connection.Session, id identity.KeyPair, key [32]byte, timeout time.Duration) (Record, error) {
 	args := cbor.Map([]cbor.MapEntry{{Key: cbor.Text("key"), Val: cbor.Bytes(key[:])}})
-	resp, err := session.Call(findRecordProc, dhtRealm, args, deadlineMs(dhtTimeout), id, dhtTimeout)
+	resp, err := session.Call(findRecordProc, dhtRealm, args, deadlineMs(timeout), id, timeout)
 	if err != nil {
 		return Record{}, fmt.Errorf("dht: find_record: %w", err)
 	}
@@ -143,8 +150,15 @@ func FindRecord(session *connection.Session, id identity.KeyPair, key [32]byte) 
 // record's signature should be verified via Verify before its payload is
 // trusted; this function does not verify on the caller's behalf.
 func FindRecords(session *connection.Session, id identity.KeyPair, key [32]byte) ([]Record, error) {
+	return FindRecordsTimeout(session, id, key, dhtTimeout)
+}
+
+// FindRecordsTimeout is FindRecords with the lookup bounded by timeout
+// instead of the default 5 seconds, for a caller that bounds its work by a
+// deadline of its own.
+func FindRecordsTimeout(session *connection.Session, id identity.KeyPair, key [32]byte, timeout time.Duration) ([]Record, error) {
 	args := cbor.Map([]cbor.MapEntry{{Key: cbor.Text("key"), Val: cbor.Bytes(key[:])}})
-	resp, err := session.Call(findRecordsProc, dhtRealm, args, deadlineMs(dhtTimeout), id, dhtTimeout)
+	resp, err := session.Call(findRecordsProc, dhtRealm, args, deadlineMs(timeout), id, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("dht: find_records: %w", err)
 	}

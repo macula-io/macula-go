@@ -49,6 +49,19 @@ import (
 const (
 	resolveRetries    = 50
 	resolveRetryDelay = 100 * time.Millisecond
+	// defaultLookupTimeout bounds one DHT lookup, matching the dht package's
+	// own default.
+	defaultLookupTimeout = 5 * time.Second
+)
+
+// The DHT lookups, and the work done at one station (dial it, then send the
+// request), are variables so tests can drive resolution without a network.
+var (
+	findRecords = dht.FindRecordsTimeout
+	findRecord  = dht.FindRecordTimeout
+	callAt      = dialAndCall
+	openAt      = dialAndOpenStream
+	fetchAt     = dialAndFetch
 )
 
 var (
@@ -76,7 +89,7 @@ func Resolve(session *connection.Session, id identity.KeyPair, realm []byte, pro
 
 	var recs []dht.Record
 	for attempt := 0; attempt < resolveRetries; attempt++ {
-		recs, err = dht.FindRecords(session, id, key)
+		recs, err = findRecords(session, id, key, defaultLookupTimeout)
 		if err == nil && len(recs) > 0 {
 			break
 		}
@@ -124,7 +137,7 @@ func ResolveWithCertChain(session *connection.Session, id identity.KeyPair, real
 
 	var recs []dht.Record
 	for attempt := 0; attempt < resolveRetries; attempt++ {
-		recs, err = dht.FindRecords(session, id, key)
+		recs, err = findRecords(session, id, key, defaultLookupTimeout)
 		if err == nil && len(recs) > 0 {
 			break
 		}
@@ -180,19 +193,8 @@ func CallWithCertChain(ctx context.Context, resolveVia *connection.Session, id i
 
 	dialCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	target, err := connection.Connect(dialCtx, host, port, transport.Insecure{}, id)
-	if err != nil {
-		return frame.CallResponse{}, fmt.Errorf("directdial: dial resolved station %x at %s:%d: %w", station, host, port, err)
-	}
-	defer func() { _ = target.Close("normal", nil, id) }()
-
-	if !bytesEqual(target.Station.NodeID, station) {
-		return frame.CallResponse{}, fmt.Errorf(
-			"directdial: trust violation — resolved station %x but the dialed peer proved identity %x",
-			station, target.Station.NodeID)
-	}
-
-	return target.Call(procedure, realm, payload, time.Now().Add(timeout).UnixMilli(), id, timeout)
+	resp, _, err := callAt(dialCtx, time.Now().Add(timeout), host, port, station, id, procedure, realm, payload, nil)
+	return resp, err
 }
 
 // AdvertiseDirectWithCertChain is AdvertiseDirect, plus embedding a
@@ -230,7 +232,7 @@ func AdvertiseDirectWithCertChain(session *connection.Session, id identity.KeyPa
 func ResolveStationEndpoint(session *connection.Session, id identity.KeyPair, station []byte) (out []byte, host string, port uint16, err error) {
 	key := dht.StationEndpointKey(station)
 	for attempt := 0; attempt < resolveRetries; attempt++ {
-		rec, ferr := dht.FindRecord(session, id, key)
+		rec, ferr := findRecord(session, id, key, defaultLookupTimeout)
 		if ferr != nil {
 			if errors.Is(ferr, dht.ErrNotFound) {
 				time.Sleep(resolveRetryDelay)
@@ -286,19 +288,8 @@ func Call(ctx context.Context, resolveVia *connection.Session, id identity.KeyPa
 
 	dialCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	target, err := connection.Connect(dialCtx, host, port, transport.Insecure{}, id)
-	if err != nil {
-		return frame.CallResponse{}, fmt.Errorf("directdial: dial resolved station %x at %s:%d: %w", station, host, port, err)
-	}
-	defer func() { _ = target.Close("normal", nil, id) }()
-
-	if !bytesEqual(target.Station.NodeID, station) {
-		return frame.CallResponse{}, fmt.Errorf(
-			"directdial: trust violation — resolved station %x but the dialed peer proved identity %x",
-			station, target.Station.NodeID)
-	}
-
-	return target.Call(procedure, realm, payload, time.Now().Add(timeout).UnixMilli(), id, timeout)
+	resp, _, err := callAt(dialCtx, time.Now().Add(timeout), host, port, station, id, procedure, realm, payload, nil)
+	return resp, err
 }
 
 // CallWithUCAN is Call, presenting ucanToken to a provider gated with
@@ -317,19 +308,8 @@ func CallWithUCAN(ctx context.Context, resolveVia *connection.Session, id identi
 
 	dialCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	target, err := connection.Connect(dialCtx, host, port, transport.Insecure{}, id)
-	if err != nil {
-		return frame.CallResponse{}, fmt.Errorf("directdial: dial resolved station %x at %s:%d: %w", station, host, port, err)
-	}
-	defer func() { _ = target.Close("normal", nil, id) }()
-
-	if !bytesEqual(target.Station.NodeID, station) {
-		return frame.CallResponse{}, fmt.Errorf(
-			"directdial: trust violation — resolved station %x but the dialed peer proved identity %x",
-			station, target.Station.NodeID)
-	}
-
-	return target.CallWithUCAN(procedure, realm, payload, time.Now().Add(timeout).UnixMilli(), id, timeout, ucanToken)
+	resp, _, err := callAt(dialCtx, time.Now().Add(timeout), host, port, station, id, procedure, realm, payload, ucanToken)
+	return resp, err
 }
 
 // AdvertiseDirect publishes a signed procedure_advertisement naming
@@ -429,10 +409,8 @@ func KeepAdvertisedDirect(ctx context.Context, session *connection.Session, id i
 // now OpenStreamDirect/OpenStreamDirectWithCertChain), factored out once
 // PutDirect/GetDirect needed the same dial-then-pin sequence against a
 // station identity that ISN'T necessarily reached via Resolve.
-func dialAndVerify(ctx context.Context, host string, port uint16, station []byte, id identity.KeyPair, timeout time.Duration) (*connection.Session, error) {
-	dialCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	target, err := connection.Connect(dialCtx, host, port, transport.Insecure{}, id)
+func dialAndVerify(ctx context.Context, host string, port uint16, station []byte, id identity.KeyPair) (*connection.Session, error) {
+	target, err := connection.Connect(ctx, host, port, transport.Insecure{}, id)
 	if err != nil {
 		return nil, fmt.Errorf("directdial: dial resolved station %x at %s:%d: %w", station, host, port, err)
 	}
@@ -443,6 +421,53 @@ func dialAndVerify(ctx context.Context, host string, port uint16, station []byte
 			station, target.Station.NodeID)
 	}
 	return target, nil
+}
+
+// dialAndCall dials station at host and port within dialCtx, pins its
+// identity, and sends one CALL there with deadline as its deadline, carrying
+// ucanToken when it is not nil. sent reports whether the CALL went out;
+// until then nothing reached the station.
+func dialAndCall(dialCtx context.Context, deadline time.Time, host string, port uint16, station []byte, id identity.KeyPair, procedure string, realm []byte, payload cbor.Value, ucanToken []byte) (resp frame.CallResponse, sent bool, err error) {
+	target, err := dialAndVerify(dialCtx, host, port, station, id)
+	if err != nil {
+		return frame.CallResponse{}, false, err
+	}
+	defer func() { _ = target.Close("normal", nil, id) }()
+	if ucanToken == nil {
+		resp, err = target.Call(procedure, realm, payload, deadline.UnixMilli(), id, time.Until(deadline))
+		return resp, true, err
+	}
+	resp, err = target.CallWithUCAN(procedure, realm, payload, deadline.UnixMilli(), id, time.Until(deadline), ucanToken)
+	return resp, true, err
+}
+
+// dialAndOpenStream dials station at host and port within dialCtx, pins its
+// identity, and opens a stream there under streamCtx. sent reports whether
+// the stream's opening frame may have gone out; until then nothing reached
+// the station. The caller owns the returned session.
+func dialAndOpenStream(dialCtx, streamCtx context.Context, host string, port uint16, station []byte, id identity.KeyPair, procedure string, realm []byte, mode frame.StreamMode, args cbor.Value, deadlineMs int64) (target *connection.Session, h *stream.Handle, sent bool, err error) {
+	target, err = dialAndVerify(dialCtx, host, port, station, id)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	h, err = stream.Open(streamCtx, target, procedure, realm, mode, args, deadlineMs, id)
+	if err != nil {
+		_ = target.Close("normal", nil, id)
+		return nil, nil, true, fmt.Errorf("directdial: open stream: %w", err)
+	}
+	return target, h, true, nil
+}
+
+// dialAndFetch dials node at host and port within dialCtx, pins its
+// identity, and fetches mcid there under fetchCtx. content.Get verifies what
+// it receives against mcid.
+func dialAndFetch(dialCtx, fetchCtx context.Context, host string, port uint16, node []byte, id identity.KeyPair, mcid manifest.Mcid) ([]byte, error) {
+	target, err := dialAndVerify(dialCtx, host, port, node, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = target.Close("normal", nil, id) }()
+	return content.Get(fetchCtx, target, mcid, id)
 }
 
 // OpenStreamDirect resolves procedure's provider via direct-dial (through
@@ -465,16 +490,10 @@ func OpenStreamDirect(ctx context.Context, resolveVia *connection.Session, id id
 	if err != nil {
 		return nil, nil, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
 	}
-	target, err := dialAndVerify(ctx, host, port, station, id, timeout)
-	if err != nil {
-		return nil, nil, err
-	}
-	h, err := stream.Open(ctx, target, procedure, realm, mode, args, deadlineMs, id)
-	if err != nil {
-		_ = target.Close("normal", nil, id)
-		return nil, nil, fmt.Errorf("directdial: open stream: %w", err)
-	}
-	return target, h, nil
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	target, h, _, err := openAt(dialCtx, ctx, host, port, station, id, procedure, realm, mode, args, deadlineMs)
+	return target, h, err
 }
 
 // OpenStreamDirectWithCertChain is OpenStreamDirect, resolved via
@@ -486,16 +505,10 @@ func OpenStreamDirectWithCertChain(ctx context.Context, resolveVia *connection.S
 	if err != nil {
 		return nil, nil, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
 	}
-	target, err := dialAndVerify(ctx, host, port, station, id, timeout)
-	if err != nil {
-		return nil, nil, err
-	}
-	h, err := stream.Open(ctx, target, procedure, realm, mode, args, deadlineMs, id)
-	if err != nil {
-		_ = target.Close("normal", nil, id)
-		return nil, nil, fmt.Errorf("directdial: open stream: %w", err)
-	}
-	return target, h, nil
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	target, h, _, err := openAt(dialCtx, ctx, host, port, station, id, procedure, realm, mode, args, deadlineMs)
+	return target, h, err
 }
 
 // PutDirect stores data at a KNOWN station directly, in one hop, instead of
@@ -521,7 +534,9 @@ func PutDirect(ctx context.Context, resolveVia *connection.Session, id identity.
 	if err != nil {
 		return manifest.Mcid{}, fmt.Errorf("directdial: resolve station %x: %w", station, err)
 	}
-	target, err := dialAndVerify(ctx, host, port, resolved, id, timeout)
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	target, err := dialAndVerify(dialCtx, host, port, resolved, id)
 	if err != nil {
 		return manifest.Mcid{}, err
 	}
@@ -550,7 +565,7 @@ func PutDirect(ctx context.Context, resolveVia *connection.Session, id identity.
 // itself has no such limitation — resolving and fetching FROM an
 // already-announced provider is a perfectly ordinary leaf operation.
 func GetDirect(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, mcid manifest.Mcid, timeout time.Duration) ([]byte, error) {
-	recs, err := dht.FindRecords(resolveVia, id, dht.ContentKey(mcid[:]))
+	recs, err := findRecords(resolveVia, id, dht.ContentKey(mcid[:]), defaultLookupTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("directdial: find content providers: %w", err)
 	}
@@ -562,12 +577,9 @@ func GetDirect(ctx context.Context, resolveVia *connection.Session, id identity.
 	if err != nil {
 		return nil, fmt.Errorf("directdial: content provider endpoint %q: %w", adv.Endpoint, err)
 	}
-	target, err := dialAndVerify(ctx, host, port, adv.AnnouncerNode, id, timeout)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = target.Close("normal", nil, id) }()
-	return content.Get(ctx, target, mcid, id)
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return fetchAt(dialCtx, ctx, host, port, adv.AnnouncerNode, id, mcid)
 }
 
 // ErrContentNotAnnounced means mcid has no live, verifiable
