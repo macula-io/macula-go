@@ -280,6 +280,91 @@ func TestLiveDirectDialServeRoundTrip(t *testing.T) {
 	}
 }
 
+// TestLiveResolverSessionStillConnectedAfterADirectCall proves a direct call
+// to a provider on the resolver's own station runs on the resolver's session.
+// Dialling that station again under the same identity would make the station
+// close the resolver's connection, since it keeps one connection per identity.
+func TestLiveResolverSessionStillConnectedAfterADirectCall(t *testing.T) {
+	if os.Getenv("MACULA_LIVE_TEST") == "" {
+		t.Skip("set MACULA_LIVE_TEST=1 to run against the live demo fleet")
+	}
+	host := os.Getenv("MACULA_LIVE_HOST")
+	if host == "" {
+		host = "station-de-falkenstein.macula.io"
+	}
+	const port = 4433
+	const procedure = "directdial_live_test.resolver_session_reuse_v1"
+	realm := make([]byte, 32)
+
+	providerID, err := identity.GenerateWithPuzzle(identity.DefaultPuzzleDifficulty)
+	if err != nil {
+		t.Fatalf("identity.GenerateWithPuzzle (provider): %v", err)
+	}
+	callerID, err := identity.GenerateWithPuzzle(identity.DefaultPuzzleDifficulty)
+	if err != nil {
+		t.Fatalf("identity.GenerateWithPuzzle (caller): %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	provider, err := connection.Connect(ctx, host, port, transport.WebPKI{}, providerID)
+	if err != nil {
+		t.Fatalf("Connect (provider session) to %s:%d: %v", host, port, err)
+	}
+	defer func() { _ = provider.Close("normal", nil, providerID) }()
+	resolver, err := connection.Connect(ctx, host, port, transport.WebPKI{}, callerID)
+	if err != nil {
+		t.Fatalf("Connect (resolver session) to %s:%d: %v", host, port, err)
+	}
+	defer func() { _ = resolver.Close("normal", nil, callerID) }()
+
+	if !bytesEqual(provider.Station.NodeID, resolver.Station.NodeID) {
+		t.Fatalf("the provider reached station %x and the resolver station %x through %s: "+
+			"this test needs both on one station", provider.Station.NodeID, resolver.Station.NodeID, host)
+	}
+
+	if err := AdvertiseDirect(provider, providerID, realm, procedure, time.Hour); err != nil {
+		t.Fatalf("AdvertiseDirect: %v", err)
+	}
+	served := make(chan error, 1)
+	go func() {
+		lookup := func(_ []byte, proc string) (connection.CallHandler, bool) {
+			if proc != procedure {
+				return nil, false
+			}
+			return func(payload cbor.Value) (cbor.Value, error) {
+				return cbor.Map([]cbor.MapEntry{{Key: cbor.Text("echo"), Val: payload}}), nil
+			}, true
+		}
+		served <- provider.ServeOneCall(lookup, providerID, 20*time.Second)
+	}()
+
+	resp, err := Call(ctx, resolver, callerID, realm, procedure, cbor.Text("hello on the resolver's session"), 15*time.Second)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if got, ok := resp.Payload.Get("echo"); !ok {
+		t.Fatalf("reply payload missing echo field: %+v", resp.Payload)
+	} else if txt, _ := got.AsText(); txt != "hello on the resolver's session" {
+		t.Fatalf("echo = %+v, want the text sent", got)
+	}
+	if serveErr := <-served; serveErr != nil {
+		t.Fatalf("ServeOneCall: %v", serveErr)
+	}
+
+	// A second connection under the caller's identity would have the station
+	// close the resolver's shortly after it arrived, so wait before checking.
+	select {
+	case <-resolver.Done():
+		t.Fatalf("the resolver's session ended after the direct call: %v", resolver.Err())
+	case <-time.After(2 * time.Second):
+	}
+	if _, err := dht.FindRecordsTimeout(resolver, callerID, dht.ProcedureKey(dht.DiscoveryURI(realm, procedure)), 5*time.Second); err != nil {
+		t.Fatalf("a DHT lookup on the resolver's session after the direct call: %v", err)
+	}
+}
+
 // TestLiveDirectDialUCANGatedRoundTrip proves CallWithUCAN actually reaches
 // a UCAN-gated procedure that plain Call cannot -- the gap this function
 // closes (PLAN_CLOSE_SERVICE_AUTH_GAPS.md Phase 0, macula-io/macula-architecture):

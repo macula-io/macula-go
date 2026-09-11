@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1056,5 +1057,176 @@ func TestADialedSessionIsClosedAfterTheRequestEvenWhenItFails(t *testing.T) {
 	}
 	if n := ss.released("a.test"); n != 1 {
 		t.Fatalf("releases of the dialled session = %d, want 1", n)
+	}
+}
+
+// installCallOn answers each CALL on a session with answer, recording the host
+// of each session called on.
+func installCallOn(t *testing.T, ss *stationSessions, v *visits, answer func(s *connection.Session, host string) (frame.CallResponse, error)) {
+	t.Helper()
+	old := callOn
+	callOn = func(s *connection.Session, _ time.Time, _ identity.KeyPair, _ string, _ []byte, _ cbor.Value, _ []byte) (frame.CallResponse, error) {
+		host := ss.host(s)
+		v.add(host)
+		return answer(s, host)
+	}
+	t.Cleanup(func() { callOn = old })
+}
+
+// errSessionEndedNotSent is what a call returns on a session that ended before
+// its CALL was written.
+var errSessionEndedNotSent = fmt.Errorf("%w: %w", connection.ErrSessionEnded, connection.ErrNotSent)
+
+func answeredOK(t *testing.T, resp frame.CallResponse, err error) {
+	t.Helper()
+	if txt, _ := resp.Payload.AsText(); err != nil || txt != "ok" {
+		t.Fatalf("Call = (%v, %v), want the ok answer", resp.Payload, err)
+	}
+}
+
+// A session this process already holds to a provider's station carries a
+// direct call: no endpoint lookup, no dial, and the hold is given back after.
+func TestCallReusesAnOpenSessionToTheProviderStation(t *testing.T) {
+	a := newStation(t, "a.test")
+	f := newFakeDHT()
+	f.replies[procedureKey()] = [][]dht.Record{{advertisement(t, a, false)}}
+	install(t, f)
+	ss := newStationSessions()
+	installReuse(t, ss, a)
+	dials := &visits{}
+	installDial(t, dials, func(string) (held, error) { return nil, errUnreachable })
+	installCallOn(t, ss, &visits{}, func(*connection.Session, string) (frame.CallResponse, error) { return okResponse, nil })
+
+	resp, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 2*time.Second)
+	answeredOK(t, resp, err)
+	if got := dials.seen(); len(got) != 0 {
+		t.Fatalf("dials = %v, want none", got)
+	}
+	if n := f.endpointLookups(a); n != 0 {
+		t.Fatalf("endpoint lookups for a.test = %d, want none", n)
+	}
+	if n := ss.released("a.test"); n != 1 {
+		t.Fatalf("releases of the reused session = %d, want 1", n)
+	}
+}
+
+// A reused session that ended before the CALL was written leaves the open set,
+// and the next try dials the station.
+func TestADirectCallWhoseReusedSessionHasEndedDialsTheStationFresh(t *testing.T) {
+	a := newStation(t, "a.test")
+	f := newFakeDHT()
+	f.replies[procedureKey()] = [][]dht.Record{{advertisement(t, a, false)}}
+	f.setEndpoint(a, endpointRecord(t, a))
+	install(t, f)
+	reused := fakeHeld{session: &connection.Session{}, releases: &atomic.Int32{}}
+	dialed := fakeHeld{session: &connection.Session{}, releases: &atomic.Int32{}}
+	var offered atomic.Bool
+	oldReuse := reuse
+	reuse = func(_ identity.KeyPair, node []byte) (held, bool) {
+		if bytesEqual(node, a.id.NodeID()) && offered.CompareAndSwap(false, true) {
+			return reused, true
+		}
+		return nil, false
+	}
+	t.Cleanup(func() { reuse = oldReuse })
+	dials := &visits{}
+	installDial(t, dials, func(string) (held, error) { return dialed, nil })
+	oldCallOn := callOn
+	callOn = func(s *connection.Session, _ time.Time, _ identity.KeyPair, _ string, _ []byte, _ cbor.Value, _ []byte) (frame.CallResponse, error) {
+		if s == reused.session {
+			return frame.CallResponse{}, errSessionEndedNotSent
+		}
+		return okResponse, nil
+	}
+	t.Cleanup(func() { callOn = oldCallOn })
+
+	resp, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 2*time.Second)
+	answeredOK(t, resp, err)
+	if !offered.Load() {
+		t.Fatal("the open session to a.test was never tried")
+	}
+	if got := dials.seen(); !equalHosts(got, "a.test") {
+		t.Fatalf("dials = %v, want [a.test]", got)
+	}
+	if r, d := reused.releases.Load(), dialed.releases.Load(); r != 1 || d != 1 {
+		t.Fatalf("releases = reused %d, dialed %d, want 1 each", r, d)
+	}
+}
+
+func TestADirectCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherCandidate(t *testing.T) {
+	a, b := newStation(t, "a.test"), newStation(t, "b.test")
+	f := newFakeDHT()
+	f.replies[procedureKey()] = [][]dht.Record{{advertisement(t, a, false), advertisement(t, b, false)}}
+	f.setEndpoint(a, endpointRecord(t, a))
+	f.setEndpoint(b, endpointRecord(t, b))
+	install(t, f)
+	ss := newStationSessions()
+	installDial(t, &visits{}, func(host string) (held, error) { return ss.held(host), nil })
+	calls := &visits{}
+	timedOut := fmt.Errorf("%w waiting for a response", connection.ErrCallTimeout)
+	installCallOn(t, ss, calls, func(_ *connection.Session, host string) (frame.CallResponse, error) {
+		if host == "a.test" {
+			return frame.CallResponse{}, timedOut
+		}
+		return okResponse, nil
+	})
+
+	_, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 2*time.Second)
+	if !errors.Is(err, connection.ErrCallTimeout) || errors.Is(err, connection.ErrNotSent) {
+		t.Fatalf("Call error = %v, want a.test's timeout without ErrNotSent", err)
+	}
+	if got := calls.seen(); !equalHosts(got, "a.test") {
+		t.Fatalf("calls = %v, want [a.test]", got)
+	}
+}
+
+func TestADirectCallThatTimedOutWaitingForTheWriteLockMayTryTheNextCandidate(t *testing.T) {
+	a, b := newStation(t, "a.test"), newStation(t, "b.test")
+	f := newFakeDHT()
+	f.replies[procedureKey()] = [][]dht.Record{{advertisement(t, a, false), advertisement(t, b, false)}}
+	f.setEndpoint(a, endpointRecord(t, a))
+	f.setEndpoint(b, endpointRecord(t, b))
+	install(t, f)
+	ss := newStationSessions()
+	installDial(t, &visits{}, func(host string) (held, error) { return ss.held(host), nil })
+	calls := &visits{}
+	notSent := fmt.Errorf("%w before its CALL could be written: %w", connection.ErrCallTimeout, connection.ErrNotSent)
+	installCallOn(t, ss, calls, func(_ *connection.Session, host string) (frame.CallResponse, error) {
+		if host == "a.test" {
+			return frame.CallResponse{}, notSent
+		}
+		return okResponse, nil
+	})
+
+	resp, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 2*time.Second)
+	answeredOK(t, resp, err)
+	if got := calls.seen(); !equalHosts(got, "a.test", "b.test") {
+		t.Fatalf("calls = %v, want [a.test b.test]", got)
+	}
+}
+
+// A call that was not sent is not remembered as the candidate's failure, so
+// the next pass tries the same station again.
+func TestADirectCallThatWasNotSentIsTriedAgainOnTheNextPass(t *testing.T) {
+	a := newStation(t, "a.test")
+	f := newFakeDHT()
+	f.replies[procedureKey()] = [][]dht.Record{{advertisement(t, a, false)}}
+	f.setEndpoint(a, endpointRecord(t, a))
+	install(t, f)
+	ss := newStationSessions()
+	dials := &visits{}
+	installDial(t, dials, func(host string) (held, error) { return ss.held(host), nil })
+	var attempts atomic.Int32
+	installCallOn(t, ss, &visits{}, func(*connection.Session, string) (frame.CallResponse, error) {
+		if attempts.Add(1) == 1 {
+			return frame.CallResponse{}, errSessionEndedNotSent
+		}
+		return okResponse, nil
+	})
+
+	resp, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 2*time.Second)
+	answeredOK(t, resp, err)
+	if got := dials.seen(); !equalHosts(got, "a.test", "a.test") {
+		t.Fatalf("dials = %v, want a.test twice", got)
 	}
 }

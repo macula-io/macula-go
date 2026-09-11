@@ -20,12 +20,14 @@
 // returns them. A candidate whose station endpoint can't be resolved, whose
 // dial fails, or whose dialed identity doesn't match is passed over for the
 // next one, but only before the request is sent: once a CALL or a stream's
-// opening frame may have gone out, its outcome is returned as it is. A
+// opening frame may have gone out, its outcome is returned as it is. A CALL
+// that failed with connection.ErrNotSent never went out. A
 // content fetch is verified against its MCID, so a failed fetch also moves on
 // to the next provider. When no candidate qualifies, or every one failed
 // before sending, resolution asks the DHT again after a pause that doubles
 // from 100 ms to at most 1 s, and tries a candidate that already failed again
-// only when its advertisement or endpoint record has changed. One deadline
+// only when its advertisement or endpoint record has changed, or when its
+// CALL was not sent. One deadline
 // bounds all of it: the lookups, each candidate's endpoint lookup and dial
 // (within a share of the time that remains), and the request.
 //
@@ -85,6 +87,7 @@ var (
 	findRecords = dht.FindRecordsTimeout
 	findRecord  = dht.FindRecordTimeout
 	callAt      = dialAndCall
+	callOn      = callSession
 	reuse       = acquire
 	dial        = dialLeased
 	openOn      = stream.Open
@@ -241,8 +244,11 @@ func ResolveStationEndpoint(ctx context.Context, session *connection.Session, id
 }
 
 // Call resolves procedure's provider via direct-dial (through resolveVia,
-// which is used only to query the DHT) and calls it there, in one hop, in
-// a SEPARATE connection from resolveVia. The provider must have advertised
+// which is used only to query the DHT) and calls it there, in one hop: on a
+// session this process already holds to the provider's station under id,
+// such as resolveVia itself, or else on a connection dialled for the call.
+// A station keeps one connection per identity, so dialling one this process
+// already holds would close that session. The provider must have advertised
 // via AdvertiseDirect (or the Erlang macula_response:advertise_direct/6,7)
 // — a plain advertise publishes no discoverable record and Resolve will
 // return ErrProcedureNotAdvertised.
@@ -252,7 +258,12 @@ func ResolveStationEndpoint(ctx context.Context, session *connection.Session, id
 // doc's "Trust model". After the dial, the freshly connected session's own
 // signature-verified HELLO identity is checked against the exact pubkey
 // the signed DHT chain resolved; a mismatch is a trust violation, so the
-// CALL is never sent there and the next candidate is tried.
+// CALL is never sent there and the next candidate is tried. A session already
+// held is found by the station identity its own HELLO proved.
+//
+// A CALL that failed with connection.ErrNotSent never went out, so the next
+// candidate is tried; any other outcome, a timeout included, is returned as
+// it is, since the CALL may have reached the provider.
 //
 // timeout bounds resolution, each candidate's endpoint lookup and dial, and
 // the CALL itself, which carries the resulting deadline.
@@ -538,7 +549,9 @@ type failure struct {
 
 // reach resolves adv's station endpoint within share and hands it to work,
 // unless adv already failed on the same advertisement and endpoint records.
-// next reports that nothing was sent, so another candidate may be tried.
+// next reports that nothing was sent, so another candidate may be tried. A
+// request that failed with connection.ErrNotSent is not remembered as adv's
+// failure: the station was reached, so the next pass tries it again.
 func (seen attempts) reach(share context.Context, session *connection.Session, id identity.KeyPair, adv advertised, work func(endpoint) (sent bool, err error)) (next bool, err error) {
 	key := string(adv.provider)
 	prior, failedBefore := seen[key]
@@ -557,7 +570,7 @@ func (seen attempts) reach(share context.Context, session *connection.Session, i
 		return true, err
 	}
 	sent, err := work(ep)
-	if !sent {
+	if !sent && !errors.Is(err, connection.ErrNotSent) {
 		seen[key] = failure{record: adv.version, endpoint: ep.version, err: err}
 	}
 	return !sent, err
@@ -623,13 +636,23 @@ func endpointOf(rec dht.Record, station []byte) (string, uint16, error) {
 
 // call sends one CALL for procedure to the first candidate from find that
 // takes it. timeout bounds resolution, each candidate's endpoint lookup and
-// dial, and the CALL, which carries the resulting deadline.
+// dial, and the CALL, which carries the resulting deadline. At a candidate
+// station this process already holds a session to under id, the CALL goes
+// out on that session with no endpoint lookup or dial. On either session, a
+// CALL that was not sent (connection.ErrNotSent) lets the next candidate be
+// tried; any other outcome stands, since the CALL may have reached the
+// provider.
 func call(ctx context.Context, find func(context.Context) ([]advertised, error), resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, payload cbor.Value, timeout time.Duration, ucanToken []byte) (frame.CallResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 	seen := attempts{}
 	resp, err := eachCandidate(ctx, find, func(share context.Context, adv advertised) (frame.CallResponse, bool, error) {
+		if h, ok := reuse(id, adv.station); ok {
+			resp, err := callOn(h.Session(), deadline, id, procedure, realm, payload, ucanToken)
+			h.Release()
+			return resp, errors.Is(err, connection.ErrNotSent), err
+		}
 		var resp frame.CallResponse
 		next, err := seen.reach(share, resolveVia, id, adv, func(ep endpoint) (bool, error) {
 			r, sent, callErr := callAt(share, deadline, ep.host, ep.port, adv.station, id, procedure, realm, payload, ucanToken)
@@ -740,21 +763,26 @@ func dialLeased(ctx context.Context, host string, port uint16, station []byte, i
 
 // dialAndCall dials station at host and port within dialCtx, pins its
 // identity, and sends one CALL there with deadline as its deadline, carrying
-// ucanToken when it is not nil. sent reports whether the CALL went out;
-// until then nothing reached the station.
+// ucanToken when it is not nil. sent reports whether the CALL may have gone
+// out: a dial that failed, or a call that failed with connection.ErrNotSent,
+// reached no provider.
 func dialAndCall(dialCtx context.Context, deadline time.Time, host string, port uint16, station []byte, id identity.KeyPair, procedure string, realm []byte, payload cbor.Value, ucanToken []byte) (resp frame.CallResponse, sent bool, err error) {
 	h, err := dial(dialCtx, host, port, station, id)
 	if err != nil {
 		return frame.CallResponse{}, false, err
 	}
 	defer h.Release()
-	target := h.Session()
+	resp, err = callOn(h.Session(), deadline, id, procedure, realm, payload, ucanToken)
+	return resp, !errors.Is(err, connection.ErrNotSent), err
+}
+
+// callSession sends one CALL for procedure on s with deadline as its deadline,
+// carrying ucanToken when it is not nil.
+func callSession(s *connection.Session, deadline time.Time, id identity.KeyPair, procedure string, realm []byte, payload cbor.Value, ucanToken []byte) (frame.CallResponse, error) {
 	if ucanToken == nil {
-		resp, err = target.Call(procedure, realm, payload, deadline.UnixMilli(), id, time.Until(deadline))
-		return resp, true, err
+		return s.Call(procedure, realm, payload, deadline.UnixMilli(), id, time.Until(deadline))
 	}
-	resp, err = target.CallWithUCAN(procedure, realm, payload, deadline.UnixMilli(), id, time.Until(deadline), ucanToken)
-	return resp, true, err
+	return s.CallWithUCAN(procedure, realm, payload, deadline.UnixMilli(), id, time.Until(deadline), ucanToken)
 }
 
 // OpenStreamDirect resolves procedure's provider via direct-dial (through
