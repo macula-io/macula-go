@@ -106,27 +106,43 @@ func (s *Session) ServeOneCallGated(lookup CallLookup, policy PolicyLookup, id i
 // on_inbound_call/3: such a CALL never reaches a policy or a handler, so the
 // caller a policy checks is the one that signed.
 func replyToFrame(s *Session, value cbor.Value, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) (cbor.Value, bool) {
-	callInfo, ok := verifiedCall(value)
-	if !ok {
+	if frameType(value) != "call" {
+		return cbor.Value{}, false
+	}
+	callInfo, reason := verifiedCall(value)
+	if reason != "" {
 		return cbor.Value{}, false
 	}
 	return buildCallReply(s, callInfo, lookup, policy, id), true
 }
 
-// verifiedCall parses value as a CALL whose signature verifies against the
-// caller it names.
-func verifiedCall(value cbor.Value) (frame.CallInfo, bool) {
-	if frameType(value) != "call" {
-		return frame.CallInfo{}, false
+// verifiedCall parses value, a "call" frame, as a CALL whose signature
+// verifies against the caller it names, or says why it can't: its signature
+// first, then its fields.
+func verifiedCall(value cbor.Value) (frame.CallInfo, dropReason) {
+	if reason := signatureReason(value, "caller"); reason != "" {
+		return frame.CallInfo{}, reason
 	}
 	callInfo, err := frame.ParseCall(value)
 	if err != nil {
-		return frame.CallInfo{}, false
+		return frame.CallInfo{}, reasonMalformed
 	}
-	if frame.Verify(value, callInfo.Caller) != nil {
-		return frame.CallInfo{}, false
+	return callInfo, ""
+}
+
+// signatureReason says why value's signature doesn't verify against the key
+// in its signerField, or returns "" when it does.
+func signatureReason(value cbor.Value, signerField string) dropReason {
+	_, signed := value.Get("signature")
+	signerValue, named := value.Get(signerField)
+	if !signed || !named {
+		return reasonUnsigned
 	}
-	return callInfo, true
+	signer, ok := signerValue.AsBytes()
+	if !ok || len(signer) != 32 || frame.Verify(value, signer) != nil {
+		return reasonInvalidSignature
+	}
+	return ""
 }
 
 // buildCallReply fires rpc.received_v1/rpc.replied_v1 around dispatch,

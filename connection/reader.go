@@ -74,7 +74,7 @@ func (e *GoodbyeError) Error() string {
 
 // router is a session's single reader's state: calls waiting for replies,
 // subscriptions, inbound CALLs waiting for a serve loop, frames handed to the
-// writer, and counts of frames nothing routes.
+// writer, counts of frames nothing routes, and its drop warning intervals.
 type router struct {
 	mu       sync.Mutex
 	topicMu  sync.Mutex // held across a topic count change and its SUBSCRIBE or UNSUBSCRIBE write
@@ -87,6 +87,12 @@ type router struct {
 	handOffs chan cbor.Value
 	unrouted map[string]*unroutedCount
 	logger   *slog.Logger
+	// drops holds each kind's drop warning interval, dropInterval sets how
+	// long one lasts, and afterDropInterval ends one: time.AfterFunc unless a
+	// test stands in for it.
+	drops             map[dropKind]*dropWindow
+	dropInterval      time.Duration
+	afterDropInterval func(time.Duration, func())
 }
 
 type topicKey struct{ realm, topic string }
@@ -154,11 +160,14 @@ func (s *Session) route(v cbor.Value) (ended bool) {
 	return false
 }
 
+// deliverReply hands a RESULT or ERROR to the call waiting for it. One that
+// doesn't parse, or that no call is waiting for, is counted as unrouted and
+// warned about as a dropped reply.
 func (s *Session) deliverReply(v cbor.Value, t string) {
 	callID, ok := frame.FrameCallID(v)
 	resp, err := frame.ParseCallResponse(v)
 	if !ok || err != nil {
-		s.countUnrouted(t)
+		s.dropReply(t, callID, reasonMalformed)
 		return
 	}
 	s.rt.mu.Lock()
@@ -166,7 +175,7 @@ func (s *Session) deliverReply(v cbor.Value, t string) {
 	delete(s.rt.pending, string(callID))
 	s.rt.mu.Unlock()
 	if !found {
-		s.countUnrouted(t)
+		s.dropReply(t, callID, reasonUnknownCallID)
 		return
 	}
 	waiter <- resp
@@ -219,10 +228,12 @@ func (s *Session) untrackTopic(sub *Subscription) bool {
 }
 
 // queueCall queues a verified inbound CALL for a serve loop. A CALL that
-// doesn't fit is answered with temporary_relay_failure through the writer.
+// doesn't verify is dropped with a drop warning, and one that doesn't fit is
+// answered with temporary_relay_failure through the writer.
 func (s *Session) queueCall(v cbor.Value) {
-	info, ok := verifiedCall(v)
-	if !ok {
+	info, reason := verifiedCall(v)
+	if reason != "" {
+		s.warnDrop(dropCall, reason, procedureDetail(v))
 		return
 	}
 	select {
@@ -356,9 +367,10 @@ func (s *Session) closeConnection(reason string) error {
 	return s.conn.CloseWithError(0, reason)
 }
 
-// SetLogger sets where the session logs: the frames nothing routes, at most
-// one line per frame type per minute, and its end, once, with the reason. A
-// session has no logger until one is set.
+// SetLogger sets where the session logs: the inbound CALLs and replies it
+// drops, as drop warnings (see SetDropWarningInterval), the other frames
+// nothing routes, at most one line per frame type per minute, and its end,
+// once, with the reason. A session has no logger until one is set.
 func (s *Session) SetLogger(logger *slog.Logger) {
 	s.rt.mu.Lock()
 	defer s.rt.mu.Unlock()
@@ -366,7 +378,8 @@ func (s *Session) SetLogger(logger *slog.Logger) {
 }
 
 // Unrouted returns how many inbound frames of each type nothing routed: a type
-// the session doesn't handle, or a RESULT or ERROR for a call no longer waiting.
+// the session doesn't handle, or a RESULT or ERROR that doesn't parse or has no
+// call waiting for it.
 func (s *Session) Unrouted() map[string]uint64 {
 	s.rt.mu.Lock()
 	defer s.rt.mu.Unlock()
@@ -380,15 +393,7 @@ func (s *Session) Unrouted() map[string]uint64 {
 func (s *Session) countUnrouted(frameType string) {
 	now := time.Now()
 	s.rt.mu.Lock()
-	if s.rt.unrouted == nil {
-		s.rt.unrouted = map[string]*unroutedCount{}
-	}
-	c := s.rt.unrouted[frameType]
-	if c == nil {
-		c = &unroutedCount{}
-		s.rt.unrouted[frameType] = c
-	}
-	c.total++
+	c := s.unroutedLocked(frameType)
 	c.sinceLog++
 	logger := s.rt.logger
 	var dropped uint64
@@ -400,6 +405,30 @@ func (s *Session) countUnrouted(frameType string) {
 		logger.Warn(fmt.Sprintf("macula: dropped %d unrouted %s frame(s) in the last minute", dropped, frameType),
 			"station", hex.EncodeToString(s.Station.NodeID))
 	}
+}
+
+// dropReply counts a RESULT or ERROR nothing routed under its frame type, and
+// warns about it as a dropped reply rather than with the unrouted-frame line.
+func (s *Session) dropReply(frameType string, callID []byte, reason dropReason) {
+	s.rt.mu.Lock()
+	s.unroutedLocked(frameType)
+	s.rt.mu.Unlock()
+	s.warnDrop(dropReply, reason, callIDDetail(callID))
+}
+
+// unroutedLocked counts one more frame of frameType nothing routed and
+// returns its count. The caller holds s.rt.mu.
+func (s *Session) unroutedLocked(frameType string) *unroutedCount {
+	if s.rt.unrouted == nil {
+		s.rt.unrouted = map[string]*unroutedCount{}
+	}
+	c := s.rt.unrouted[frameType]
+	if c == nil {
+		c = &unroutedCount{}
+		s.rt.unrouted[frameType] = c
+	}
+	c.total++
+	return c
 }
 
 func frameType(v cbor.Value) string {
