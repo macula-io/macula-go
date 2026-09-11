@@ -219,14 +219,28 @@ func (f *fakeControl) awaitReplyTo(t *testing.T, call cbor.Value) frame.CallResp
 	return frame.CallResponse{}
 }
 
-// replyTo answers a CALL the session wrote with a RESULT carrying payload.
+// replyTo answers a CALL the session wrote with a RESULT carrying payload,
+// signed by the fake responder.
 func (f *fakeControl) replyTo(t *testing.T, call cbor.Value, payload cbor.Value) {
 	t.Helper()
 	info, err := frame.ParseCall(call)
 	if err != nil {
 		t.Fatalf("ParseCall: %v", err)
 	}
-	f.send(t, frame.Result(frame.NewResultSpec(info.CallID, payload, stationNode(9))))
+	responder := fakeResponder(t)
+	f.send(t, frame.Sign(frame.Result(frame.NewResultSpec(info.CallID, payload, responder.NodeID())), responder))
+}
+
+var fakeResponderIdentity = sync.OnceValues(identity.Generate)
+
+// fakeResponder is the identity the fake station's replies are signed by.
+func fakeResponder(t *testing.T) identity.KeyPair {
+	t.Helper()
+	id, err := fakeResponderIdentity()
+	if err != nil {
+		t.Fatalf("identity.Generate: %v", err)
+	}
+	return id
 }
 
 func frameTypeOf(v cbor.Value) string {

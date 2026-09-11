@@ -31,7 +31,8 @@ var (
 // reader routes it (RESULT and ERROR to the waiting LinkCall, EVENT to
 // every subscription whose topic matches), anything tried on an ended
 // session is not sent, and a write stalled past the send timeout ends the
-// session.
+// session. It checks no signatures: a frame a test pushes stands for one a
+// connection.Session has already verified.
 
 type fakeSession struct {
 	recv chan cbor.Value

@@ -183,19 +183,20 @@ func TestAnInboundCallIsDroppedForTheFirstThingWrongWithIt(t *testing.T) {
 	}
 }
 
-// A RESULT that doesn't parse or that nothing waits for is counted as
-// unrouted and warned about as a dropped reply carrying its call_id's first
-// 4 bytes, not with the unrouted-frame line.
+// A signed RESULT that doesn't parse, or that nothing waits for, is counted
+// as unrouted and warned about as a dropped reply carrying its call_id's
+// first 4 bytes, not with the unrouted-frame line.
 func TestAReplyNothingWaitsForIsWarnedAboutAsADroppedReply(t *testing.T) {
 	s, fc, id := readingSession(t)
 	logged := &lockedBuffer{}
 	s.SetLogger(slog.New(slog.NewTextHandler(logged, nil)))
 	intervals := captureDropIntervals(s)
 	unknown := append([]byte{0xde, 0xad, 0xbe, 0xef}, make([]byte, 12)...)
-	result := frame.Result(frame.NewResultSpec(unknown, cbor.Null(), stationNode(9)))
+	responder := fakeResponder(t)
+	result := frame.Result(frame.NewResultSpec(unknown, cbor.Null(), responder.NodeID()))
 
-	fc.send(t, result)
-	fc.send(t, withoutField(result, "payload"))
+	fc.send(t, frame.Sign(result, responder))
+	fc.send(t, frame.Sign(withoutField(result, "payload"), responder))
 	roundTrip(t, s, fc, id)
 	intervals.endAll()
 

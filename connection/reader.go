@@ -160,13 +160,20 @@ func (s *Session) route(v cbor.Value) (ended bool) {
 	return false
 }
 
-// deliverReply hands a RESULT or ERROR to the call waiting for it. One that
-// doesn't parse, or that no call is waiting for, is counted as unrouted and
-// warned about as a dropped reply.
+// deliverReply hands a RESULT or ERROR to the call waiting for it. Its
+// signature is checked first, against responded_by on a RESULT and
+// reported_by on an ERROR, as macula checks it: a reply that doesn't verify
+// is dropped and the call keeps waiting for the genuine one. A reply that
+// doesn't parse, or that no call is waiting for, is dropped too. Every
+// dropped reply is counted as unrouted and warned about as a dropped reply.
 func (s *Session) deliverReply(v cbor.Value, t string) {
-	callID, ok := frame.FrameCallID(v)
+	callID, hasCallID := frame.FrameCallID(v)
+	if reason := signatureReason(v, replySigner(t)); reason != "" {
+		s.dropReply(t, callID, reason)
+		return
+	}
 	resp, err := frame.ParseCallResponse(v)
-	if !ok || err != nil {
+	if !hasCallID || err != nil {
 		s.dropReply(t, callID, reasonMalformed)
 		return
 	}
@@ -405,6 +412,14 @@ func (s *Session) countUnrouted(frameType string) {
 		logger.Warn(fmt.Sprintf("macula: dropped %d unrouted %s frame(s) in the last minute", dropped, frameType),
 			"station", hex.EncodeToString(s.Station.NodeID))
 	}
+}
+
+// replySigner is the field naming who signed a reply of frame type t.
+func replySigner(t string) string {
+	if t == "error" {
+		return "reported_by"
+	}
+	return "responded_by"
 }
 
 // dropReply counts a RESULT or ERROR nothing routed under its frame type, and
