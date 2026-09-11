@@ -73,7 +73,9 @@ func (s *Session) ServeOneCall(lookup CallLookup, id identity.KeyPair, timeout t
 
 // ServeOneCallGated is ServeOneCall, additionally gating each inbound
 // CALL through policy BEFORE lookup runs — mirrors
-// macula_station_link.erl's handle_inbound_call/2 exactly: an open
+// macula_station_link.erl's on_inbound_call/3 and handle_inbound_call/2: a
+// CALL whose signature doesn't verify against its caller is ignored with no
+// reply, and of the rest, an open
 // policy (the default, ucan.Open) behaves identically to plain
 // ServeOneCall; a ucan.Required policy demands a CALL's UcanToken verify
 // against the required issuer, and refuses with BOLT#4 Unauthorized
@@ -111,8 +113,11 @@ func (s *Session) ServeOneCallGated(lookup CallLookup, policy PolicyLookup, id i
 }
 
 // replyToFrame builds the reply to an inbound frame and reports whether it
-// was a CALL to answer. A frame of another type, or a malformed "call"-typed
-// frame, gets no reply, and the serve loop keeps going.
+// was a CALL to answer. A frame of another type, a malformed "call"-typed
+// frame, or a CALL whose signature doesn't verify against the caller it
+// names gets no reply, and the serve loop keeps going. The last matches
+// macula_station_link.erl's on_inbound_call/3: such a CALL never reaches a
+// policy or a handler, so the caller a policy checks is the one that signed.
 func replyToFrame(s *Session, value cbor.Value, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) (cbor.Value, bool) {
 	ft, ok := value.Get("frame_type")
 	if !ok {
@@ -123,6 +128,9 @@ func replyToFrame(s *Session, value cbor.Value, lookup CallLookup, policy Policy
 	}
 	callInfo, err := frame.ParseCall(value)
 	if err != nil {
+		return cbor.Value{}, false
+	}
+	if frame.Verify(value, callInfo.Caller) != nil {
 		return cbor.Value{}, false
 	}
 	return buildCallReply(s, callInfo, lookup, policy, id), true
