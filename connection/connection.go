@@ -193,7 +193,9 @@ func (s *Session) OpenDedicatedStream(ctx context.Context) (*FrameStream, error)
 	if err != nil {
 		return nil, fmt.Errorf("connection: open dedicated stream: %w", err)
 	}
-	return newFrameStream(stream), nil
+	fs := newFrameStream(stream)
+	fs.session = s
+	return fs, nil
 }
 
 // AcceptDedicatedStream accepts the next dedicated stream the *peer*
@@ -212,7 +214,9 @@ func (s *Session) AcceptDedicatedStream(ctx context.Context) (*FrameStream, erro
 	if err != nil {
 		return nil, fmt.Errorf("connection: accept dedicated stream: %w", err)
 	}
-	return newFrameStream(stream), nil
+	fs := newFrameStream(stream)
+	fs.session = s
+	return fs, nil
 }
 
 // Call sends a signed CALL on the control stream and waits for the matching

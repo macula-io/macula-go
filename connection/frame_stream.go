@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -45,6 +46,9 @@ type FrameStream struct {
 	buf      []byte        // bytes read but not yet consumed by a decoded frame
 	gate     chan struct{} // holds a token while a frame is written; see sendFrame
 	gateInit sync.Once
+	// session is the session a dedicated stream was opened or accepted on, for
+	// its drop warnings; nil for the control stream.
+	session *Session
 }
 
 func newFrameStream(stream *quic.Stream) *FrameStream {
@@ -200,12 +204,12 @@ func (fs *FrameStream) RecvFrame(deadline time.Time) (cbor.Value, error) {
 // Call sends a signed CALL for procedure on this stream and waits for
 // the matching RESULT or ERROR, correlated by call_id.
 //
-// Known v1 limitation (matches the control stream's own): any frame
-// that arrives before the match is discarded, not queued or dispatched
-// elsewhere. Harmless on a dedicated stream (content transfer, streaming
-// RPC), since nothing else ever arrives there to discard; on the
-// control stream it means Call and Publish/Subscribe used concurrently
-// can race.
+// A RESULT or ERROR counts only when its signature verifies against its
+// responded_by or reported_by, it parses, and it carries this call's id; any
+// other reply is dropped, with a drop warning on the stream's session, and
+// the call keeps waiting. A frame of another type is passed over, which is
+// harmless on a dedicated stream (content transfer, streaming RPC), since
+// nothing else arrives there.
 func (fs *FrameStream) Call(procedure string, realm []byte, payload cbor.Value, deadlineMs int64, id identity.KeyPair, timeout time.Duration) (frame.CallResponse, error) {
 	return fs.callSpec(frame.NewCallSpec(nil, procedure, realm, payload, deadlineMs, id.NodeID()), id, timeout)
 }
@@ -242,17 +246,41 @@ func (fs *FrameStream) callSpec(spec frame.CallSpec, id identity.KeyPair, timeou
 		if err != nil {
 			return frame.CallResponse{}, err
 		}
-		gotID, ok := frame.FrameCallID(value)
-		if !ok || string(gotID) != string(callID) {
-			continue // not ours -- see this method's doc on the v1 limitation
+		if response, ok := fs.replyTo(value, callID); ok {
+			return response, nil
 		}
-		response, err := frame.ParseCallResponse(value)
-		if err != nil {
-			// Matching call_id but not a result/error shape: keep
-			// waiting rather than erroring, since nothing else in the
-			// protocol is expected to carry this call's id.
-			continue
-		}
-		return response, nil
+	}
+}
+
+// replyTo returns value as the reply to the call callID when it is one that
+// counts: a RESULT or ERROR whose signature verifies against its responded_by
+// or reported_by, that parses, and that carries callID, checked in that
+// order. Any other RESULT or ERROR is dropped with a drop warning, and a
+// frame of another type is passed over.
+func (fs *FrameStream) replyTo(value cbor.Value, callID []byte) (frame.CallResponse, bool) {
+	t := frameType(value)
+	if t != "result" && t != "error" {
+		return frame.CallResponse{}, false
+	}
+	gotID, hasID := frame.FrameCallID(value)
+	reason := signatureReason(value, replySigner(t))
+	response, err := frame.ParseCallResponse(value)
+	switch {
+	case reason != "":
+	case !hasID || err != nil:
+		reason = reasonMalformed
+	case string(gotID) != string(callID):
+		reason = reasonUnknownCallID
+	default:
+		return response, true
+	}
+	fs.warnDrop(dropReply, reason, callIDDetail(gotID))
+	return frame.CallResponse{}, false
+}
+
+// warnDrop warns about a drop on the session the stream belongs to, if any.
+func (fs *FrameStream) warnDrop(kind dropKind, reason dropReason, detail slog.Attr) {
+	if fs.session != nil {
+		fs.session.warnDrop(kind, reason, detail)
 	}
 }
