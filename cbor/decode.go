@@ -2,9 +2,20 @@ package cbor
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 )
+
+// MaxNestingDepth is how many list or map levels a decoded value may sit
+// below the top-level value, the same cap and count as macula's decoder.
+// Decoding is recursive and a frame can nest one level per byte, so the cap
+// is what bounds how deep decoding goes.
+const MaxNestingDepth = 128
+
+// ErrNestingTooDeep is a value nested more than MaxNestingDepth list or map
+// levels below the top-level value.
+var ErrNestingTooDeep = errors.New("cbor: decode: list or map nesting exceeds 128 levels")
 
 // Decode parses one complete CBOR value from the start of data, returning
 // the value and how many bytes it consumed. Panics are not used for
@@ -12,10 +23,15 @@ import (
 // this parses untrusted network data (mirrors deterministic.rs's own
 // panic-free-by-construction guarantee).
 func Decode(data []byte) (Value, int, error) {
-	return decodeOne(data)
+	return decodeOne(data, 0)
 }
 
-func decodeOne(data []byte) (Value, int, error) {
+// decodeOne decodes the value at the start of data, which sits depth list or
+// map levels below the top-level value.
+func decodeOne(data []byte, depth int) (Value, int, error) {
+	if depth > MaxNestingDepth {
+		return Value{}, 0, ErrNestingTooDeep
+	}
 	if len(data) < 1 {
 		return Value{}, 0, fmt.Errorf("cbor: decode: empty input")
 	}
@@ -73,7 +89,7 @@ func decodeOne(data []byte) (Value, int, error) {
 		pos := used
 		items := make([]Value, 0, preallocCap(count))
 		for i := uint64(0); i < count; i++ {
-			item, n, err := decodeOne(rest[pos:])
+			item, n, err := decodeOne(rest[pos:], depth+1)
 			if err != nil {
 				return Value{}, 0, fmt.Errorf("cbor: decode list item %d: %w", i, err)
 			}
@@ -106,12 +122,12 @@ func decodeOne(data []byte) (Value, int, error) {
 		entries := make([]MapEntry, 0, preallocCap(count))
 		indexOfKey := make(map[string]int, preallocCap(count))
 		for i := uint64(0); i < count; i++ {
-			key, kn, err := decodeOne(rest[pos:])
+			key, kn, err := decodeOne(rest[pos:], depth+1)
 			if err != nil {
 				return Value{}, 0, fmt.Errorf("cbor: decode map key %d: %w", i, err)
 			}
 			pos += kn
-			val, vn, err := decodeOne(rest[pos:])
+			val, vn, err := decodeOne(rest[pos:], depth+1)
 			if err != nil {
 				return Value{}, 0, fmt.Errorf("cbor: decode map value %d: %w", i, err)
 			}

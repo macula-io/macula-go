@@ -2,6 +2,7 @@ package cbor
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 	"time"
 )
@@ -257,5 +258,31 @@ func TestDecodeRejectsHugeClaimedCountWithoutPanicking(t *testing.T) {
 				t.Fatal("expected a decode error for an under-filled huge-count frame, got nil")
 			}
 		})
+	}
+}
+
+// nestedListPayload is depth one-element lists around a uint 0, one byte
+// per level.
+func nestedListPayload(depth int) []byte {
+	return append(bytes.Repeat([]byte{0x81}, depth), 0x00)
+}
+
+func TestDecodeAcceptsNestingAtTheDepthLimit(t *testing.T) {
+	if _, _, err := Decode(nestedListPayload(MaxNestingDepth)); err != nil {
+		t.Fatalf("Decode at %d levels: %v, want it decoded", MaxNestingDepth, err)
+	}
+}
+
+func TestDecodeRejectsNestingOnePastTheDepthLimit(t *testing.T) {
+	if _, _, err := Decode(nestedListPayload(MaxNestingDepth + 1)); !errors.Is(err, ErrNestingTooDeep) {
+		t.Fatalf("Decode at %d levels: %v, want ErrNestingTooDeep", MaxNestingDepth+1, err)
+	}
+}
+
+// A million levels is a 1 MB frame, well under the frame cap. A test process
+// that dies here instead of passing or failing means the cap has regressed.
+func TestDecodeRejectsExtremeNestingWithoutCrashing(t *testing.T) {
+	if _, _, err := Decode(nestedListPayload(1_000_000)); !errors.Is(err, ErrNestingTooDeep) {
+		t.Fatalf("Decode at a million levels: %v, want ErrNestingTooDeep", err)
 	}
 }
