@@ -52,13 +52,27 @@ func newFakeDHT() *fakeDHT {
 func (f *fakeDHT) findRecords(_ *connection.Session, _ identity.KeyPair, key [32]byte, _ time.Duration) ([]dht.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	asked := f.asked[key]
+	f.asked[key]++
 	replies := f.replies[key]
 	if len(replies) == 0 {
 		return nil, nil
 	}
-	i := min(f.asked[key], len(replies)-1)
-	f.asked[key]++
-	return replies[i], nil
+	return replies[min(asked, len(replies)-1)], nil
+}
+
+// lookups is how many times FindRecords was asked about key.
+func (f *fakeDHT) lookups(key [32]byte) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.asked[key]
+}
+
+// setEndpoint makes rec s's endpoint record from now on.
+func (f *fakeDHT) setEndpoint(s station, rec dht.Record) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.endpoint[dht.StationEndpointKey(s.id.NodeID())] = rec
 }
 
 func (f *fakeDHT) findRecord(_ *connection.Session, _ identity.KeyPair, key [32]byte, _ time.Duration) (dht.Record, error) {
@@ -599,5 +613,109 @@ func TestCandidateShareSplitsTheRemainingTime(t *testing.T) {
 		if share < c.atLeast || share > c.atMost {
 			t.Errorf("candidateShare(%v remaining, %d untried) = %v, want between %v and %v", c.remaining, c.untried, share, c.atLeast, c.atMost)
 		}
+	}
+}
+
+// A station that refuses at once is dialled once per version of its endpoint
+// record, not again on every pass over the DHT.
+func TestCallDialsARefusingStationOncePerEndpointVersion(t *testing.T) {
+	a := newStation(t, "a.test")
+	f := newFakeDHT()
+	f.replies[procedureKey()] = [][]dht.Record{{advertisement(t, a, false)}}
+	f.setEndpoint(a, endpointRecord(t, a))
+	install(t, f)
+	republished := endpointRecord(t, a)
+	time.AfterFunc(1500*time.Millisecond, func() { f.setEndpoint(a, republished) })
+	v := &visits{}
+	installCallAt(t, v, map[string]callAnswer{"a.test": {err: errUnreachable}})
+
+	_, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 3*time.Second)
+	if !errors.Is(err, errUnreachable) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Call error = %v, want the dial failure wrapped with context.DeadlineExceeded", err)
+	}
+	if got := v.seen(); !equalHosts(got, "a.test", "a.test") {
+		t.Fatalf("dials = %v, want two: one for each version of a.test's endpoint record", got)
+	}
+}
+
+// An advertisement that appears on a later pass is still tried, while the
+// station that already refused, with nothing changed, is not dialled again.
+func TestCallTriesAnAdvertisementThatAppearsOnALaterPass(t *testing.T) {
+	a, b := newStation(t, "a.test"), newStation(t, "b.test")
+	f := newFakeDHT()
+	adA := advertisement(t, a, false)
+	f.replies[procedureKey()] = [][]dht.Record{{adA}, {adA, advertisement(t, b, false)}}
+	f.setEndpoint(a, endpointRecord(t, a))
+	f.setEndpoint(b, endpointRecord(t, b))
+	install(t, f)
+	v := &visits{}
+	installCallAt(t, v, map[string]callAnswer{
+		"a.test": {err: errUnreachable},
+		"b.test": {resp: okResponse, sent: true},
+	})
+
+	if _, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 3*time.Second); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if got := v.seen(); !equalHosts(got, "a.test", "b.test") {
+		t.Fatalf("dials = %v, want [a.test b.test]", got)
+	}
+}
+
+// Passes over the DHT back off, doubling from 100 ms to at most 1 s.
+func TestResolutionBacksOffBetweenPasses(t *testing.T) {
+	f := newFakeDHT()
+	install(t, f)
+	installCallAt(t, &visits{}, nil)
+
+	_, _ = Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 3*time.Second)
+	// Pauses of 100, 200, 400, 800, 1000 ms put the lookups at about
+	// 0, 0.1, 0.3, 0.7, 1.5 and 2.5 s; a fixed 100 ms would make about 30.
+	if n := f.lookups(procedureKey()); n < 5 || n > 8 {
+		t.Fatalf("DHT lookups within a 3 s deadline = %d, want 5 to 8", n)
+	}
+}
+
+// A provider whose fetch fails is fetched from again only when its
+// announcement changes, not on every pass over the DHT.
+func TestGetDirectFetchesFromAFailingProviderOncePerAnnouncement(t *testing.T) {
+	a := newStation(t, "a.test")
+	mcid := testMcid()
+	f := newFakeDHT()
+	f.replies[dht.ContentKey(mcid[:])] = [][]dht.Record{{announcement(t, a, mcid)}}
+	install(t, f)
+	v := &visits{}
+	installFetchAt(t, v, map[string]fetchAnswer{"a.test": {err: errors.New("test: content failed verification")}})
+
+	if _, err := GetDirect(context.Background(), nil, mustIdentity(t), mcid, 2*time.Second); err == nil {
+		t.Fatal("GetDirect succeeded, want the fetch failure")
+	}
+	if got := v.seen(); !equalHosts(got, "a.test") {
+		t.Fatalf("fetches = %v, want one", got)
+	}
+}
+
+// A station whose endpoint record changes partway through the deadline is
+// reached at the new endpoint: the change is what makes it worth another dial.
+func TestCallPicksUpAnEndpointRecordThatChangesMidDeadline(t *testing.T) {
+	old := newStation(t, "a-old.test")
+	moved := station{id: old.id, host: "a.test"}
+	f := newFakeDHT()
+	f.replies[procedureKey()] = [][]dht.Record{{advertisement(t, old, false)}}
+	f.setEndpoint(old, endpointRecord(t, old))
+	install(t, f)
+	republished := endpointRecord(t, moved)
+	time.AfterFunc(500*time.Millisecond, func() { f.setEndpoint(moved, republished) })
+	v := &visits{}
+	installCallAt(t, v, map[string]callAnswer{
+		"a-old.test": {err: errUnreachable},
+		"a.test":     {resp: okResponse, sent: true},
+	})
+
+	if _, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 3*time.Second); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if got := v.seen(); !equalHosts(got, "a-old.test", "a.test") {
+		t.Fatalf("dials = %v, want [a-old.test a.test]", got)
 	}
 }
