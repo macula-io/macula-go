@@ -44,6 +44,52 @@ type fakeDHT struct {
 	endpoint map[[32]byte]dht.Record
 	// endpointAsked counts station_endpoint lookups by key.
 	endpointAsked map[[32]byte]int
+	// scripts and endpointScripts, when set for a key, answer its lookups
+	// with scripted steps in turn, the last one repeating.
+	scripts         map[[32]byte][]lookupStep
+	endpointScripts map[[32]byte][]lookupStep
+}
+
+// lookupStep is one scripted reply to a DHT lookup: records, a failure, or
+// silence that runs out the lookup's timeout.
+type lookupStep struct {
+	recs   []dht.Record
+	err    error
+	silent bool
+}
+
+var (
+	answeredNone = lookupStep{}
+	lookupLost   = lookupStep{err: errLookupLost}
+	notFound     = lookupStep{err: dht.ErrNotFound}
+	silence      = lookupStep{silent: true}
+	// errLookupTimedOut is what a silent lookup returns once its timeout runs out.
+	errLookupTimedOut = errors.New("test: lookup ran out its timeout")
+)
+
+// found is a lookup that answers with recs.
+func found(recs ...dht.Record) lookupStep { return lookupStep{recs: recs} }
+
+func (s lookupStep) reply(timeout time.Duration) ([]dht.Record, error) {
+	if s.silent {
+		time.Sleep(timeout)
+		return nil, errLookupTimedOut
+	}
+	return s.recs, s.err
+}
+
+// script makes key's FindRecords lookups answer with steps in turn.
+func (f *fakeDHT) script(key [32]byte, steps ...lookupStep) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.scripts[key] = steps
+}
+
+// scriptEndpoint makes st's station_endpoint lookups answer with steps in turn.
+func (f *fakeDHT) scriptEndpoint(st station, steps ...lookupStep) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.endpointScripts[dht.StationEndpointKey(st.id.NodeID())] = steps
 }
 
 // lookupFailure makes every FindRecords lookup of a key after the first
@@ -60,15 +106,21 @@ func newFakeDHT() *fakeDHT {
 		asked:    map[[32]byte]int{},
 		endpoint: map[[32]byte]dht.Record{},
 
-		endpointAsked: map[[32]byte]int{},
+		endpointAsked:   map[[32]byte]int{},
+		scripts:         map[[32]byte][]lookupStep{},
+		endpointScripts: map[[32]byte][]lookupStep{},
 	}
 }
 
-func (f *fakeDHT) findRecords(_ *connection.Session, _ identity.KeyPair, key [32]byte, _ time.Duration) ([]dht.Record, error) {
+func (f *fakeDHT) findRecords(_ *connection.Session, _ identity.KeyPair, key [32]byte, timeout time.Duration) ([]dht.Record, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	asked := f.asked[key]
 	f.asked[key]++
+	if steps, ok := f.scripts[key]; ok {
+		f.mu.Unlock()
+		return steps[min(asked, len(steps)-1)].reply(timeout)
+	}
+	defer f.mu.Unlock()
 	if failure, ok := f.failing[key]; ok && asked >= failure.after {
 		return nil, failure.err
 	}
@@ -93,10 +145,19 @@ func (f *fakeDHT) setEndpoint(s station, rec dht.Record) {
 	f.endpoint[dht.StationEndpointKey(s.id.NodeID())] = rec
 }
 
-func (f *fakeDHT) findRecord(_ *connection.Session, _ identity.KeyPair, key [32]byte, _ time.Duration) (dht.Record, error) {
+func (f *fakeDHT) findRecord(_ *connection.Session, _ identity.KeyPair, key [32]byte, timeout time.Duration) (dht.Record, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
+	asked := f.endpointAsked[key]
 	f.endpointAsked[key]++
+	if steps, ok := f.endpointScripts[key]; ok {
+		f.mu.Unlock()
+		recs, err := steps[min(asked, len(steps)-1)].reply(timeout)
+		if err != nil {
+			return dht.Record{}, err
+		}
+		return recs[0], nil
+	}
+	defer f.mu.Unlock()
 	rec, ok := f.endpoint[key]
 	if !ok {
 		return dht.Record{}, dht.ErrNotFound
@@ -1228,5 +1289,255 @@ func TestADirectCallThatWasNotSentIsTriedAgainOnTheNextPass(t *testing.T) {
 	answeredOK(t, resp, err)
 	if got := dials.seen(); !equalHosts(got, "a.test", "a.test") {
 		t.Fatalf("dials = %v, want a.test twice", got)
+	}
+}
+
+// -- What a request still unsettled at its deadline reports.
+
+// A lookup that answered decides the reason over later lookups that failed.
+func TestCallReportsNotAdvertisedWhenALookupAnsweredBeforeLaterOnesFailed(t *testing.T) {
+	f := newFakeDHT()
+	f.script(procedureKey(), answeredNone, lookupLost)
+	install(t, f)
+	installCallAt(t, &visits{}, nil)
+
+	_, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), time.Second)
+	if !errors.Is(err, ErrProcedureNotAdvertised) || errors.Is(err, errLookupLost) {
+		t.Fatalf("Call error = %v, want ErrProcedureNotAdvertised rather than the later failed lookup", err)
+	}
+}
+
+func TestGetDirectReportsNotAnnouncedWhenALookupAnsweredBeforeLaterOnesFailed(t *testing.T) {
+	mcid := testMcid()
+	f := newFakeDHT()
+	f.script(dht.ContentKey(mcid[:]), answeredNone, lookupLost)
+	install(t, f)
+	installFetchAt(t, &visits{}, nil)
+
+	_, err := GetDirect(context.Background(), nil, mustIdentity(t), mcid, time.Second)
+	if !errors.Is(err, ErrContentNotAnnounced) || errors.Is(err, errLookupLost) {
+		t.Fatalf("GetDirect error = %v, want ErrContentNotAnnounced rather than the later failed lookup", err)
+	}
+}
+
+// When every lookup failed, the lookup's own error is the reason.
+func TestCallReportsAFailedLookupAtItsDeadlineWhenNoCandidateWasTried(t *testing.T) {
+	f := newFakeDHT()
+	f.script(procedureKey(), lookupLost)
+	install(t, f)
+	installCallAt(t, &visits{}, nil)
+
+	_, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), time.Second)
+	if !errors.Is(err, errLookupLost) {
+		t.Fatalf("Call error = %v, want the failed lookup's error", err)
+	}
+}
+
+func TestGetDirectReportsAFailedLookupAtItsDeadlineWhenNoProviderWasTried(t *testing.T) {
+	mcid := testMcid()
+	f := newFakeDHT()
+	f.script(dht.ContentKey(mcid[:]), lookupLost)
+	install(t, f)
+	installFetchAt(t, &visits{}, nil)
+
+	_, err := GetDirect(context.Background(), nil, mustIdentity(t), mcid, time.Second)
+	if !errors.Is(err, errLookupLost) {
+		t.Fatalf("GetDirect error = %v, want the failed lookup's error", err)
+	}
+}
+
+// With no answer and no error before the deadline, the reason is a timeout.
+func TestCallReportsATimeoutWhenNoLookupWasAnsweredInTime(t *testing.T) {
+	f := newFakeDHT()
+	f.script(procedureKey(), silence)
+	install(t, f)
+	installCallAt(t, &visits{}, nil)
+
+	_, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 500*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errLookupTimedOut) {
+		t.Fatalf("Call error = %v, want only the deadline", err)
+	}
+}
+
+func TestGetDirectReportsATimeoutWhenNoLookupWasAnsweredInTime(t *testing.T) {
+	mcid := testMcid()
+	f := newFakeDHT()
+	f.script(dht.ContentKey(mcid[:]), silence)
+	install(t, f)
+	installFetchAt(t, &visits{}, nil)
+
+	_, err := GetDirect(context.Background(), nil, mustIdentity(t), mcid, 500*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errLookupTimedOut) {
+		t.Fatalf("GetDirect error = %v, want only the deadline", err)
+	}
+}
+
+// A lookup the deadline cuts off records nothing, so an earlier lookup's
+// error stands.
+func TestCallKeepsALookupErrorWhenALaterLookupIsCutOffByTheDeadline(t *testing.T) {
+	f := newFakeDHT()
+	f.script(procedureKey(), lookupLost, silence)
+	install(t, f)
+	installCallAt(t, &visits{}, nil)
+
+	_, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), time.Second)
+	if !errors.Is(err, errLookupLost) || errors.Is(err, errLookupTimedOut) {
+		t.Fatalf("Call error = %v, want the earlier failed lookup's error", err)
+	}
+}
+
+// A failed lookup is an empty pass: the call asks again and can still succeed.
+func TestCallRetriesAfterALookupFails(t *testing.T) {
+	a := newStation(t, "a.test")
+	f := newFakeDHT()
+	f.script(procedureKey(), lookupLost, found(advertisement(t, a, false)))
+	f.setEndpoint(a, endpointRecord(t, a))
+	install(t, f)
+	installCallAt(t, &visits{}, map[string]callAnswer{"a.test": {resp: okResponse, sent: true}})
+
+	resp, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 2*time.Second)
+	answeredOK(t, resp, err)
+}
+
+func TestGetDirectRetriesAfterALookupFails(t *testing.T) {
+	p := newStation(t, "p.test")
+	mcid := testMcid()
+	f := newFakeDHT()
+	f.script(dht.ContentKey(mcid[:]), lookupLost, found(announcement(t, p, mcid)))
+	install(t, f)
+	installFetchAt(t, &visits{}, map[string]fetchAnswer{"p.test": {data: []byte("content")}})
+
+	data, err := GetDirect(context.Background(), nil, mustIdentity(t), mcid, 2*time.Second)
+	if err != nil || string(data) != "content" {
+		t.Fatalf("GetDirect = (%q, %v), want the content", data, err)
+	}
+}
+
+// Within one station endpoint lookup, retries included, the result is: the
+// endpoint not found when a lookup answered so, else a failed lookup's error,
+// else a timeout.
+func TestPutDirectReportsNoStationEndpointWhenALookupAnsweredNotFound(t *testing.T) {
+	s := newStation(t, "s.test")
+	f := newFakeDHT()
+	f.scriptEndpoint(s, notFound, lookupLost)
+	install(t, f)
+	installDial(t, &visits{}, func(string) (held, error) { return nil, errUnreachable })
+
+	_, err := PutDirect(context.Background(), nil, mustIdentity(t), s.id.NodeID(), []byte("data"), "name", time.Second)
+	if !errors.Is(err, ErrStationEndpointNotFound) || errors.Is(err, errLookupLost) {
+		t.Fatalf("PutDirect error = %v, want ErrStationEndpointNotFound rather than the later failed lookup", err)
+	}
+}
+
+func TestPutDirectRetriesAnEndpointLookupThatFails(t *testing.T) {
+	s := newStation(t, "s.test")
+	f := newFakeDHT()
+	f.scriptEndpoint(s, lookupLost, found(endpointRecord(t, s)))
+	install(t, f)
+	ss := newStationSessions()
+	installDial(t, &visits{}, func(host string) (held, error) { return ss.held(host), nil })
+	installPutOn(t, ss, &visits{}, map[string]error{"s.test": nil})
+
+	if _, err := PutDirect(context.Background(), nil, mustIdentity(t), s.id.NodeID(), []byte("data"), "name", 2*time.Second); err != nil {
+		t.Fatalf("PutDirect: %v", err)
+	}
+}
+
+func TestPutDirectReportsAFailedEndpointLookupWhenEveryLookupFailed(t *testing.T) {
+	s := newStation(t, "s.test")
+	f := newFakeDHT()
+	f.scriptEndpoint(s, lookupLost)
+	install(t, f)
+	installDial(t, &visits{}, func(string) (held, error) { return nil, errUnreachable })
+
+	_, err := PutDirect(context.Background(), nil, mustIdentity(t), s.id.NodeID(), []byte("data"), "name", time.Second)
+	if !errors.Is(err, errLookupLost) {
+		t.Fatalf("PutDirect error = %v, want the failed lookup's error", err)
+	}
+	if n := f.endpointLookups(s); n < 2 {
+		t.Fatalf("endpoint lookups = %d, want the failed lookup asked again", n)
+	}
+}
+
+func TestPutDirectReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime(t *testing.T) {
+	s := newStation(t, "s.test")
+	f := newFakeDHT()
+	f.scriptEndpoint(s, silence)
+	install(t, f)
+	installDial(t, &visits{}, func(string) (held, error) { return nil, errUnreachable })
+
+	_, err := PutDirect(context.Background(), nil, mustIdentity(t), s.id.NodeID(), []byte("data"), "name", 500*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errLookupTimedOut) || errors.Is(err, ErrStationEndpointNotFound) {
+		t.Fatalf("PutDirect error = %v, want only the deadline", err)
+	}
+}
+
+func TestPutDirectKeepsALookupErrorWhenALaterEndpointLookupIsCutOffByTheDeadline(t *testing.T) {
+	s := newStation(t, "s.test")
+	f := newFakeDHT()
+	f.scriptEndpoint(s, lookupLost, silence)
+	install(t, f)
+	installDial(t, &visits{}, func(string) (held, error) { return nil, errUnreachable })
+
+	_, err := PutDirect(context.Background(), nil, mustIdentity(t), s.id.NodeID(), []byte("data"), "name", time.Second)
+	if !errors.Is(err, errLookupLost) || errors.Is(err, errLookupTimedOut) {
+		t.Fatalf("PutDirect error = %v, want the earlier failed lookup's error", err)
+	}
+}
+
+// A candidate whose endpoint lookup never answers in time fails with a
+// timeout, and so does the call when it was the last candidate tried.
+func TestCallReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime(t *testing.T) {
+	a := newStation(t, "a.test")
+	f := newFakeDHT()
+	f.script(procedureKey(), found(advertisement(t, a, false)))
+	f.scriptEndpoint(a, silence)
+	install(t, f)
+	installCallAt(t, &visits{}, nil)
+
+	_, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), 500*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errLookupTimedOut) || errors.Is(err, ErrStationEndpointNotFound) {
+		t.Fatalf("Call error = %v, want only the deadline", err)
+	}
+}
+
+// malformedEndpointRecord is s's own signed station_endpoint record naming no
+// host.
+func malformedEndpointRecord(t *testing.T, s station) dht.Record {
+	t.Helper()
+	rec := endpointRecord(t, s)
+	rec.Payload = cbor.Map([]cbor.MapEntry{{Key: cbor.Text("quic_port"), Val: cbor.Int(4433)}})
+	return dht.Sign(rec, s.id)
+}
+
+// A malformed endpoint record is asked about again, as an absent one is.
+func TestPutDirectAsksAgainPastAMalformedEndpointRecord(t *testing.T) {
+	s := newStation(t, "s.test")
+	f := newFakeDHT()
+	f.scriptEndpoint(s, found(malformedEndpointRecord(t, s)), found(endpointRecord(t, s)))
+	install(t, f)
+	ss := newStationSessions()
+	installDial(t, &visits{}, func(host string) (held, error) { return ss.held(host), nil })
+	installPutOn(t, ss, &visits{}, map[string]error{"s.test": nil})
+
+	if _, err := PutDirect(context.Background(), nil, mustIdentity(t), s.id.NodeID(), []byte("data"), "name", 2*time.Second); err != nil {
+		t.Fatalf("PutDirect: %v", err)
+	}
+}
+
+// When every lookup found only a malformed record, that is the reason.
+func TestPutDirectReportsAMalformedEndpointRecordAtItsDeadline(t *testing.T) {
+	s := newStation(t, "s.test")
+	f := newFakeDHT()
+	f.scriptEndpoint(s, found(malformedEndpointRecord(t, s)))
+	install(t, f)
+	installDial(t, &visits{}, func(string) (held, error) { return nil, errUnreachable })
+
+	_, err := PutDirect(context.Background(), nil, mustIdentity(t), s.id.NodeID(), []byte("data"), "name", time.Second)
+	if !errors.Is(err, ErrMalformedStationEndpoint) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("PutDirect error = %v, want ErrMalformedStationEndpoint at the deadline", err)
+	}
+	if n := f.endpointLookups(s); n < 2 {
+		t.Fatalf("endpoint lookups = %d, want the malformed record asked about again", n)
 	}
 }

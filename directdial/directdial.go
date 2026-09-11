@@ -27,7 +27,11 @@
 // before sending, resolution asks the DHT again after a pause that doubles
 // from 100 ms to at most 1 s, and tries a candidate that already failed again
 // only when its advertisement or endpoint record has changed, or when its
-// CALL was not sent. One deadline
+// CALL was not sent. A lookup that fails outright is asked again the same
+// way. At the deadline the error names, in this order, the most recent
+// candidate's failure, why the latest lookup that answered found nothing
+// usable, or the latest failed lookup's error, joined with the deadline
+// itself; a lookup that returned with no time left records nothing. One deadline
 // bounds all of it: the lookups, each candidate's endpoint lookup and dial
 // (within a share of the time that remains), and the request.
 //
@@ -99,6 +103,9 @@ var (
 	ErrProcedureNotAdvertised  = errors.New("directdial: procedure has no direct-dial advertisement in the DHT")
 	ErrNoTrustedAdvertisement  = errors.New("directdial: every candidate advertisement failed signature verification")
 	ErrStationEndpointNotFound = errors.New("directdial: resolved station published no reachable station_endpoint")
+	// ErrMalformedStationEndpoint is a station_endpoint record that verifies but
+	// names no dialable host and port.
+	ErrMalformedStationEndpoint = errors.New("directdial: station_endpoint record names no dialable host and port")
 	// ErrNoAuthorizedAdvertisement means at least one candidate advertisement's
 	// envelope signature verified (otherwise ErrNoTrustedAdvertisement would
 	// apply), but none passed cert-chain authorization for the expected org
@@ -230,7 +237,11 @@ func AdvertiseDirectWithCertChain(session *connection.Session, id identity.KeyPa
 // DHT can hand back a replica that hasn't been evicted yet even though the
 // station's own current publish is live. Giving up on the first stale hit
 // would make an otherwise healthy station unreachable via direct-dial
-// until that one replica ages out.
+// until that one replica ages out. A malformed record and a lookup that
+// fails outright are asked about again too; a record that doesn't verify
+// ends the lookup. At the deadline the error names ErrStationEndpointNotFound
+// or ErrMalformedStationEndpoint when a lookup answered, else the latest
+// failed lookup's error, joined with the deadline itself.
 //
 // ctx bounds the lookup; without a deadline, DefaultResolveTimeout applies.
 func ResolveStationEndpoint(ctx context.Context, session *connection.Session, id identity.KeyPair, station []byte) (out []byte, host string, port uint16, err error) {
@@ -379,22 +390,24 @@ func KeepAdvertisedDirect(ctx context.Context, session *connection.Session, id i
 
 // eachCandidate works through candidates until one settles the request or
 // ctx is done; ctx must carry a deadline. find returns one pass's candidates,
-// or an error when none qualifies. try works one candidate, bounded by share
-// for its endpoint lookup and dial; next reports that nothing was sent, so
-// another candidate may be tried. A pass in which none qualifies, or every
-// candidate failed before sending, is followed by another after a pause that
-// starts at retryDelay and doubles up to maxRetryDelay. When ctx is done, the
-// error names the most recent candidate failure together with ctx's own; a
-// pass in which none qualifies, or whose lookup failed, is named instead only
-// while no candidate has failed.
+// or an error when none qualifies: a lookupError when the lookup itself
+// failed, otherwise why its answer held no candidate. try works one
+// candidate, bounded by share for its endpoint lookup and dial; next reports
+// that nothing was sent, so another candidate may be tried. A pass in which
+// none qualifies, or every candidate failed before sending, is followed by
+// another after a pause that starts at retryDelay and doubles up to
+// maxRetryDelay. When ctx is done, the error joins ctx's own with, in this
+// order: the most recent candidate failure, why the latest lookup that
+// answered found no candidate, or the latest failed lookup's error. A failed
+// lookup that returned with no time left was cut off and records nothing.
 func eachCandidate[C, T any](ctx context.Context, find func(context.Context) ([]C, error), try func(share context.Context, candidate C) (result T, next bool, err error)) (T, error) {
 	var zero T
-	var unresolved, failed error
+	var last unsettled
 	delay := retryDelay
 	for ctx.Err() == nil {
 		candidates, err := find(ctx)
 		if err != nil {
-			unresolved = err
+			last = last.afterLookup(err, inTime(ctx))
 		}
 		for i, candidate := range candidates {
 			if ctx.Err() != nil {
@@ -406,15 +419,66 @@ func eachCandidate[C, T any](ctx context.Context, find func(context.Context) ([]
 			if !next {
 				return result, err
 			}
-			failed = err
+			last = unsettled{rank: rankCandidate, err: err}
 		}
 		pause(ctx, delay)
 		delay = min(2*delay, maxRetryDelay)
 	}
-	if failed != nil {
-		return zero, settle(failed, ctx.Err())
+	return zero, settle(last.err, ctx.Err())
+}
+
+// unsettled is what work still unsettled at its deadline reports. Its rank
+// orders what may replace what: a candidate's failure, then why a lookup that
+// answered found nothing usable, then a failed lookup's error, then nothing,
+// which reports as the deadline alone.
+type unsettled struct {
+	rank int
+	err  error
+}
+
+const (
+	rankTimeout = iota
+	rankLookupError
+	rankAnswered
+	rankCandidate
+)
+
+// afterLookup is what remains to report once a lookup found nothing usable,
+// err saying why: nothing replaces a candidate's failure, a lookup that
+// answered replaces anything else, and a failed lookup replaces only a timeout
+// or an earlier failed lookup, recording nothing when it returned with no time
+// left.
+func (u unsettled) afterLookup(err error, inTime bool) unsettled {
+	switch {
+	case u.rank == rankCandidate:
+		return u
+	case !isLookupError(err):
+		return unsettled{rank: rankAnswered, err: err}
+	case !inTime || u.rank == rankAnswered:
+		return u
+	default:
+		return unsettled{rank: rankLookupError, err: err}
 	}
-	return zero, settle(unresolved, ctx.Err())
+}
+
+// lookupError is a DHT lookup that failed outright, as opposed to one that
+// answered with nothing usable.
+type lookupError struct{ err error }
+
+func (e lookupError) Error() string { return e.err.Error() }
+func (e lookupError) Unwrap() error { return e.err }
+
+func isLookupError(err error) bool {
+	var failed lookupError
+	return errors.As(err, &failed)
+}
+
+// inTime reports whether ctx's deadline is still ahead; work that returns at
+// or after it was cut off. The clock decides rather than ctx.Err, which a
+// context's timer can set a moment late.
+func inTime(ctx context.Context) bool {
+	deadline, ok := ctx.Deadline()
+	return !ok || time.Now().Before(deadline)
 }
 
 // candidateShare is the time one candidate gets for its endpoint lookup and
@@ -472,7 +536,7 @@ func advertisedStations(session *connection.Session, id identity.KeyPair, realm 
 	return func(ctx context.Context) ([]advertised, error) {
 		recs, err := findRecords(session, id, key, lookupTimeout(ctx))
 		if err != nil {
-			return nil, err
+			return nil, lookupError{err}
 		}
 		if len(recs) == 0 {
 			return nil, ErrProcedureNotAdvertised
@@ -492,7 +556,7 @@ func authorizedStations(session *connection.Session, id identity.KeyPair, realm 
 	return func(ctx context.Context) ([]advertised, error) {
 		recs, err := findRecords(session, id, key, lookupTimeout(ctx))
 		if err != nil {
-			return nil, err
+			return nil, lookupError{err}
 		}
 		if len(recs) == 0 {
 			return nil, ErrProcedureNotAdvertised
@@ -558,8 +622,7 @@ func (seen attempts) reach(share context.Context, session *connection.Session, i
 	var ep endpoint
 	if failedBefore && bytesEqual(prior.record, adv.version) {
 		ep, err = lookupEndpoint(share, session, id, adv.station)
-		lookupFailed := err != nil && ep.version == nil && !errors.Is(err, dht.ErrNotFound)
-		if lookupFailed || bytesEqual(ep.version, prior.endpoint) {
+		if isLookupError(err) || bytesEqual(ep.version, prior.endpoint) {
 			return true, prior.err
 		}
 	} else {
@@ -586,31 +649,48 @@ type endpoint struct {
 
 // lookupEndpoint reads station's endpoint record once. The version is set
 // whenever a record was found, even one that doesn't qualify; dht.ErrNotFound
-// means there is none.
+// means there is none, and a lookupError that the lookup itself failed.
 func lookupEndpoint(ctx context.Context, session *connection.Session, id identity.KeyPair, station []byte) (endpoint, error) {
 	rec, err := findRecord(session, id, dht.StationEndpointKey(station), lookupTimeout(ctx))
-	if err != nil {
+	if errors.Is(err, dht.ErrNotFound) {
 		return endpoint{}, err
+	}
+	if err != nil {
+		return endpoint{}, lookupError{err}
 	}
 	host, port, err := endpointOf(rec, station)
 	return endpoint{host: host, port: port, version: rec.Version}, err
 }
 
 // stationEndpoint resolves station's dialable host and port from its own
-// signed station_endpoint record, retrying past an absent or expired replica
-// until ctx is done. When it gives up, the endpoint it returns carries the
-// version of the last record it saw, if any.
+// signed station_endpoint record. It asks again, until ctx is done, past a
+// lookup that found no usable record (absent, expired or malformed) or that
+// failed; a record that doesn't verify ends the lookup. When no lookup found a
+// usable record, the error joins ctx's own with, in this order: why the latest
+// lookup that answered found none (ErrStationEndpointNotFound or
+// ErrMalformedStationEndpoint), or the latest failed lookup's error. A failed
+// lookup that returned with no time left was cut off and records nothing. The
+// endpoint it returns carries the version of the last record it saw, if any.
 func stationEndpoint(ctx context.Context, session *connection.Session, id identity.KeyPair, station []byte) (endpoint, error) {
 	var last endpoint
+	var best unsettled
 	for ctx.Err() == nil {
 		ep, err := lookupEndpoint(ctx, session, id, station)
-		if !errors.Is(err, dht.ErrNotFound) && !errors.Is(err, dht.ErrExpired) {
+		switch {
+		case err == nil:
+			return ep, nil
+		case errors.Is(err, dht.ErrNotFound), errors.Is(err, dht.ErrExpired):
+			err = fmt.Errorf("%w: %w", ErrStationEndpointNotFound, err)
+			last = ep
+		case errors.Is(err, ErrMalformedStationEndpoint):
+			last = ep
+		case !isLookupError(err):
 			return ep, err
 		}
-		last = ep
+		best = best.afterLookup(err, inTime(ctx))
 		pause(ctx, retryDelay)
 	}
-	return last, fmt.Errorf("%w: %w", ErrStationEndpointNotFound, ctx.Err())
+	return last, settle(best.err, ctx.Err())
 }
 
 // endpointOf reads a dialable host and port from rec, station's
@@ -626,10 +706,10 @@ func endpointOf(rec dht.Record, station []byte) (string, uint16, error) {
 	}
 	ep, err := dht.ReadStationEndpoint(rec)
 	if err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("%w: %w", ErrMalformedStationEndpoint, err)
 	}
 	if len(ep.HostAdvertised) == 0 {
-		return "", 0, fmt.Errorf("directdial: station_endpoint has no advertised host")
+		return "", 0, fmt.Errorf("%w: it has no advertised host", ErrMalformedStationEndpoint)
 	}
 	return ep.HostAdvertised[0], ep.QuicPort, nil
 }
@@ -883,7 +963,7 @@ func GetDirect(ctx context.Context, resolveVia *connection.Session, id identity.
 	find := func(ctx context.Context) ([]announced, error) {
 		recs, err := findRecords(resolveVia, id, key, lookupTimeout(ctx))
 		if err != nil {
-			return nil, fmt.Errorf("directdial: find content providers: %w", err)
+			return nil, lookupError{fmt.Errorf("directdial: find content providers: %w", err)}
 		}
 		providers := trustedContentProviders(recs)
 		if len(providers) == 0 {
