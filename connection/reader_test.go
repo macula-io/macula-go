@@ -3,6 +3,7 @@ package connection
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -821,4 +822,47 @@ func TestAQueuedCallPastItsDeadlineIsStillServed(t *testing.T) {
 	if resp := fc.awaitReplyTo(t, expired); resp.IsError {
 		t.Fatalf("the expired call's reply = %+v, want its RESULT", resp)
 	}
+}
+
+func TestASessionEndIsLoggedOnceWithItsReason(t *testing.T) {
+	s, fc, id := readingSession(t)
+	logged := &lockedBuffer{}
+	s.SetLogger(slog.New(slog.NewTextHandler(logged, nil)))
+	detail := fmt.Sprintf("maintenance window %d", time.Now().UnixNano())
+	fc.send(t, frame.Goodbye("shutdown", &detail))
+	select {
+	case <-s.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("the session did not end after the station's GOODBYE")
+	}
+	_ = s.Close("normal", nil, id)
+
+	lines := linesWith(logged.String(), "macula: session ended")
+	if len(lines) != 1 {
+		t.Fatalf("session-end lines = %d, want 1; log:\n%s", len(lines), logged.String())
+	}
+	for _, want := range []string{detail, hex.EncodeToString(s.Station.NodeID), hex.EncodeToString(s.identity), "level=WARN"} {
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("session-end line %q lacks %q", lines[0], want)
+		}
+	}
+
+	closed, _, closedID := readingSession(t)
+	closedLog := &lockedBuffer{}
+	closed.SetLogger(slog.New(slog.NewTextHandler(closedLog, nil)))
+	_ = closed.Close("normal", nil, closedID)
+	if lines := linesWith(closedLog.String(), "macula: session ended"); len(lines) != 1 || !strings.Contains(lines[0], "level=INFO") {
+		t.Fatalf("session-end lines for a local Close = %q, want exactly one at level INFO", lines)
+	}
+}
+
+// linesWith returns the lines of log that contain text.
+func linesWith(log, text string) []string {
+	var out []string
+	for _, line := range strings.Split(log, "\n") {
+		if strings.Contains(line, text) {
+			out = append(out, line)
+		}
+	}
+	return out
 }

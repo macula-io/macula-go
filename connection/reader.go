@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -307,7 +308,7 @@ func (s *Session) end(err error) bool {
 		return false
 	}
 	s.rt.ended = err
-	pending, subs := s.rt.pending, s.rt.subs
+	pending, subs, logger := s.rt.pending, s.rt.subs, s.rt.logger
 	s.rt.pending, s.rt.subs, s.rt.topics = nil, nil, nil
 	if s.rt.endedCh != nil {
 		close(s.rt.endedCh)
@@ -320,7 +321,26 @@ func (s *Session) end(err error) bool {
 		sub.finish(err)
 	}
 	unregister(s)
+	s.logEnd(logger, err)
 	return true
+}
+
+// errClosedLocally is the reason a session Close ended.
+var errClosedLocally = errors.New("closed")
+
+// logEnd writes the one line a session's end gets when a logger is set: a
+// warning when the station or the connection ended it, information when
+// Close did.
+func (s *Session) logEnd(logger *slog.Logger, err error) {
+	if logger == nil {
+		return
+	}
+	level := slog.LevelWarn
+	if errors.Is(err, errClosedLocally) {
+		level = slog.LevelInfo
+	}
+	logger.Log(context.Background(), level, "macula: session ended", "reason", err.Error(),
+		"node", hex.EncodeToString(s.identity), "station", hex.EncodeToString(s.Station.NodeID))
 }
 
 func (s *Session) endedErr() error {
@@ -329,14 +349,16 @@ func (s *Session) endedErr() error {
 	return s.rt.ended
 }
 
-func (s *Session) closeConnection(reason string) {
-	if s.conn != nil {
-		_ = s.conn.CloseWithError(0, reason)
+func (s *Session) closeConnection(reason string) error {
+	if s.conn == nil {
+		return nil
 	}
+	return s.conn.CloseWithError(0, reason)
 }
 
-// SetLogger sets where the session logs the frames nothing routes: at most one
-// line per frame type per minute. A session has no logger until one is set.
+// SetLogger sets where the session logs: the frames nothing routes, at most
+// one line per frame type per minute, and its end, once, with the reason. A
+// session has no logger until one is set.
 func (s *Session) SetLogger(logger *slog.Logger) {
 	s.rt.mu.Lock()
 	defer s.rt.mu.Unlock()

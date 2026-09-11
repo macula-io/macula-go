@@ -427,8 +427,8 @@ func (s *Session) Close(reason string, detail *string, id identity.KeyPair) erro
 	unregister(s)
 	goodbye := frame.Sign(frame.Goodbye(reason, detail), id)
 	_ = s.control.sendFrame(goodbye, time.Now().Add(closeSendTimeout), closeSendTimeout, nil, nil) // best-effort, bounded -- see closeSendTimeout's own doc
-	s.end(fmt.Errorf("%w: closed", ErrSessionEnded))
+	s.end(fmt.Errorf("%w: %w", ErrSessionEnded, errClosedLocally))
 	_ = s.control.stream.Close() // signal no more writes; still async, see doc above
 	time.Sleep(closeDrainMs)
-	return s.conn.CloseWithError(0, reason)
+	return s.closeConnection(reason)
 }
