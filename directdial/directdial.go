@@ -16,10 +16,20 @@
 // session's own signature-verified HELLO identity against the exact
 // pubkey the signed DHT chain resolved.
 //
+// Every advertisement that verifies is a candidate, in the order the DHT
+// returns them. A candidate whose station endpoint can't be resolved, whose
+// dial fails, or whose dialed identity doesn't match is passed over for the
+// next one, but only before the request is sent: once a CALL or a stream's
+// opening frame may have gone out, its outcome is returned as it is. A
+// content fetch is verified against its MCID, so a failed fetch also moves on
+// to the next provider. When no candidate qualifies, or every one failed
+// before sending, resolution asks the DHT again. One deadline bounds all of
+// it: the lookups, each candidate's endpoint lookup and dial (within a share
+// of the time that remains), and the request.
+//
 // cert_chain-based org/realm authorization (Slice 7c Direction B,
 // macula_record:verify_advertisement_cert_chain/3 on the Erlang side) is
-// NOT ported here — it is opt-in even in the reference implementation,
-// and blocked behind direct-dial itself existing at all in this SDK.
+// opt-in, through the *WithCertChain variants.
 package directdial
 
 import (
@@ -42,17 +52,23 @@ import (
 	"github.com/macula-io/macula-go/transport"
 )
 
-// resolveRetries/resolveRetryDelay match macula_direct_dial.erl's
-// ?RESOLVE_RETRIES/?RESOLVE_RETRY_MS — a record just published on the
-// provider's station has not necessarily replicated to the resolving
-// station yet, so the first miss is not treated as failure.
+// retryDelay spaces one pass over the DHT from the next, matching
+// macula_direct_dial.erl's ?RESOLVE_RETRY_MS: a record just published on the
+// provider's station has not necessarily replicated to the resolving station
+// yet, so a miss is not treated as final.
 const (
-	resolveRetries    = 50
-	resolveRetryDelay = 100 * time.Millisecond
-	// defaultLookupTimeout bounds one DHT lookup, matching the dht package's
-	// own default.
+	retryDelay = 100 * time.Millisecond
+	// defaultLookupTimeout bounds one DHT lookup when more time remains,
+	// matching the dht package's own default.
 	defaultLookupTimeout = 5 * time.Second
+	// minCandidateShare is the least time one candidate gets for its endpoint
+	// lookup and dial while that much of the deadline remains.
+	minCandidateShare = time.Second
 )
+
+// DefaultResolveTimeout bounds Resolve, ResolveWithCertChain and
+// ResolveStationEndpoint when their context carries no deadline.
+const DefaultResolveTimeout = 10 * time.Second
 
 // The DHT lookups, and the work done at one station (dial it, then send the
 // request), are variables so tests can drive resolution without a network.
@@ -83,31 +99,21 @@ var (
 // (or the Erlang equivalent) — the discovery URI they derive must agree.
 // session is used only to query the DHT; it does not need to be connected
 // to the same station that will end up serving the call.
-func Resolve(session *connection.Session, id identity.KeyPair, realm []byte, procedure string) (station []byte, host string, port uint16, err error) {
-	uri := dht.DiscoveryURI(realm, procedure)
-	key := dht.ProcedureKey(uri)
-
-	var recs []dht.Record
-	for attempt := 0; attempt < resolveRetries; attempt++ {
-		recs, err = findRecords(session, id, key, defaultLookupTimeout)
-		if err == nil && len(recs) > 0 {
-			break
-		}
-		time.Sleep(resolveRetryDelay)
-	}
-	if len(recs) == 0 {
-		return nil, "", 0, ErrProcedureNotAdvertised
-	}
-
-	adv, ok := firstTrustedAdvertisement(recs)
-	if !ok {
-		return nil, "", 0, ErrNoTrustedAdvertisement
-	}
-
-	return ResolveStationEndpoint(session, id, adv.ServingStation)
+//
+// The first candidate whose station endpoint resolves is returned. ctx
+// bounds the whole resolution; without a deadline, DefaultResolveTimeout
+// applies.
+func Resolve(ctx context.Context, session *connection.Session, id identity.KeyPair, realm []byte, procedure string) (station []byte, host string, port uint16, err error) {
+	ctx, cancel := withResolveDeadline(ctx)
+	defer cancel()
+	r, err := eachCandidate(ctx, advertisedStations(session, id, realm, procedure), reachableStation(session, id))
+	return r.station, r.host, r.port, err
 }
 
-func firstTrustedAdvertisement(recs []dht.Record) (dht.ProcedureAdvertisement, bool) {
+// trustedAdvertisements returns every record that verifies and reads as a
+// procedure_advertisement, in the order given.
+func trustedAdvertisements(recs []dht.Record) []dht.ProcedureAdvertisement {
+	var advs []dht.ProcedureAdvertisement
 	for _, rec := range recs {
 		if dht.Verify(rec) != nil {
 			continue
@@ -116,9 +122,9 @@ func firstTrustedAdvertisement(recs []dht.Record) (dht.ProcedureAdvertisement, b
 		if err != nil {
 			continue
 		}
-		return adv, true
+		advs = append(advs, adv)
 	}
-	return dht.ProcedureAdvertisement{}, false
+	return advs
 }
 
 // ResolveWithCertChain is Resolve, plus Slice 7c Direction B managed-realm
@@ -131,40 +137,21 @@ func firstTrustedAdvertisement(recs []dht.Record) (dht.ProcedureAdvertisement, b
 // ErrNoAuthorizedAdvertisement via errors.Unwrap) — distinguishing "nobody
 // advertised a cert chain at all" from "one did, but for the wrong org"
 // matters operationally, so callers get the real reason, not just "no".
-func ResolveWithCertChain(session *connection.Session, id identity.KeyPair, realm []byte, procedure string, realmCAPEM []byte, expectedOrg string) (station []byte, host string, port uint16, err error) {
-	uri := dht.DiscoveryURI(realm, procedure)
-	key := dht.ProcedureKey(uri)
-
-	var recs []dht.Record
-	for attempt := 0; attempt < resolveRetries; attempt++ {
-		recs, err = findRecords(session, id, key, defaultLookupTimeout)
-		if err == nil && len(recs) > 0 {
-			break
-		}
-		time.Sleep(resolveRetryDelay)
-	}
-	if len(recs) == 0 {
-		return nil, "", 0, ErrProcedureNotAdvertised
-	}
-
-	adv, ok, lastErr := firstAuthorizedAdvertisement(recs, realmCAPEM, expectedOrg)
-	if !ok {
-		if lastErr != nil {
-			return nil, "", 0, fmt.Errorf("%w: %v", ErrNoAuthorizedAdvertisement, lastErr)
-		}
-		return nil, "", 0, ErrNoTrustedAdvertisement
-	}
-
-	return ResolveStationEndpoint(session, id, adv.ServingStation)
+//
+// ctx bounds the whole resolution, as for Resolve.
+func ResolveWithCertChain(ctx context.Context, session *connection.Session, id identity.KeyPair, realm []byte, procedure string, realmCAPEM []byte, expectedOrg string) (station []byte, host string, port uint16, err error) {
+	ctx, cancel := withResolveDeadline(ctx)
+	defer cancel()
+	r, err := eachCandidate(ctx, authorizedStations(session, id, realm, procedure, realmCAPEM, expectedOrg), reachableStation(session, id))
+	return r.station, r.host, r.port, err
 }
 
-// firstAuthorizedAdvertisement is firstTrustedAdvertisement plus the
-// cert-chain check. lastErr is the most recent VerifyAdvertisementCertChain
-// failure seen (nil if every candidate failed the plain signature check
-// instead, in which case the caller should report ErrNoTrustedAdvertisement,
-// matching Resolve's own distinction).
-func firstAuthorizedAdvertisement(recs []dht.Record, realmCAPEM []byte, expectedOrg string) (dht.ProcedureAdvertisement, bool, error) {
-	var lastErr error
+// authorizedAdvertisements is trustedAdvertisements plus the cert-chain
+// check. lastErr is the most recent VerifyAdvertisementCertChain failure seen
+// (nil if every candidate failed the plain signature check instead, in which
+// case the caller reports ErrNoTrustedAdvertisement, matching Resolve's own
+// distinction).
+func authorizedAdvertisements(recs []dht.Record, realmCAPEM []byte, expectedOrg string) (advs []dht.ProcedureAdvertisement, lastErr error) {
 	for _, rec := range recs {
 		if err := dht.VerifyAdvertisementCertChain(realmCAPEM, rec, expectedOrg); err != nil {
 			if !errors.Is(err, dht.ErrCertChainBadSignature) {
@@ -177,24 +164,16 @@ func firstAuthorizedAdvertisement(recs []dht.Record, realmCAPEM []byte, expected
 			lastErr = err
 			continue
 		}
-		return adv, true, nil
+		advs = append(advs, adv)
 	}
-	return dht.ProcedureAdvertisement{}, false, lastErr
+	return advs, lastErr
 }
 
 // CallWithCertChain is Call, resolved via ResolveWithCertChain instead of
 // Resolve — see both for the full contract. Opt-in managed-realm
 // authorization; Call itself is unaffected.
 func CallWithCertChain(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, realmCAPEM []byte, expectedOrg string, payload cbor.Value, timeout time.Duration) (frame.CallResponse, error) {
-	station, host, port, err := ResolveWithCertChain(resolveVia, id, realm, procedure, realmCAPEM, expectedOrg)
-	if err != nil {
-		return frame.CallResponse{}, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
-	}
-
-	dialCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	resp, _, err := callAt(dialCtx, time.Now().Add(timeout), host, port, station, id, procedure, realm, payload, nil)
-	return resp, err
+	return call(ctx, authorizedStations(resolveVia, id, realm, procedure, realmCAPEM, expectedOrg), resolveVia, id, realm, procedure, payload, timeout, nil)
 }
 
 // AdvertiseDirectWithCertChain is AdvertiseDirect, plus embedding a
@@ -229,42 +208,16 @@ func AdvertiseDirectWithCertChain(session *connection.Session, id identity.KeyPa
 // station's own current publish is live. Giving up on the first stale hit
 // would make an otherwise healthy station unreachable via direct-dial
 // until that one replica ages out.
-func ResolveStationEndpoint(session *connection.Session, id identity.KeyPair, station []byte) (out []byte, host string, port uint16, err error) {
-	key := dht.StationEndpointKey(station)
-	for attempt := 0; attempt < resolveRetries; attempt++ {
-		rec, ferr := findRecord(session, id, key, defaultLookupTimeout)
-		if ferr != nil {
-			if errors.Is(ferr, dht.ErrNotFound) {
-				time.Sleep(resolveRetryDelay)
-				continue
-			}
-			return nil, "", 0, ferr
-		}
-		// The station_endpoint record for `station` must be SIGNED BY
-		// `station` itself — checking the signature and that the signer
-		// is exactly `station`, not just any valid signature, is what
-		// makes pinning the dial's expected identity meaningful below.
-		if !bytesEqual(rec.Key, station) {
-			return nil, "", 0, fmt.Errorf("directdial: station_endpoint signer mismatch")
-		}
-		verr := dht.Verify(rec)
-		if errors.Is(verr, dht.ErrExpired) {
-			time.Sleep(resolveRetryDelay)
-			continue
-		}
-		if verr != nil {
-			return nil, "", 0, verr
-		}
-		ep, rerr := dht.ReadStationEndpoint(rec)
-		if rerr != nil {
-			return nil, "", 0, rerr
-		}
-		if len(ep.HostAdvertised) == 0 {
-			return nil, "", 0, fmt.Errorf("directdial: station_endpoint has no advertised host")
-		}
-		return station, ep.HostAdvertised[0], ep.QuicPort, nil
+//
+// ctx bounds the lookup; without a deadline, DefaultResolveTimeout applies.
+func ResolveStationEndpoint(ctx context.Context, session *connection.Session, id identity.KeyPair, station []byte) (out []byte, host string, port uint16, err error) {
+	ctx, cancel := withResolveDeadline(ctx)
+	defer cancel()
+	host, port, err = stationEndpoint(ctx, session, id, station)
+	if err != nil {
+		return nil, "", 0, err
 	}
-	return nil, "", 0, ErrStationEndpointNotFound
+	return station, host, port, nil
 }
 
 // Call resolves procedure's provider via direct-dial (through resolveVia,
@@ -278,18 +231,13 @@ func ResolveStationEndpoint(session *connection.Session, id identity.KeyPair, st
 // trust is enforced at the application layer instead — see the package
 // doc's "Trust model". After the dial, the freshly connected session's own
 // signature-verified HELLO identity is checked against the exact pubkey
-// the signed DHT chain resolved; a mismatch is a trust violation, not a
-// retryable error, and the call is refused.
+// the signed DHT chain resolved; a mismatch is a trust violation, so the
+// CALL is never sent there and the next candidate is tried.
+//
+// timeout bounds resolution, each candidate's endpoint lookup and dial, and
+// the CALL itself, which carries the resulting deadline.
 func Call(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, payload cbor.Value, timeout time.Duration) (frame.CallResponse, error) {
-	station, host, port, err := Resolve(resolveVia, id, realm, procedure)
-	if err != nil {
-		return frame.CallResponse{}, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
-	}
-
-	dialCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	resp, _, err := callAt(dialCtx, time.Now().Add(timeout), host, port, station, id, procedure, realm, payload, nil)
-	return resp, err
+	return call(ctx, advertisedStations(resolveVia, id, realm, procedure), resolveVia, id, realm, procedure, payload, timeout, nil)
 }
 
 // CallWithUCAN is Call, presenting ucanToken to a provider gated with
@@ -301,15 +249,10 @@ func Call(ctx context.Context, resolveVia *connection.Session, id identity.KeyPa
 // adding an optional token there, matching connection.Session's own
 // Call/CallWithUCAN split.
 func CallWithUCAN(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, payload cbor.Value, timeout time.Duration, ucanToken []byte) (frame.CallResponse, error) {
-	station, host, port, err := Resolve(resolveVia, id, realm, procedure)
-	if err != nil {
-		return frame.CallResponse{}, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
+	if ucanToken == nil {
+		ucanToken = []byte{}
 	}
-
-	dialCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	resp, _, err := callAt(dialCtx, time.Now().Add(timeout), host, port, station, id, procedure, realm, payload, ucanToken)
-	return resp, err
+	return call(ctx, advertisedStations(resolveVia, id, realm, procedure), resolveVia, id, realm, procedure, payload, timeout, ucanToken)
 }
 
 // AdvertiseDirect publishes a signed procedure_advertisement naming
@@ -403,6 +346,242 @@ func KeepAdvertisedDirect(ctx context.Context, session *connection.Session, id i
 	}
 }
 
+// eachCandidate works through candidates until one settles the request or
+// ctx is done; ctx must carry a deadline. find returns one pass's candidates,
+// or an error when none qualifies. try works one candidate, bounded by share
+// for its endpoint lookup and dial; next reports that nothing was sent, so
+// another candidate may be tried. A pass in which none qualifies, or every
+// candidate failed before sending, is followed by another after retryDelay.
+// When ctx is done, the error names the last failure seen together with
+// ctx's own.
+func eachCandidate[C, T any](ctx context.Context, find func(context.Context) ([]C, error), try func(share context.Context, candidate C) (result T, next bool, err error)) (T, error) {
+	var zero T
+	var last error
+	for ctx.Err() == nil {
+		candidates, err := find(ctx)
+		if err != nil {
+			last = err
+		}
+		for i, candidate := range candidates {
+			if ctx.Err() != nil {
+				break
+			}
+			share, cancel := context.WithTimeout(ctx, candidateShare(ctx, len(candidates)-i))
+			result, next, err := try(share, candidate)
+			cancel()
+			if !next {
+				return result, err
+			}
+			last = err
+		}
+		pause(ctx, retryDelay)
+	}
+	return zero, settle(last, ctx.Err())
+}
+
+// candidateShare is the time one candidate gets for its endpoint lookup and
+// dial: what remains of ctx's deadline split evenly over the candidates not
+// yet tried, but no less than minCandidateShare while that much remains. A
+// long list still leaves each candidate time to dial, and a candidate whose
+// endpoint never resolves can't use up the time the others need.
+func candidateShare(ctx context.Context, untried int) time.Duration {
+	deadline, _ := ctx.Deadline()
+	remaining := time.Until(deadline)
+	return max(remaining/time.Duration(untried), min(minCandidateShare, remaining))
+}
+
+// lookupTimeout bounds one DHT lookup by what remains of ctx's deadline.
+func lookupTimeout(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return defaultLookupTimeout
+	}
+	return min(defaultLookupTimeout, time.Until(deadline))
+}
+
+// pause waits for d, or until ctx is done.
+func pause(ctx context.Context, d time.Duration) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+}
+
+// settle joins the last failure seen with the context error that ended the
+// work, so either can be matched with errors.Is.
+func settle(last, done error) error {
+	if last == nil {
+		return done
+	}
+	return fmt.Errorf("%w: %w", last, done)
+}
+
+// withResolveDeadline gives ctx DefaultResolveTimeout when it carries no
+// deadline of its own.
+func withResolveDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, DefaultResolveTimeout)
+}
+
+// advertisedStations returns one pass over procedure's advertisements: every
+// advertisement that verifies, in the order the DHT returned them.
+func advertisedStations(session *connection.Session, id identity.KeyPair, realm []byte, procedure string) func(context.Context) ([]dht.ProcedureAdvertisement, error) {
+	key := dht.ProcedureKey(dht.DiscoveryURI(realm, procedure))
+	return func(ctx context.Context) ([]dht.ProcedureAdvertisement, error) {
+		recs, err := findRecords(session, id, key, lookupTimeout(ctx))
+		if err != nil {
+			return nil, err
+		}
+		if len(recs) == 0 {
+			return nil, ErrProcedureNotAdvertised
+		}
+		advs := trustedAdvertisements(recs)
+		if len(advs) == 0 {
+			return nil, ErrNoTrustedAdvertisement
+		}
+		return advs, nil
+	}
+}
+
+// authorizedStations is advertisedStations, keeping only the advertisements
+// whose cert chain validates to realmCAPEM and names expectedOrg.
+func authorizedStations(session *connection.Session, id identity.KeyPair, realm []byte, procedure string, realmCAPEM []byte, expectedOrg string) func(context.Context) ([]dht.ProcedureAdvertisement, error) {
+	key := dht.ProcedureKey(dht.DiscoveryURI(realm, procedure))
+	return func(ctx context.Context) ([]dht.ProcedureAdvertisement, error) {
+		recs, err := findRecords(session, id, key, lookupTimeout(ctx))
+		if err != nil {
+			return nil, err
+		}
+		if len(recs) == 0 {
+			return nil, ErrProcedureNotAdvertised
+		}
+		advs, lastErr := authorizedAdvertisements(recs, realmCAPEM, expectedOrg)
+		switch {
+		case len(advs) > 0:
+			return advs, nil
+		case lastErr != nil:
+			return nil, fmt.Errorf("%w: %v", ErrNoAuthorizedAdvertisement, lastErr)
+		default:
+			return nil, ErrNoTrustedAdvertisement
+		}
+	}
+}
+
+// reached is the station a resolution settled on, with its dialable host and
+// port.
+type reached struct {
+	station []byte
+	host    string
+	port    uint16
+}
+
+// reachableStation settles a resolution on the first advertisement whose
+// station endpoint resolves.
+func reachableStation(session *connection.Session, id identity.KeyPair) func(context.Context, dht.ProcedureAdvertisement) (reached, bool, error) {
+	return func(share context.Context, adv dht.ProcedureAdvertisement) (reached, bool, error) {
+		host, port, err := stationEndpoint(share, session, id, adv.ServingStation)
+		if err != nil {
+			return reached{}, true, err
+		}
+		return reached{station: adv.ServingStation, host: host, port: port}, false, nil
+	}
+}
+
+// stationEndpoint resolves station's dialable host and port from its own
+// signed station_endpoint record, retrying past an absent or expired replica
+// until ctx is done.
+func stationEndpoint(ctx context.Context, session *connection.Session, id identity.KeyPair, station []byte) (string, uint16, error) {
+	key := dht.StationEndpointKey(station)
+	for ctx.Err() == nil {
+		rec, err := findRecord(session, id, key, lookupTimeout(ctx))
+		switch {
+		case errors.Is(err, dht.ErrNotFound):
+		case err != nil:
+			return "", 0, err
+		default:
+			host, port, err := endpointOf(rec, station)
+			if !errors.Is(err, dht.ErrExpired) {
+				return host, port, err
+			}
+		}
+		pause(ctx, retryDelay)
+	}
+	return "", 0, fmt.Errorf("%w: %w", ErrStationEndpointNotFound, ctx.Err())
+}
+
+// endpointOf reads a dialable host and port from rec, station's
+// station_endpoint record. The record must be SIGNED BY station itself:
+// checking the signer as well as the signature is what makes pinning the
+// dial's expected identity meaningful.
+func endpointOf(rec dht.Record, station []byte) (string, uint16, error) {
+	if !bytesEqual(rec.Key, station) {
+		return "", 0, fmt.Errorf("directdial: station_endpoint signer mismatch")
+	}
+	if err := dht.Verify(rec); err != nil {
+		return "", 0, err
+	}
+	ep, err := dht.ReadStationEndpoint(rec)
+	if err != nil {
+		return "", 0, err
+	}
+	if len(ep.HostAdvertised) == 0 {
+		return "", 0, fmt.Errorf("directdial: station_endpoint has no advertised host")
+	}
+	return ep.HostAdvertised[0], ep.QuicPort, nil
+}
+
+// call sends one CALL for procedure to the first candidate from find that
+// takes it. timeout bounds resolution, each candidate's endpoint lookup and
+// dial, and the CALL, which carries the resulting deadline.
+func call(ctx context.Context, find func(context.Context) ([]dht.ProcedureAdvertisement, error), resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, payload cbor.Value, timeout time.Duration, ucanToken []byte) (frame.CallResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	resp, err := eachCandidate(ctx, find, func(share context.Context, adv dht.ProcedureAdvertisement) (frame.CallResponse, bool, error) {
+		host, port, err := stationEndpoint(share, resolveVia, id, adv.ServingStation)
+		if err != nil {
+			return frame.CallResponse{}, true, err
+		}
+		resp, sent, err := callAt(share, deadline, host, port, adv.ServingStation, id, procedure, realm, payload, ucanToken)
+		return resp, !sent, err
+	})
+	if err != nil {
+		return resp, fmt.Errorf("directdial: %s: %w", procedure, err)
+	}
+	return resp, nil
+}
+
+// opened is a stream a candidate station accepted, with the session that
+// carries it.
+type opened struct {
+	session *connection.Session
+	handle  *stream.Handle
+}
+
+// openStream opens a stream for procedure at the first candidate from find
+// that takes it. timeout bounds resolution and each candidate's endpoint
+// lookup and dial; the stream itself runs under ctx and deadlineMs.
+func openStream(ctx context.Context, find func(context.Context) ([]dht.ProcedureAdvertisement, error), resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, mode frame.StreamMode, args cbor.Value, deadlineMs int64, timeout time.Duration) (*connection.Session, *stream.Handle, error) {
+	resolveCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	o, err := eachCandidate(resolveCtx, find, func(share context.Context, adv dht.ProcedureAdvertisement) (opened, bool, error) {
+		host, port, err := stationEndpoint(share, resolveVia, id, adv.ServingStation)
+		if err != nil {
+			return opened{}, true, err
+		}
+		session, handle, sent, err := openAt(share, ctx, host, port, adv.ServingStation, id, procedure, realm, mode, args, deadlineMs)
+		return opened{session: session, handle: handle}, !sent, err
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("directdial: %s: %w", procedure, err)
+	}
+	return o.session, o.handle, nil
+}
+
 // dialAndVerify dials host:port and checks the freshly connected session's
 // own signature-verified HELLO identity against station — the shared
 // second half of every direct-dial call shape (Call, CallWithCertChain, and
@@ -485,15 +664,11 @@ func dialAndFetch(dialCtx, fetchCtx context.Context, host string, port uint16, n
 // the stream and any other work on it is done) alongside the *stream.Handle
 // itself, since — unlike Call, which owns its dial for exactly one
 // request/reply — a stream outlives the single function call that opens it.
+//
+// timeout bounds resolution and each candidate's endpoint lookup and dial;
+// the stream itself runs under ctx and deadlineMs.
 func OpenStreamDirect(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, mode frame.StreamMode, args cbor.Value, deadlineMs int64, timeout time.Duration) (*connection.Session, *stream.Handle, error) {
-	station, host, port, err := Resolve(resolveVia, id, realm, procedure)
-	if err != nil {
-		return nil, nil, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
-	}
-	dialCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	target, h, _, err := openAt(dialCtx, ctx, host, port, station, id, procedure, realm, mode, args, deadlineMs)
-	return target, h, err
+	return openStream(ctx, advertisedStations(resolveVia, id, realm, procedure), resolveVia, id, realm, procedure, mode, args, deadlineMs, timeout)
 }
 
 // OpenStreamDirectWithCertChain is OpenStreamDirect, resolved via
@@ -501,14 +676,7 @@ func OpenStreamDirect(ctx context.Context, resolveVia *connection.Session, id id
 // contract. Opt-in managed-realm authorization; OpenStreamDirect itself is
 // unaffected.
 func OpenStreamDirectWithCertChain(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, realmCAPEM []byte, expectedOrg string, mode frame.StreamMode, args cbor.Value, deadlineMs int64, timeout time.Duration) (*connection.Session, *stream.Handle, error) {
-	station, host, port, err := ResolveWithCertChain(resolveVia, id, realm, procedure, realmCAPEM, expectedOrg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("directdial: resolve %s: %w", procedure, err)
-	}
-	dialCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	target, h, _, err := openAt(dialCtx, ctx, host, port, station, id, procedure, realm, mode, args, deadlineMs)
-	return target, h, err
+	return openStream(ctx, authorizedStations(resolveVia, id, realm, procedure, realmCAPEM, expectedOrg), resolveVia, id, realm, procedure, mode, args, deadlineMs, timeout)
 }
 
 // PutDirect stores data at a KNOWN station directly, in one hop, instead of
@@ -529,14 +697,17 @@ func OpenStreamDirectWithCertChain(ctx context.Context, resolveVia *connection.S
 // connection can be closed out from under the caller by this call. Use a
 // different identity for resolveVia than for id if the caller needs
 // resolveVia to keep working afterward against that same station.
+//
+// timeout bounds the station endpoint lookup and the dial; the put itself
+// runs under ctx.
 func PutDirect(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, station []byte, data []byte, name string, timeout time.Duration) (manifest.Mcid, error) {
-	resolved, host, port, err := ResolveStationEndpoint(resolveVia, id, station)
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	host, port, err := stationEndpoint(dialCtx, resolveVia, id, station)
 	if err != nil {
 		return manifest.Mcid{}, fmt.Errorf("directdial: resolve station %x: %w", station, err)
 	}
-	dialCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	target, err := dialAndVerify(dialCtx, host, port, resolved, id)
+	target, err := dialAndVerify(dialCtx, host, port, station, id)
 	if err != nil {
 		return manifest.Mcid{}, err
 	}
@@ -564,22 +735,34 @@ func PutDirect(ctx context.Context, resolveVia *connection.Session, id identity.
 // that kind of infrastructure-tier code, not ordinary leaf use. GetDirect
 // itself has no such limitation — resolving and fetching FROM an
 // already-announced provider is a perfectly ordinary leaf operation.
+//
+// Every announcement that verifies is a candidate. A provider that can't be
+// dialled, or whose fetch fails or doesn't verify against mcid, is passed
+// over for the next. timeout bounds the whole fetch: lookups, dials and
+// transfers.
 func GetDirect(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, mcid manifest.Mcid, timeout time.Duration) ([]byte, error) {
-	recs, err := findRecords(resolveVia, id, dht.ContentKey(mcid[:]), defaultLookupTimeout)
-	if err != nil {
-		return nil, fmt.Errorf("directdial: find content providers: %w", err)
-	}
-	adv, ok := firstTrustedContentProvider(recs)
-	if !ok {
-		return nil, ErrContentNotAnnounced
-	}
-	host, port, err := parseSeedURL(adv.Endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("directdial: content provider endpoint %q: %w", adv.Endpoint, err)
-	}
-	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return fetchAt(dialCtx, ctx, host, port, adv.AnnouncerNode, id, mcid)
+	key := dht.ContentKey(mcid[:])
+	find := func(ctx context.Context) ([]dht.ContentAnnouncement, error) {
+		recs, err := findRecords(resolveVia, id, key, lookupTimeout(ctx))
+		if err != nil {
+			return nil, fmt.Errorf("directdial: find content providers: %w", err)
+		}
+		providers := trustedContentProviders(recs)
+		if len(providers) == 0 {
+			return nil, ErrContentNotAnnounced
+		}
+		return providers, nil
+	}
+	return eachCandidate(ctx, find, func(share context.Context, provider dht.ContentAnnouncement) ([]byte, bool, error) {
+		host, port, err := parseSeedURL(provider.Endpoint)
+		if err != nil {
+			return nil, true, fmt.Errorf("directdial: content provider endpoint %q: %w", provider.Endpoint, err)
+		}
+		data, err := fetchAt(share, ctx, host, port, provider.AnnouncerNode, id, mcid)
+		return data, err != nil, err
+	})
 }
 
 // ErrContentNotAnnounced means mcid has no live, verifiable
@@ -589,26 +772,27 @@ func GetDirect(ctx context.Context, resolveVia *connection.Session, id identity.
 // every candidate found failed signature/self-consistency verification.
 var ErrContentNotAnnounced = errors.New("directdial: content has no verifiable announcement in the DHT")
 
-// firstTrustedContentProvider mirrors macula.erl's decode_provider/1: the
-// record's OWN signature must verify, AND the payload's claimed
-// announcer_node must equal the record's own envelope key — a record
-// merely stored under the right key but self-signed by a different
-// identity would otherwise still be trusted.
-func firstTrustedContentProvider(recs []dht.Record) (dht.ContentAnnouncement, bool) {
+// trustedContentProviders mirrors macula.erl's decode_provider/1: a record's
+// OWN signature must verify, AND the payload's claimed announcer_node must
+// equal the record's own envelope key — a record merely stored under the
+// right key but self-signed by a different identity would otherwise still be
+// trusted. It returns every provider that passes, in the order given.
+func trustedContentProviders(recs []dht.Record) []dht.ContentAnnouncement {
+	var providers []dht.ContentAnnouncement
 	for _, rec := range recs {
 		if dht.Verify(rec) != nil {
 			continue
 		}
-		adv, err := dht.ReadContentAnnouncement(rec)
+		provider, err := dht.ReadContentAnnouncement(rec)
 		if err != nil {
 			continue
 		}
-		if !bytesEqual(adv.AnnouncerNode, rec.Key) {
+		if !bytesEqual(provider.AnnouncerNode, rec.Key) {
 			continue
 		}
-		return adv, true
+		providers = append(providers, provider)
 	}
-	return dht.ContentAnnouncement{}, false
+	return providers
 }
 
 // parseSeedURL splits a content_announcement's endpoint (a dialable seed

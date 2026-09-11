@@ -113,7 +113,7 @@ func TestNewContentAnnouncementRejectsWrongSizedFields(t *testing.T) {
 }
 
 // TestVerifyRejectsAnnouncerSignerMismatch guards the primitive
-// package directdial's firstTrustedContentProvider composes on top of
+// package directdial's trustedContentProviders composes on top of
 // (Verify + ReadContentAnnouncement) — mirrors macula.erl's own
 // provider_verified/3 discipline: a record merely stored under the right
 // key but signed by someone other than its claimed announcer_node must

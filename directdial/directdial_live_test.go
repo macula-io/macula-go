@@ -127,7 +127,7 @@ func TestLiveAdvertiseAndResolve(t *testing.T) {
 	}
 	defer func() { _ = resolver.Close("normal", nil, id) }()
 
-	station, dialHost, dialPort, err := Resolve(resolver, id, realm, procedure)
+	station, dialHost, dialPort, err := Resolve(context.Background(), resolver, id, realm, procedure)
 	if err != nil {
 		if errors.Is(err, ErrStationEndpointNotFound) {
 			// KNOWN EXTERNAL BLOCKER, not a defect in this package: the
@@ -250,7 +250,7 @@ func TestLiveDirectDialServeRoundTrip(t *testing.T) {
 	}
 	defer func() { _ = resolver.Close("normal", nil, callerID) }()
 
-	station, dialHost, dialPort, err := Resolve(resolver, callerID, realm, procedure)
+	station, dialHost, dialPort, err := Resolve(context.Background(), resolver, callerID, realm, procedure)
 	if err != nil {
 		if errors.Is(err, ErrStationEndpointNotFound) {
 			t.Skipf("Resolve found no live, host-bearing station_endpoint -- known external relay-side gap (see TestLiveAdvertiseAndResolve's comment), not a failure of this package: %v", err)
@@ -476,7 +476,7 @@ func TestLiveResolveWithCertChain(t *testing.T) {
 	}
 	defer func() { _ = resolver.Close("normal", nil, id) }()
 
-	station, dialHost, dialPort, err := ResolveWithCertChain(resolver, id, realm, procedure, caPEM, org)
+	station, dialHost, dialPort, err := ResolveWithCertChain(ctx, resolver, id, realm, procedure, caPEM, org)
 	if err != nil {
 		if errors.Is(err, ErrStationEndpointNotFound) {
 			t.Skipf("Resolve reached station_endpoint resolution but found no live record -- known external relay-side gap (see TestLiveAdvertiseAndResolve's comment), not a failure of this package's logic: %v", err)
@@ -491,7 +491,9 @@ func TestLiveResolveWithCertChain(t *testing.T) {
 	// Negative control: the SAME resolved record must be rejected for the
 	// WRONG org, proving this isn't accidentally passing open regardless
 	// of the cert chain's actual content.
-	if _, _, _, err := ResolveWithCertChain(resolver, id, realm, procedure, caPEM, "wrong-org"); !errors.Is(err, ErrNoAuthorizedAdvertisement) {
+	wrongOrgCtx, cancelWrongOrg := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelWrongOrg()
+	if _, _, _, err := ResolveWithCertChain(wrongOrgCtx, resolver, id, realm, procedure, caPEM, "wrong-org"); !errors.Is(err, ErrNoAuthorizedAdvertisement) {
 		t.Fatalf("ResolveWithCertChain(wrong org) = %v, want ErrNoAuthorizedAdvertisement", err)
 	}
 	t.Logf("OBSERVED: correct org resolves+authorizes over the real wire; wrong org is correctly rejected on the same real record")

@@ -145,9 +145,12 @@ func main() {
 	// Negative control: the same resolved record, checked against the
 	// WRONG expected org, must be refused -- proves the check actually
 	// inspects the chain rather than trusting any signed advertisement.
-	_, _, _, err = directdial.ResolveWithCertChain(caller, callerID, realm, procedure, realmCAPEM, "not-"+org)
-	if err == nil {
-		log.Fatal("ResolveWithCertChain unexpectedly succeeded for the wrong org")
+	// Resolution asks again until its context ends, so give it a short one.
+	wrongOrgCtx, cancelWrongOrg := context.WithTimeout(ctx, 3*time.Second)
+	defer cancelWrongOrg()
+	_, _, _, err = directdial.ResolveWithCertChain(wrongOrgCtx, caller, callerID, realm, procedure, realmCAPEM, "not-"+org)
+	if !errors.Is(err, directdial.ErrNoAuthorizedAdvertisement) {
+		log.Fatalf("ResolveWithCertChain for the wrong org = %v, want ErrNoAuthorizedAdvertisement", err)
 	}
-	fmt.Printf("resolve correctly refused for the wrong org: %v\n", errors.Unwrap(err))
+	fmt.Printf("resolve correctly refused for the wrong org: %v\n", err)
 }

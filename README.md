@@ -237,6 +237,13 @@ if err := session.ServeOneCall(lookup, id, 30*time.Second); err != nil {
 resp, err := directdial.Call(ctx, resolveVia, id, realm, "math.add", cbor.Text("hello"), 10*time.Second)
 ```
 
+`timeout` bounds the whole call: resolution, each candidate's endpoint lookup
+and dial, and the CALL. Every advertisement that verifies is a candidate. One
+that can't be reached before the CALL is sent is passed over for the next, and
+when none qualifies, resolution asks the DHT again until the deadline.
+`Resolve`, `ResolveWithCertChain` and `ResolveStationEndpoint` take a
+`context.Context` that bounds them the same way.
+
 The same resolve-and-dial mechanism covers streaming (`directdial.OpenStreamDirect`)
 and content transfer (`directdial.PutDirect`/`GetDirect`), and each has a
 `*WithCertChain` variant that additionally requires the resolved

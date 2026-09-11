@@ -297,22 +297,24 @@ func TestLiveGetDirectResolvesAndVerifiesButCannotDialALeafIdentity(t *testing.T
 	}
 	defer func() { _ = resolverSession.Close("normal", nil, resolver) }()
 
-	// Retry past DHT propagation lag the same way Resolve does internally.
+	// Retry past DHT propagation lag the same way resolution does internally.
 	var recs []dht.Record
-	for attempt := 0; attempt < resolveRetries; attempt++ {
+	lookupDeadline := time.Now().Add(DefaultResolveTimeout)
+	for time.Now().Before(lookupDeadline) {
 		recs, err = dht.FindRecords(resolverSession, resolver, dht.ContentKey(mcid[:]))
 		if err == nil && len(recs) > 0 {
 			break
 		}
-		time.Sleep(resolveRetryDelay)
+		time.Sleep(retryDelay)
 	}
 	if len(recs) == 0 {
 		t.Fatalf("find_records returned nothing for the record just published (err=%v) -- this is the actual gap under test if it happens", err)
 	}
-	adv, ok := firstTrustedContentProvider(recs)
-	if !ok {
+	providers := trustedContentProviders(recs)
+	if len(providers) == 0 {
 		t.Fatalf("no candidate verified as a trusted content provider -- the DHT publish/resolve/verify path is broken")
 	}
+	adv := providers[0]
 	if string(adv.AnnouncerNode) != string(announcer.NodeID()) || adv.Endpoint != "https://nowhere-listening.invalid.example:4433" {
 		t.Fatalf("resolved announcement fields don't match what was published: %+v", adv)
 	}
