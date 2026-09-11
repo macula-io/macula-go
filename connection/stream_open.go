@@ -17,7 +17,8 @@ import (
 // returned: it is reset and stopped with StreamRefusedCode, nothing is
 // written on it, and a drop warning says why. A stream its peer ends, or
 // sends nothing on, before a first frame is released the same way without a
-// warning.
+// warning. Args that are a map carry the verified caller under "caller", as
+// the 32-byte node id, replacing one the sender put there.
 func (s *Session) AcceptStreamOpen(ctx context.Context, firstFrameTimeout time.Duration) (*FrameStream, frame.StreamOpenInfo, error) {
 	return s.acceptStreamOpen(ctx, firstFrameTimeout, s.AcceptDedicatedStream)
 }
@@ -42,6 +43,7 @@ func (s *Session) acceptStreamOpen(ctx context.Context, firstFrameTimeout time.D
 			s.refuseStream(fs, reason, refusalDetail(first, reason))
 			continue
 		}
+		open.Args = withCaller(open.Args, open.Caller)
 		return fs, open, nil
 	}
 }

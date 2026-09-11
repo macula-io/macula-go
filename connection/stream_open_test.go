@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -192,5 +193,43 @@ func TestAControlFrameThatDoesNotDecodeEndsTheSessionAsMalformed(t *testing.T) {
 	}
 	if err := s.Err(); !errors.Is(err, ErrSessionEnded) || !errors.Is(err, ErrMalformedFrame) {
 		t.Fatalf("the session ended with %v, want ErrSessionEnded wrapping ErrMalformedFrame", err)
+	}
+}
+
+// A verified STREAM_OPEN whose args are a map is handed back with the caller
+// the session verified under "caller", as the 32-byte node id, replacing a
+// "caller" the sender put there and keeping the other args; args that aren't
+// a map are handed back unchanged.
+func TestAStreamOpenThreadsItsCallerIntoTheArgs(t *testing.T) {
+	s, _, _ := readingSession(t)
+	caller, other := registryIdentity(t), registryIdentity(t)
+	openWith := func(args cbor.Value) cbor.Value {
+		streamID := make([]byte, 16)
+		spec := frame.NewStreamOpenSpec(streamID, "p", testRealm(), frame.ServerStream, args, time.Now().Add(time.Minute).UnixMilli(), caller.NodeID())
+		return frame.Sign(frame.StreamOpen(spec), caller)
+	}
+	accept := func(first cbor.Value) frame.StreamOpenInfo {
+		fs, _ := arrivingStream(s, encoded(t, first))
+		_, open, err := s.acceptStreamOpen(context.Background(), time.Second, func(context.Context) (*FrameStream, error) { return fs, nil })
+		if err != nil {
+			t.Fatalf("acceptStreamOpen: %v", err)
+		}
+		return open
+	}
+
+	args := cbor.Map([]cbor.MapEntry{
+		{Key: cbor.Text("caller"), Val: cbor.Bytes(other.NodeID())},
+		{Key: cbor.Text("from"), Val: cbor.Uint64(7)},
+	})
+	open := accept(openWith(args))
+	threaded, _ := open.Args.Get("caller")
+	if got, _ := threaded.AsBytes(); !bytes.Equal(got, caller.NodeID()) {
+		t.Fatalf("args caller = %v, want the verified caller, not the one the sender wrote", threaded)
+	}
+	if from, _ := open.Args.Get("from"); from.String() != cbor.Uint64(7).String() {
+		t.Fatalf("args from = %v, want the sender's 7 kept", from)
+	}
+	if plain := accept(openWith(cbor.Text("not a map"))); plain.Args.String() != cbor.Text("not a map").String() {
+		t.Fatalf("non-map args = %v, want them unchanged", plain.Args)
 	}
 }

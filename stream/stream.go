@@ -103,7 +103,8 @@ func Open(ctx context.Context, session *connection.Session, procedure string, re
 // stream whose first frame isn't that is refused before Accept sees it (see
 // connection.Session.AcceptStreamOpen). Deciding whether to serve a returned
 // stream is the provider's, and a provider that won't serve one turns it
-// down with Handle.Refuse.
+// down with Handle.Refuse. When the STREAM_OPEN's args are a map, they carry
+// the verified caller under "caller".
 func Accept(session *connection.Session, timeout time.Duration) (*Handle, frame.StreamOpenInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
