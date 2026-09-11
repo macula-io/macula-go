@@ -366,15 +366,17 @@ func KeepAdvertisedDirect(ctx context.Context, session *connection.Session, id i
 // another candidate may be tried. A pass in which none qualifies, or every
 // candidate failed before sending, is followed by another after a pause that
 // starts at retryDelay and doubles up to maxRetryDelay. When ctx is done, the
-// error names the last failure seen together with ctx's own.
+// error names the most recent candidate failure together with ctx's own; a
+// pass in which none qualifies, or whose lookup failed, is named instead only
+// while no candidate has failed.
 func eachCandidate[C, T any](ctx context.Context, find func(context.Context) ([]C, error), try func(share context.Context, candidate C) (result T, next bool, err error)) (T, error) {
 	var zero T
-	var last error
+	var unresolved, failed error
 	delay := retryDelay
 	for ctx.Err() == nil {
 		candidates, err := find(ctx)
 		if err != nil {
-			last = err
+			unresolved = err
 		}
 		for i, candidate := range candidates {
 			if ctx.Err() != nil {
@@ -386,12 +388,15 @@ func eachCandidate[C, T any](ctx context.Context, find func(context.Context) ([]
 			if !next {
 				return result, err
 			}
-			last = err
+			failed = err
 		}
 		pause(ctx, delay)
 		delay = min(2*delay, maxRetryDelay)
 	}
-	return zero, settle(last, ctx.Err())
+	if failed != nil {
+		return zero, settle(failed, ctx.Err())
+	}
+	return zero, settle(unresolved, ctx.Err())
 }
 
 // candidateShare is the time one candidate gets for its endpoint lookup and

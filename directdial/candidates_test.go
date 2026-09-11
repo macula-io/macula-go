@@ -37,13 +37,22 @@ var (
 type fakeDHT struct {
 	mu       sync.Mutex
 	replies  map[[32]byte][][]dht.Record
+	failing  map[[32]byte]lookupFailure
 	asked    map[[32]byte]int
 	endpoint map[[32]byte]dht.Record
+}
+
+// lookupFailure makes every FindRecords lookup of a key after the first
+// `after` fail with err.
+type lookupFailure struct {
+	after int
+	err   error
 }
 
 func newFakeDHT() *fakeDHT {
 	return &fakeDHT{
 		replies:  map[[32]byte][][]dht.Record{},
+		failing:  map[[32]byte]lookupFailure{},
 		asked:    map[[32]byte]int{},
 		endpoint: map[[32]byte]dht.Record{},
 	}
@@ -54,6 +63,9 @@ func (f *fakeDHT) findRecords(_ *connection.Session, _ identity.KeyPair, key [32
 	defer f.mu.Unlock()
 	asked := f.asked[key]
 	f.asked[key]++
+	if failure, ok := f.failing[key]; ok && asked >= failure.after {
+		return nil, failure.err
+	}
 	replies := f.replies[key]
 	if len(replies) == 0 {
 		return nil, nil
@@ -717,5 +729,59 @@ func TestCallPicksUpAnEndpointRecordThatChangesMidDeadline(t *testing.T) {
 	}
 	if got := v.seen(); !equalHosts(got, "a-old.test", "a.test") {
 		t.Fatalf("dials = %v, want [a-old.test a.test]", got)
+	}
+}
+
+// errLookupLost is a DHT lookup that fails outright, as when the session it
+// runs on has been closed.
+var errLookupLost = errors.New("test: dht connection lost")
+
+// Once a candidate has failed before sending, a later pass that finds no
+// candidate doesn't take its place: the call reports the refused dial.
+func TestCallReportsTheLastCandidateFailureWhenALaterPassFindsNone(t *testing.T) {
+	a := newStation(t, "a.test")
+	f := newFakeDHT()
+	f.replies[procedureKey()] = [][]dht.Record{{advertisement(t, a, false)}, {}}
+	f.setEndpoint(a, endpointRecord(t, a))
+	install(t, f)
+	installCallAt(t, &visits{}, map[string]callAnswer{"a.test": {err: errUnreachable}})
+
+	_, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), time.Second)
+	if !errors.Is(err, errUnreachable) || errors.Is(err, ErrProcedureNotAdvertised) {
+		t.Fatalf("Call error = %v, want a.test's dial failure rather than ErrProcedureNotAdvertised", err)
+	}
+}
+
+// Nor does a later lookup that fails outright.
+func TestCallReportsTheLastCandidateFailureWhenALaterLookupFails(t *testing.T) {
+	a := newStation(t, "a.test")
+	f := newFakeDHT()
+	f.replies[procedureKey()] = [][]dht.Record{{advertisement(t, a, false)}}
+	f.failing[procedureKey()] = lookupFailure{after: 1, err: errLookupLost}
+	f.setEndpoint(a, endpointRecord(t, a))
+	install(t, f)
+	installCallAt(t, &visits{}, map[string]callAnswer{"a.test": {err: errUnreachable}})
+
+	_, err := Call(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, cbor.Null(), time.Second)
+	if !errors.Is(err, errUnreachable) || errors.Is(err, errLookupLost) {
+		t.Fatalf("Call error = %v, want a.test's dial failure rather than the failed lookup", err)
+	}
+}
+
+// GetDirect reports a provider's failed fetch in the same way when a later
+// content lookup fails.
+func TestGetDirectReportsTheLastCandidateFailureWhenALaterLookupFails(t *testing.T) {
+	a := newStation(t, "a.test")
+	mcid := testMcid()
+	key := dht.ContentKey(mcid[:])
+	f := newFakeDHT()
+	f.replies[key] = [][]dht.Record{{announcement(t, a, mcid)}}
+	f.failing[key] = lookupFailure{after: 1, err: errLookupLost}
+	install(t, f)
+	installFetchAt(t, &visits{}, map[string]fetchAnswer{"a.test": {err: errUnreachable}})
+
+	_, err := GetDirect(context.Background(), nil, mustIdentity(t), mcid, time.Second)
+	if !errors.Is(err, errUnreachable) || errors.Is(err, errLookupLost) {
+		t.Fatalf("GetDirect error = %v, want a.test's failed fetch rather than the failed lookup", err)
 	}
 }
