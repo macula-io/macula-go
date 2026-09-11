@@ -32,11 +32,15 @@ const HandshakeTimeout = 30 * time.Second
 
 // Session is a handshaked connection to a macula-station: the open
 // control stream (CONNECT/HELLO already exchanged) and the station's
-// identity as verified by the HELLO frame's own signature.
+// identity as verified by the HELLO frame's own signature. A session is
+// registered by the identity it connected as and the station it reached
+// until it closes or its connection ends; see SessionFor.
 type Session struct {
-	conn    *quic.Conn
-	control *FrameStream
-	Station frame.HelloInfo
+	conn     *quic.Conn
+	control  *FrameStream
+	Station  frame.HelloInfo
+	identity []byte          // the node id this session connected as
+	done     <-chan struct{} // closed when the connection ends
 }
 
 // Seed is one candidate station to dial — a host/port pair, the same
@@ -125,7 +129,7 @@ func connectOne(ctx context.Context, host string, port uint16, trust transport.T
 	}
 	control := newFrameStream(stream)
 
-	session := &Session{conn: conn, control: control}
+	session := &Session{conn: conn, control: control, identity: id.NodeID(), done: conn.Context().Done()}
 
 	puzzleEvidence := id.PuzzleEvidence()
 	spec := frame.NewConnectSpec(id.NodeID(), puzzleEvidence[:])
@@ -153,6 +157,7 @@ func connectOne(ctx context.Context, host string, port uint16, trust transport.T
 
 	session.Station = station
 	ok = true
+	register(session)
 	return session, nil
 }
 
@@ -166,7 +171,7 @@ func connectOne(ctx context.Context, host string, port uint16, trust transport.T
 // used by RunSubscriber, ServeForever and KeepAdvertised rather than
 // introducing a new signal shape.
 func (s *Session) Done() <-chan struct{} {
-	return s.conn.Context().Done()
+	return s.done
 }
 
 // OpenDedicatedStream opens a new dedicated QUIC stream on this same
@@ -321,6 +326,7 @@ const closeSendTimeout = 1 * time.Second
 // wire protocol doesn't provide for fire-and-forget frames like
 // PUBLISH in the first place).
 func (s *Session) Close(reason string, detail *string, id identity.KeyPair) error {
+	unregister(s)
 	goodbye := frame.Sign(frame.Goodbye(reason, detail), id)
 	_ = s.control.stream.SetWriteDeadline(time.Now().Add(closeSendTimeout)) // bounds the write below -- see closeSendTimeout's own doc
 	_ = s.control.SendFrame(goodbye)                                        // best-effort -- the connection is closing regardless
