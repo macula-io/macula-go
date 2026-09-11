@@ -41,6 +41,7 @@ import (
 	"net"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/macula-io/macula-go/cbor"
@@ -75,14 +76,20 @@ const (
 // ResolveStationEndpoint when their context carries no deadline.
 const DefaultResolveTimeout = 10 * time.Second
 
-// The DHT lookups, and the work done at one station (dial it, then send the
-// request), are variables so tests can drive resolution without a network.
+// The DHT lookups, and the work done at one station, are variables so tests
+// can drive resolution without a network. reuse leases the session this
+// process already holds to a station under an identity, and dial opens one
+// with a lease; callAt dials and sends one CALL; openOn, fetchOn and putOn
+// work on a held session.
 var (
 	findRecords = dht.FindRecordsTimeout
 	findRecord  = dht.FindRecordTimeout
 	callAt      = dialAndCall
-	openAt      = dialAndOpenStream
-	fetchAt     = dialAndFetch
+	reuse       = acquire
+	dial        = dialLeased
+	openOn      = stream.Open
+	fetchOn     = content.Get
+	putOn       = content.Put
 )
 
 var (
@@ -637,53 +644,98 @@ func call(ctx context.Context, find func(context.Context) ([]advertised, error),
 	return resp, nil
 }
 
-// opened is a stream a candidate station accepted, with the session that
-// carries it.
-type opened struct {
-	session *connection.Session
-	handle  *stream.Handle
+// Stream is a stream OpenStreamDirect opened at a provider's station, with the
+// session that carries it. The stream holds that session until Close: a
+// session direct dial opened for it closes once nothing else holds it, and a
+// session this process already held stays open.
+type Stream struct {
+	Handle  *stream.Handle
+	Session *connection.Session
+	held    held
+	closed  sync.Once
+}
+
+// Close gives back the stream's hold on its session. It doesn't end the
+// stream itself; finish or abort that with Handle first. Closing again does
+// nothing.
+func (s *Stream) Close() {
+	s.closed.Do(s.held.Release)
+}
+
+// streamOn opens a stream for procedure on h's session. If it doesn't open,
+// the hold is given back.
+func streamOn(ctx context.Context, h held, id identity.KeyPair, procedure string, realm []byte, mode frame.StreamMode, args cbor.Value, deadlineMs int64) (*Stream, error) {
+	handle, err := openOn(ctx, h.Session(), procedure, realm, mode, args, deadlineMs, id)
+	if err != nil {
+		h.Release()
+		return nil, fmt.Errorf("directdial: open stream: %w", err)
+	}
+	return &Stream{Handle: handle, Session: h.Session(), held: h}, nil
 }
 
 // openStream opens a stream for procedure at the first candidate from find
-// that takes it. timeout bounds resolution and each candidate's endpoint
-// lookup and dial; the stream itself runs under ctx and deadlineMs.
-func openStream(ctx context.Context, find func(context.Context) ([]advertised, error), resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, mode frame.StreamMode, args cbor.Value, deadlineMs int64, timeout time.Duration) (*connection.Session, *stream.Handle, error) {
+// that takes it. At a candidate station this process already holds a session
+// to under id, the stream opens on that session with no endpoint lookup or
+// dial, and its outcome stands, since the STREAM_OPEN may have gone out.
+func openStream(ctx context.Context, find func(context.Context) ([]advertised, error), resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, mode frame.StreamMode, args cbor.Value, deadlineMs int64, timeout time.Duration) (*Stream, error) {
 	resolveCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	seen := attempts{}
-	o, err := eachCandidate(resolveCtx, find, func(share context.Context, adv advertised) (opened, bool, error) {
-		var o opened
+	opened, err := eachCandidate(resolveCtx, find, func(share context.Context, adv advertised) (*Stream, bool, error) {
+		if h, ok := reuse(id, adv.station); ok {
+			s, err := streamOn(ctx, h, id, procedure, realm, mode, args, deadlineMs)
+			return s, false, err
+		}
+		var s *Stream
 		next, err := seen.reach(share, resolveVia, id, adv, func(ep endpoint) (bool, error) {
-			session, handle, sent, openErr := openAt(share, ctx, ep.host, ep.port, adv.station, id, procedure, realm, mode, args, deadlineMs)
-			o = opened{session: session, handle: handle}
-			return sent, openErr
+			h, dialErr := dial(share, ep.host, ep.port, adv.station, id)
+			if dialErr != nil {
+				return false, dialErr
+			}
+			var openErr error
+			s, openErr = streamOn(ctx, h, id, procedure, realm, mode, args, deadlineMs)
+			return true, openErr
 		})
-		return o, next, err
+		return s, next, err
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("directdial: %s: %w", procedure, err)
+		return nil, fmt.Errorf("directdial: %s: %w", procedure, err)
 	}
-	return o.session, o.handle, nil
+	return opened, nil
 }
 
-// dialAndVerify dials host:port and checks the freshly connected session's
-// own signature-verified HELLO identity against station — the shared
-// second half of every direct-dial call shape (Call, CallWithCertChain, and
-// now OpenStreamDirect/OpenStreamDirectWithCertChain), factored out once
-// PutDirect/GetDirect needed the same dial-then-pin sequence against a
-// station identity that ISN'T necessarily reached via Resolve.
-func dialAndVerify(ctx context.Context, host string, port uint16, station []byte, id identity.KeyPair) (*connection.Session, error) {
-	target, err := connection.Connect(ctx, host, port, transport.Insecure{}, id)
+// held is a hold on a session for one piece of work: a lease on a session
+// this process already held, or on one dialled for the work.
+type held interface {
+	Session() *connection.Session
+	Release()
+}
+
+// acquire leases the session this process holds to station under id, if any.
+func acquire(id identity.KeyPair, station []byte) (held, bool) {
+	lease, ok := connection.Acquire(id, station)
+	if !ok {
+		return nil, false
+	}
+	return lease, true
+}
+
+// dialLeased dials host:port for station under id, holding a lease on the new
+// session, and checks the session's own signature-verified HELLO identity
+// against station. A session that proves another identity is released, which
+// closes it.
+func dialLeased(ctx context.Context, host string, port uint16, station []byte, id identity.KeyPair) (held, error) {
+	lease, err := connection.DialLeased(ctx, host, port, transport.Insecure{}, id)
 	if err != nil {
 		return nil, fmt.Errorf("directdial: dial resolved station %x at %s:%d: %w", station, host, port, err)
 	}
-	if !bytesEqual(target.Station.NodeID, station) {
-		_ = target.Close("normal", nil, id)
+	if proved := lease.Session().Station.NodeID; !bytesEqual(proved, station) {
+		lease.Release()
 		return nil, fmt.Errorf(
 			"directdial: trust violation — resolved station %x but the dialed peer proved identity %x",
-			station, target.Station.NodeID)
+			station, proved)
 	}
-	return target, nil
+	return lease, nil
 }
 
 // dialAndCall dials station at host and port within dialCtx, pins its
@@ -691,11 +743,12 @@ func dialAndVerify(ctx context.Context, host string, port uint16, station []byte
 // ucanToken when it is not nil. sent reports whether the CALL went out;
 // until then nothing reached the station.
 func dialAndCall(dialCtx context.Context, deadline time.Time, host string, port uint16, station []byte, id identity.KeyPair, procedure string, realm []byte, payload cbor.Value, ucanToken []byte) (resp frame.CallResponse, sent bool, err error) {
-	target, err := dialAndVerify(dialCtx, host, port, station, id)
+	h, err := dial(dialCtx, host, port, station, id)
 	if err != nil {
 		return frame.CallResponse{}, false, err
 	}
-	defer func() { _ = target.Close("normal", nil, id) }()
+	defer h.Release()
+	target := h.Session()
 	if ucanToken == nil {
 		resp, err = target.Call(procedure, realm, payload, deadline.UnixMilli(), id, time.Until(deadline))
 		return resp, true, err
@@ -704,39 +757,12 @@ func dialAndCall(dialCtx context.Context, deadline time.Time, host string, port 
 	return resp, true, err
 }
 
-// dialAndOpenStream dials station at host and port within dialCtx, pins its
-// identity, and opens a stream there under streamCtx. sent reports whether
-// the stream's opening frame may have gone out; until then nothing reached
-// the station. The caller owns the returned session.
-func dialAndOpenStream(dialCtx, streamCtx context.Context, host string, port uint16, station []byte, id identity.KeyPair, procedure string, realm []byte, mode frame.StreamMode, args cbor.Value, deadlineMs int64) (target *connection.Session, h *stream.Handle, sent bool, err error) {
-	target, err = dialAndVerify(dialCtx, host, port, station, id)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	h, err = stream.Open(streamCtx, target, procedure, realm, mode, args, deadlineMs, id)
-	if err != nil {
-		_ = target.Close("normal", nil, id)
-		return nil, nil, true, fmt.Errorf("directdial: open stream: %w", err)
-	}
-	return target, h, true, nil
-}
-
-// dialAndFetch dials node at host and port within dialCtx, pins its
-// identity, and fetches mcid there under fetchCtx. content.Get verifies what
-// it receives against mcid.
-func dialAndFetch(dialCtx, fetchCtx context.Context, host string, port uint16, node []byte, id identity.KeyPair, mcid manifest.Mcid) ([]byte, error) {
-	target, err := dialAndVerify(dialCtx, host, port, node, id)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = target.Close("normal", nil, id) }()
-	return content.Get(fetchCtx, target, mcid, id)
-}
-
 // OpenStreamDirect resolves procedure's provider via direct-dial (through
 // resolveVia, which is used only to query the DHT) and opens a stream
-// there, in one hop, in a SEPARATE connection from resolveVia — the
-// streaming-RPC counterpart to Call. The provider must have advertised via
+// there, in one hop — the streaming-RPC counterpart to Call. When this process
+// already holds a session to the provider's station under id (resolveVia
+// itself, a pool link, or a session another direct dial opened), the stream
+// opens on that session instead of a new dial. The provider must have advertised via
 // AdvertiseDirect: streaming's provider side (macula_streamer.erl) shares
 // the identical procedure_advertisement mechanism RPC uses (confirmed
 // against macula_streamer.erl/macula_stream_sink.erl's own advertise_direct/
@@ -744,14 +770,13 @@ func dialAndFetch(dialCtx, fetchCtx context.Context, host string, port uint16, n
 // macula_direct_dial:call_stream under the hood, nothing stream-specific
 // added), so no separate stream-shaped AdvertiseDirect exists or is needed.
 //
-// The caller owns the returned *connection.Session (and must Close it once
-// the stream and any other work on it is done) alongside the *stream.Handle
-// itself, since — unlike Call, which owns its dial for exactly one
-// request/reply — a stream outlives the single function call that opens it.
+// The returned Stream holds its session until Stream.Close, since — unlike
+// Call, which holds its session for exactly one request/reply — a stream
+// outlives the single function call that opens it.
 //
 // timeout bounds resolution and each candidate's endpoint lookup and dial;
 // the stream itself runs under ctx and deadlineMs.
-func OpenStreamDirect(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, mode frame.StreamMode, args cbor.Value, deadlineMs int64, timeout time.Duration) (*connection.Session, *stream.Handle, error) {
+func OpenStreamDirect(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, mode frame.StreamMode, args cbor.Value, deadlineMs int64, timeout time.Duration) (*Stream, error) {
 	return openStream(ctx, advertisedStations(resolveVia, id, realm, procedure), resolveVia, id, realm, procedure, mode, args, deadlineMs, timeout)
 }
 
@@ -759,7 +784,7 @@ func OpenStreamDirect(ctx context.Context, resolveVia *connection.Session, id id
 // ResolveWithCertChain instead of Resolve — see both for the full
 // contract. Opt-in managed-realm authorization; OpenStreamDirect itself is
 // unaffected.
-func OpenStreamDirectWithCertChain(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, realmCAPEM []byte, expectedOrg string, mode frame.StreamMode, args cbor.Value, deadlineMs int64, timeout time.Duration) (*connection.Session, *stream.Handle, error) {
+func OpenStreamDirectWithCertChain(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, realm []byte, procedure string, realmCAPEM []byte, expectedOrg string, mode frame.StreamMode, args cbor.Value, deadlineMs int64, timeout time.Duration) (*Stream, error) {
 	return openStream(ctx, authorizedStations(resolveVia, id, realm, procedure, realmCAPEM, expectedOrg), resolveVia, id, realm, procedure, mode, args, deadlineMs, timeout)
 }
 
@@ -773,36 +798,35 @@ func OpenStreamDirectWithCertChain(ctx context.Context, resolveVia *connection.S
 // resolveVia is used only to query the DHT for station's station_endpoint;
 // it does not need to already be connected to station.
 //
-// Caveat found live: if resolveVia happens to already be connected to
-// station (the common case when the caller doesn't have a separate
-// resolver session), PutDirect's own internal dial reuses id against the
-// SAME station resolveVia is on — this fleet enforces one connection per
-// identity and kicks whichever connects second, so resolveVia's own
-// connection can be closed out from under the caller by this call. Use a
-// different identity for resolveVia than for id if the caller needs
-// resolveVia to keep working afterward against that same station.
+// When this process already holds a session to station under id, such as
+// resolveVia itself, the put runs on that session with no endpoint lookup or
+// dial. A station keeps one connection per identity, so dialing it again
+// would close that session.
 //
 // timeout bounds the station endpoint lookup and the dial; the put itself
 // runs under ctx.
 func PutDirect(ctx context.Context, resolveVia *connection.Session, id identity.KeyPair, station []byte, data []byte, name string, timeout time.Duration) (manifest.Mcid, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ep, err := stationEndpoint(dialCtx, resolveVia, id, station)
-	if err != nil {
-		return manifest.Mcid{}, fmt.Errorf("directdial: resolve station %x: %w", station, err)
+	h, ok := reuse(id, station)
+	if !ok {
+		ep, err := stationEndpoint(dialCtx, resolveVia, id, station)
+		if err != nil {
+			return manifest.Mcid{}, fmt.Errorf("directdial: resolve station %x: %w", station, err)
+		}
+		if h, err = dial(dialCtx, ep.host, ep.port, station, id); err != nil {
+			return manifest.Mcid{}, err
+		}
 	}
-	target, err := dialAndVerify(dialCtx, ep.host, ep.port, station, id)
-	if err != nil {
-		return manifest.Mcid{}, err
-	}
-	defer func() { _ = target.Close("normal", nil, id) }()
-	return content.Put(ctx, target, data, name, id)
+	defer h.Release()
+	return putOn(ctx, h.Session(), data, name, id)
 }
 
 // GetDirect fetches and verifies the content addressed by mcid from
 // whichever station a signed content_announcement names as its host,
-// dialing that station in one hop instead of relaying through resolveVia's
-// own station. Mirrors macula_direct_dial:get_content/3.
+// dialing that station in one hop, or using a session this process already
+// holds to it under id, instead of relaying through resolveVia's own
+// station. Mirrors macula_direct_dial:get_content/3.
 //
 // Architectural note this package's other direct-dial functions don't need:
 // a content_announcement's endpoint is the FINAL dial target directly (see
@@ -854,14 +878,22 @@ func GetDirect(ctx context.Context, resolveVia *connection.Session, id identity.
 	})
 }
 
-// fetchFrom fetches mcid from provider, dialling its endpoint within dialCtx
-// and transferring under fetchCtx.
+// fetchFrom fetches mcid from provider under fetchCtx: on the session this
+// process already holds to the provider under id, or else by dialling its
+// endpoint within dialCtx.
 func fetchFrom(dialCtx, fetchCtx context.Context, provider announced, id identity.KeyPair, mcid manifest.Mcid) ([]byte, error) {
-	host, port, err := parseSeedURL(provider.Endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("directdial: content provider endpoint %q: %w", provider.Endpoint, err)
+	h, ok := reuse(id, provider.AnnouncerNode)
+	if !ok {
+		host, port, err := parseSeedURL(provider.Endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("directdial: content provider endpoint %q: %w", provider.Endpoint, err)
+		}
+		if h, err = dial(dialCtx, host, port, provider.AnnouncerNode, id); err != nil {
+			return nil, err
+		}
 	}
-	return fetchAt(dialCtx, fetchCtx, host, port, provider.AnnouncerNode, id, mcid)
+	defer h.Release()
+	return fetchOn(fetchCtx, h.Session(), mcid, id)
 }
 
 // ErrContentNotAnnounced means mcid has no live, verifiable

@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,6 +41,8 @@ type fakeDHT struct {
 	failing  map[[32]byte]lookupFailure
 	asked    map[[32]byte]int
 	endpoint map[[32]byte]dht.Record
+	// endpointAsked counts station_endpoint lookups by key.
+	endpointAsked map[[32]byte]int
 }
 
 // lookupFailure makes every FindRecords lookup of a key after the first
@@ -55,6 +58,8 @@ func newFakeDHT() *fakeDHT {
 		failing:  map[[32]byte]lookupFailure{},
 		asked:    map[[32]byte]int{},
 		endpoint: map[[32]byte]dht.Record{},
+
+		endpointAsked: map[[32]byte]int{},
 	}
 }
 
@@ -90,11 +95,19 @@ func (f *fakeDHT) setEndpoint(s station, rec dht.Record) {
 func (f *fakeDHT) findRecord(_ *connection.Session, _ identity.KeyPair, key [32]byte, _ time.Duration) (dht.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.endpointAsked[key]++
 	rec, ok := f.endpoint[key]
 	if !ok {
 		return dht.Record{}, dht.ErrNotFound
 	}
 	return rec, nil
+}
+
+// endpointLookups is how many times st's station_endpoint record was looked up.
+func (f *fakeDHT) endpointLookups(st station) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.endpointAsked[dht.StationEndpointKey(st.id.NodeID())]
 }
 
 // install points the package's lookup variables at f for the rest of t.
@@ -161,11 +174,104 @@ type fetchAnswer struct {
 	err  error
 }
 
-// installFetchAt answers fetchAt per host from answers, recording each host asked.
-func installFetchAt(t *testing.T, v *visits, answers map[string]fetchAnswer) {
+// stationSessions gives each host a fake session, so the per-session seams can
+// tell which station they were asked to work on, and counts each host's
+// releases.
+type stationSessions struct {
+	mu       sync.Mutex
+	byHost   map[string]*connection.Session
+	hostOf   map[*connection.Session]string
+	releases map[string]*atomic.Int32
+}
+
+func newStationSessions() *stationSessions {
+	return &stationSessions{
+		byHost:   map[string]*connection.Session{},
+		hostOf:   map[*connection.Session]string{},
+		releases: map[string]*atomic.Int32{},
+	}
+}
+
+// held is a hold on host's fake session.
+func (ss *stationSessions) held(host string) fakeHeld {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	s, ok := ss.byHost[host]
+	if !ok {
+		s = &connection.Session{}
+		ss.byHost[host] = s
+		ss.hostOf[s] = host
+		ss.releases[host] = &atomic.Int32{}
+	}
+	return fakeHeld{session: s, releases: ss.releases[host]}
+}
+
+func (ss *stationSessions) host(s *connection.Session) string {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	return ss.hostOf[s]
+}
+
+// released is how many times host's session was released.
+func (ss *stationSessions) released(host string) int32 {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	if n, ok := ss.releases[host]; ok {
+		return n.Load()
+	}
+	return 0
+}
+
+// fakeHeld is a hold on a fake session that counts its releases.
+type fakeHeld struct {
+	session  *connection.Session
+	releases *atomic.Int32
+}
+
+func (h fakeHeld) Session() *connection.Session { return h.session }
+func (h fakeHeld) Release()                     { h.releases.Add(1) }
+
+// installDial answers dial per host with answer, recording each host dialled.
+func installDial(t *testing.T, v *visits, answer func(host string) (held, error)) {
 	t.Helper()
-	old := fetchAt
-	fetchAt = func(_, _ context.Context, host string, _ uint16, _ []byte, _ identity.KeyPair, _ manifest.Mcid) ([]byte, error) {
+	old := dial
+	dial = func(_ context.Context, host string, _ uint16, _ []byte, _ identity.KeyPair) (held, error) {
+		v.add(host)
+		return answer(host)
+	}
+	t.Cleanup(func() { dial = old })
+}
+
+// installReuse makes st's session one this process already holds.
+func installReuse(t *testing.T, ss *stationSessions, st station) {
+	t.Helper()
+	old := reuse
+	reuse = func(_ identity.KeyPair, node []byte) (held, bool) {
+		if bytesEqual(node, st.id.NodeID()) {
+			return ss.held(st.host), true
+		}
+		return nil, false
+	}
+	t.Cleanup(func() { reuse = old })
+}
+
+// installFetchAt dials every provider and answers each fetch per host from
+// answers, recording each host fetched from.
+func installFetchAt(t *testing.T, v *visits, answers map[string]fetchAnswer) *stationSessions {
+	t.Helper()
+	ss := newStationSessions()
+	installDial(t, &visits{}, func(host string) (held, error) { return ss.held(host), nil })
+	installFetchOn(t, ss, v, answers)
+	return ss
+}
+
+// installFetchOn answers each fetch on a session per host from answers,
+// recording each host fetched from.
+func installFetchOn(t *testing.T, ss *stationSessions, v *visits, answers map[string]fetchAnswer) {
+	t.Helper()
+	old := fetchOn
+	fetchOn = func(_ context.Context, s *connection.Session, _ manifest.Mcid, _ identity.KeyPair) ([]byte, error) {
+		host := ss.host(s)
 		v.add(host)
 		a, ok := answers[host]
 		if !ok {
@@ -173,7 +279,20 @@ func installFetchAt(t *testing.T, v *visits, answers map[string]fetchAnswer) {
 		}
 		return a.data, a.err
 	}
-	t.Cleanup(func() { fetchAt = old })
+	t.Cleanup(func() { fetchOn = old })
+}
+
+// installPutOn answers each put on a session per host from answers, recording
+// each host put to.
+func installPutOn(t *testing.T, ss *stationSessions, v *visits, answers map[string]error) {
+	t.Helper()
+	old := putOn
+	putOn = func(_ context.Context, s *connection.Session, _ []byte, _ string, _ identity.KeyPair) (manifest.Mcid, error) {
+		host := ss.host(s)
+		v.add(host)
+		return manifest.Mcid{}, answers[host]
+	}
+	t.Cleanup(func() { putOn = old })
 }
 
 // station is a test station: its identity and the host its endpoint record advertises.
@@ -394,9 +513,9 @@ func TestOpenStreamDirectTriesTheNextStationWhenADialFails(t *testing.T) {
 	install(t, f)
 	v := installOpenAt(t, map[string]bool{"b.test": true}, nil)
 
-	_, h, err := OpenStreamDirect(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, frame.ServerStream, cbor.Null(), time.Now().Add(time.Minute).UnixMilli(), 3*time.Second)
-	if err != nil || h == nil {
-		t.Fatalf("OpenStreamDirect = (%v, %v), want a stream at b.test", h, err)
+	s, err := OpenStreamDirect(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, frame.ServerStream, cbor.Null(), time.Now().Add(time.Minute).UnixMilli(), 3*time.Second)
+	if err != nil || s == nil {
+		t.Fatalf("OpenStreamDirect = (%v, %v), want a stream at b.test", s, err)
 	}
 	if got := v.seen(); !equalHosts(got, "a.test", "b.test") {
 		t.Fatalf("stations reached = %v, want [a.test b.test]", got)
@@ -414,7 +533,7 @@ func TestOpenStreamDirectNeverOpensTheStreamTwice(t *testing.T) {
 	refused := errors.New("test: stream refused after its opening frame went out")
 	v := installOpenAt(t, map[string]bool{"b.test": true}, map[string]error{"a.test": refused})
 
-	_, _, err := OpenStreamDirect(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, frame.ServerStream, cbor.Null(), time.Now().Add(time.Minute).UnixMilli(), 3*time.Second)
+	_, err := OpenStreamDirect(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, frame.ServerStream, cbor.Null(), time.Now().Add(time.Minute).UnixMilli(), 3*time.Second)
 	if !errors.Is(err, refused) {
 		t.Fatalf("OpenStreamDirect error = %v, want a.test's error", err)
 	}
@@ -423,24 +542,33 @@ func TestOpenStreamDirectNeverOpensTheStreamTwice(t *testing.T) {
 	}
 }
 
-// installOpenAt opens a stream at every host in opens, fails after sending at
-// every host in refusals, and fails the dial everywhere else.
+// installOpenAt dials the hosts in opens and refusals, fails to dial any other,
+// and opens a stream on a session unless its host is in refusals.
 func installOpenAt(t *testing.T, opens map[string]bool, refusals map[string]error) *visits {
 	t.Helper()
 	v := &visits{}
-	old := openAt
-	openAt = func(_, _ context.Context, host string, _ uint16, _ []byte, _ identity.KeyPair, _ string, _ []byte, _ frame.StreamMode, _ cbor.Value, _ int64) (*connection.Session, *stream.Handle, bool, error) {
-		v.add(host)
-		if err, ok := refusals[host]; ok {
-			return nil, nil, true, err
+	ss := newStationSessions()
+	installDial(t, v, func(host string) (held, error) {
+		if opens[host] || refusals[host] != nil {
+			return ss.held(host), nil
 		}
-		if opens[host] {
-			return &connection.Session{}, &stream.Handle{}, true, nil
-		}
-		return nil, nil, false, errUnreachable
-	}
-	t.Cleanup(func() { openAt = old })
+		return nil, errUnreachable
+	})
+	installOpenOn(t, ss, refusals)
 	return v
+}
+
+// installOpenOn opens a stream on any session unless its host refuses.
+func installOpenOn(t *testing.T, ss *stationSessions, refusals map[string]error) {
+	t.Helper()
+	old := openOn
+	openOn = func(_ context.Context, s *connection.Session, _ string, _ []byte, _ frame.StreamMode, _ cbor.Value, _ int64, _ identity.KeyPair) (*stream.Handle, error) {
+		if err := refusals[ss.host(s)]; err != nil {
+			return nil, err
+		}
+		return &stream.Handle{}, nil
+	}
+	t.Cleanup(func() { openOn = old })
 }
 
 // When no provider has announced the content yet, GetDirect asks again until one has.
@@ -783,5 +911,150 @@ func TestGetDirectReportsTheLastCandidateFailureWhenALaterLookupFails(t *testing
 	_, err := GetDirect(context.Background(), nil, mustIdentity(t), mcid, time.Second)
 	if !errors.Is(err, errUnreachable) || errors.Is(err, errLookupLost) {
 		t.Fatalf("GetDirect error = %v, want a.test's failed fetch rather than the failed lookup", err)
+	}
+}
+
+// A session this process already holds to a provider's station carries a
+// direct stream: no endpoint lookup, no dial, and closing the stream gives the
+// hold back.
+func TestOpenStreamDirectReusesAnOpenSessionToTheProviderStation(t *testing.T) {
+	a := newStation(t, "a.test")
+	f := newFakeDHT()
+	f.replies[procedureKey()] = [][]dht.Record{{advertisement(t, a, false)}}
+	install(t, f)
+	ss := newStationSessions()
+	installReuse(t, ss, a)
+	dials := &visits{}
+	installDial(t, dials, func(string) (held, error) { return nil, errUnreachable })
+	installOpenOn(t, ss, nil)
+
+	s, err := OpenStreamDirect(context.Background(), nil, mustIdentity(t), testRealm, testProcedure, frame.ServerStream, cbor.Null(), 0, 2*time.Second)
+	if err != nil || s == nil || s.Session != ss.held("a.test").session {
+		t.Fatalf("OpenStreamDirect = (%v, %v), want a stream on the session held to a.test", s, err)
+	}
+	if got := dials.seen(); len(got) != 0 {
+		t.Fatalf("dials = %v, want none", got)
+	}
+	if n := f.endpointLookups(a); n != 0 {
+		t.Fatalf("endpoint lookups for a.test = %d, want none", n)
+	}
+	if n := ss.released("a.test"); n != 0 {
+		t.Fatalf("releases before Close = %d, want 0", n)
+	}
+	s.Close()
+	if n := ss.released("a.test"); n != 1 {
+		t.Fatalf("releases after Close = %d, want 1", n)
+	}
+}
+
+// A content fetch uses a session this process already holds to the provider.
+func TestGetDirectReusesAnOpenSessionToTheProviderStation(t *testing.T) {
+	a := newStation(t, "a.test")
+	mcid := testMcid()
+	f := newFakeDHT()
+	f.replies[dht.ContentKey(mcid[:])] = [][]dht.Record{{announcement(t, a, mcid)}}
+	install(t, f)
+	ss := newStationSessions()
+	installReuse(t, ss, a)
+	dials := &visits{}
+	installDial(t, dials, func(string) (held, error) { return nil, errUnreachable })
+	fetches := &visits{}
+	installFetchOn(t, ss, fetches, map[string]fetchAnswer{"a.test": {data: []byte("content")}})
+
+	data, err := GetDirect(context.Background(), nil, mustIdentity(t), mcid, 2*time.Second)
+	if err != nil || string(data) != "content" {
+		t.Fatalf("GetDirect = (%q, %v), want the content from a.test", data, err)
+	}
+	if got := dials.seen(); len(got) != 0 {
+		t.Fatalf("dials = %v, want none", got)
+	}
+	if got := fetches.seen(); !equalHosts(got, "a.test") {
+		t.Fatalf("fetches = %v, want [a.test]", got)
+	}
+	if n := ss.released("a.test"); n != 1 {
+		t.Fatalf("releases = %d, want 1", n)
+	}
+}
+
+// A put uses a session this process already holds to the station: no endpoint
+// lookup and no dial.
+func TestPutDirectReusesAnOpenSessionToTheStation(t *testing.T) {
+	a := newStation(t, "a.test")
+	f := newFakeDHT()
+	install(t, f)
+	ss := newStationSessions()
+	installReuse(t, ss, a)
+	dials := &visits{}
+	installDial(t, dials, func(string) (held, error) { return nil, errUnreachable })
+	puts := &visits{}
+	installPutOn(t, ss, puts, nil)
+
+	if _, err := PutDirect(context.Background(), nil, mustIdentity(t), a.id.NodeID(), []byte("data"), "name", 2*time.Second); err != nil {
+		t.Fatalf("PutDirect: %v", err)
+	}
+	if got := dials.seen(); len(got) != 0 {
+		t.Fatalf("dials = %v, want none", got)
+	}
+	if n := f.endpointLookups(a); n != 0 {
+		t.Fatalf("endpoint lookups for a.test = %d, want none", n)
+	}
+	if got := puts.seen(); !equalHosts(got, "a.test") {
+		t.Fatalf("puts = %v, want [a.test]", got)
+	}
+	if n := ss.released("a.test"); n != 1 {
+		t.Fatalf("releases = %d, want 1", n)
+	}
+}
+
+// A request that fails on a reused session gives its hold back once and does
+// nothing else to that session; a fetch then moves on to the next provider.
+func TestAReusedSessionIsNeverClosedByTheRequest(t *testing.T) {
+	a, b := newStation(t, "a.test"), newStation(t, "b.test")
+	mcid := testMcid()
+	f := newFakeDHT()
+	f.replies[dht.ContentKey(mcid[:])] = [][]dht.Record{{announcement(t, a, mcid), announcement(t, b, mcid)}}
+	install(t, f)
+	ss := newStationSessions()
+	installReuse(t, ss, a)
+	installDial(t, &visits{}, func(host string) (held, error) { return ss.held(host), nil })
+	fetches := &visits{}
+	installFetchOn(t, ss, fetches, map[string]fetchAnswer{
+		"a.test": {err: errors.New("test: content failed verification")},
+		"b.test": {data: []byte("content")},
+	})
+
+	data, err := GetDirect(context.Background(), nil, mustIdentity(t), mcid, 2*time.Second)
+	if err != nil || string(data) != "content" {
+		t.Fatalf("GetDirect = (%q, %v), want the content from b.test", data, err)
+	}
+	if got := fetches.seen(); !equalHosts(got, "a.test", "b.test") {
+		t.Fatalf("fetches = %v, want [a.test b.test]", got)
+	}
+	if n := ss.released("a.test"); n != 1 {
+		t.Fatalf("releases of the reused session = %d, want 1", n)
+	}
+}
+
+// A session dialled for a request is given back, which closes it, even when
+// the request fails.
+func TestADialedSessionIsClosedAfterTheRequestEvenWhenItFails(t *testing.T) {
+	a := newStation(t, "a.test")
+	f := newFakeDHT()
+	f.setEndpoint(a, endpointRecord(t, a))
+	install(t, f)
+	ss := newStationSessions()
+	dials := &visits{}
+	installDial(t, dials, func(host string) (held, error) { return ss.held(host), nil })
+	installPutOn(t, ss, &visits{}, map[string]error{"a.test": errUnreachable})
+
+	_, err := PutDirect(context.Background(), nil, mustIdentity(t), a.id.NodeID(), []byte("data"), "name", 2*time.Second)
+	if !errors.Is(err, errUnreachable) {
+		t.Fatalf("PutDirect error = %v, want the put's failure", err)
+	}
+	if got := dials.seen(); !equalHosts(got, "a.test") {
+		t.Fatalf("dials = %v, want [a.test]", got)
+	}
+	if n := ss.released("a.test"); n != 1 {
+		t.Fatalf("releases of the dialled session = %d, want 1", n)
 	}
 }

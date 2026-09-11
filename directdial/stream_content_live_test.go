@@ -103,14 +103,15 @@ func TestLiveOpenStreamDirectRoundTrip(t *testing.T) {
 	}
 	defer func() { _ = resolveVia.Close("normal", nil, callerID) }()
 
-	target, callerHandle, err := OpenStreamDirect(ctx, resolveVia, callerID, realm, procedure, frame.ServerStream, cbor.Null(), time.Now().Add(15*time.Second).UnixMilli(), 15*time.Second)
+	callerStream, err := OpenStreamDirect(ctx, resolveVia, callerID, realm, procedure, frame.ServerStream, cbor.Null(), time.Now().Add(15*time.Second).UnixMilli(), 15*time.Second)
 	if err != nil {
 		if errors.Is(err, ErrStationEndpointNotFound) {
 			t.Skipf("Resolve found no live, host-bearing station_endpoint -- known external relay-side gap, not a failure of this package: %v", err)
 		}
 		t.Fatalf("OpenStreamDirect: %v (this is the fix under test -- the provider advertised but the stream never reached it)", err)
 	}
-	defer func() { _ = target.Close("normal", nil, callerID) }()
+	defer callerStream.Close()
+	callerHandle := callerStream.Handle
 
 	accepted := <-acceptCh
 	if accepted.err != nil {

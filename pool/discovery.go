@@ -250,7 +250,7 @@ func stationNodeID(st cbor.Value) ([]byte, bool) {
 // fleet (mesh_list_stations, 2026-09-05) that host_advertised there is
 // ALWAYS a bare IPv6 literal, never a DNS name, on every single
 // station row. directdial can dial that safely because
-// directdial.dialAndVerify uses transport.Insecure{} and verifies
+// directdial's dialLeased uses transport.Insecure{} and verifies
 // trust by matching the resolved station's NODE ID instead -- it
 // never depends on the peer's TLS certificate covering the address
 // dialed. This package's addLink uses p.opts.Trust, which for any real
