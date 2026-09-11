@@ -102,24 +102,30 @@ func (s *Session) ServeOneCallGated(lookup CallLookup, policy PolicyLookup, id i
 			}
 			return fmt.Errorf("connection: serve_one_call: %w", err)
 		}
-		ft, ok := value.Get("frame_type")
-		if !ok {
-			continue
+		reply, isCall := replyToFrame(s, value, lookup, policy, id)
+		if !isCall {
+			continue // not a CALL to answer -- see this method's doc on the limitation
 		}
-		if t, _ := ft.AsText(); t != "call" {
-			continue // not ours -- see this method's doc on the limitation
-		}
-		callInfo, err := frame.ParseCall(value)
-		if err != nil {
-			continue // a malformed "call"-typed frame -- ignore and keep serving
-		}
-		return s.replyToCall(callInfo, lookup, policy, id)
+		return s.control.SendFrame(frame.Sign(reply, id))
 	}
 }
 
-func (s *Session) replyToCall(callInfo frame.CallInfo, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) error {
-	reply := buildCallReply(s, callInfo, lookup, policy, id)
-	return s.control.SendFrame(frame.Sign(reply, id))
+// replyToFrame builds the reply to an inbound frame and reports whether it
+// was a CALL to answer. A frame of another type, or a malformed "call"-typed
+// frame, gets no reply, and the serve loop keeps going.
+func replyToFrame(s *Session, value cbor.Value, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) (cbor.Value, bool) {
+	ft, ok := value.Get("frame_type")
+	if !ok {
+		return cbor.Value{}, false
+	}
+	if t, _ := ft.AsText(); t != "call" {
+		return cbor.Value{}, false
+	}
+	callInfo, err := frame.ParseCall(value)
+	if err != nil {
+		return cbor.Value{}, false
+	}
+	return buildCallReply(s, callInfo, lookup, policy, id), true
 }
 
 // buildCallReply fires rpc.received_v1/rpc.replied_v1 around dispatch,
