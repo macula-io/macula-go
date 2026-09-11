@@ -20,6 +20,7 @@ type fakeQUICStream struct {
 	errs           []error
 	idx            int
 	written        int
+	cancels        []quic.StreamErrorCode // every cancel, send and receive side alike, in order
 }
 
 func (f *fakeQUICStream) Read(p []byte) (int, error) {
@@ -37,11 +38,18 @@ func (f *fakeQUICStream) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (f *fakeQUICStream) Close() error                          { return nil }
-func (f *fakeQUICStream) SetReadDeadline(time.Time) error       { return nil }
-func (f *fakeQUICStream) SetWriteDeadline(time.Time) error      { return nil }
-func (f *fakeQUICStream) CancelRead(code quic.StreamErrorCode)  { f.cancelledRead = &code }
-func (f *fakeQUICStream) CancelWrite(code quic.StreamErrorCode) { f.cancelledWrite = &code }
+func (f *fakeQUICStream) Close() error                     { return nil }
+func (f *fakeQUICStream) SetReadDeadline(time.Time) error  { return nil }
+func (f *fakeQUICStream) SetWriteDeadline(time.Time) error { return nil }
+func (f *fakeQUICStream) CancelRead(code quic.StreamErrorCode) {
+	f.cancelledRead = &code
+	f.cancels = append(f.cancels, code)
+}
+
+func (f *fakeQUICStream) CancelWrite(code quic.StreamErrorCode) {
+	f.cancelledWrite = &code
+	f.cancels = append(f.cancels, code)
+}
 
 func TestAbortingAFrameStreamCancelsBothDirectionsWithItsCode(t *testing.T) {
 	stream := &fakeQUICStream{}

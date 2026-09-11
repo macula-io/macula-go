@@ -25,14 +25,14 @@ func streamOpenFrom(caller identity.KeyPair, procedure string) cbor.Value {
 	return frame.StreamOpen(spec)
 }
 
-// arrivingStream is a dedicated stream whose peer sent data, or nothing when
-// data is nil, and then finished.
-func arrivingStream(data []byte) (*FrameStream, *fakeQUICStream) {
+// arrivingStream is a dedicated stream accepted on s whose peer sent data,
+// or nothing when data is nil, and then finished.
+func arrivingStream(s *Session, data []byte) (*FrameStream, *fakeQUICStream) {
 	fake := &fakeQUICStream{}
 	if data != nil {
 		fake.reads, fake.errs = [][]byte{data}, []error{nil}
 	}
-	return &FrameStream{stream: fake}, fake
+	return &FrameStream{stream: fake, session: s}, fake
 }
 
 func encoded(t *testing.T, v cbor.Value) []byte {
@@ -69,8 +69,8 @@ func TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt(t *testing.T) {
 			s, _, _ := readingSession(t)
 			logged := &lockedBuffer{}
 			s.SetLogger(slog.New(slog.NewTextHandler(logged, nil)))
-			refused, refusedFake := arrivingStream(tc.first)
-			genuine, genuineFake := arrivingStream(encoded(t, frame.Sign(streamOpenFrom(caller, "genuine"), caller)))
+			refused, refusedFake := arrivingStream(s, tc.first)
+			genuine, genuineFake := arrivingStream(s, encoded(t, frame.Sign(streamOpenFrom(caller, "genuine"), caller)))
 			pending := []*FrameStream{refused, genuine}
 			accept := func(context.Context) (*FrameStream, error) {
 				next := pending[0]
@@ -82,13 +82,13 @@ func TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt(t *testing.T) {
 			if err != nil || fs != genuine || open.Procedure != "genuine" {
 				t.Fatalf("accepted %q (err %v), want only the verified STREAM_OPEN", open.Procedure, err)
 			}
-			if w, r := refusedFake.cancelledWrite, refusedFake.cancelledRead; w == nil || *w != StreamRefusedCode || r == nil || *r != StreamRefusedCode {
-				t.Fatalf("the refused stream was reset with %v and stopped with %v, want both with code %d", w, r, StreamRefusedCode)
+			if c := refusedFake.cancels; len(c) != 2 || c[0] != StreamRefusedCode || c[1] != StreamRefusedCode {
+				t.Fatalf("the refused stream was cancelled with %v, want one reset and one stop, both with code %d", c, StreamRefusedCode)
 			}
 			if refusedFake.written != 0 {
 				t.Fatalf("%d bytes written on the refused stream, want none", refusedFake.written)
 			}
-			if genuineFake.cancelledWrite != nil || genuineFake.cancelledRead != nil {
+			if len(genuineFake.cancels) != 0 {
 				t.Fatal("the accepted stream was cancelled")
 			}
 			lines := dropWarnings(logged)
