@@ -88,7 +88,7 @@ func announceFact(s *Session, announce bool, realm []byte, id identity.KeyPair, 
 		return
 	}
 	spec := frame.NewPublishSpec(topic, realm, id.NodeID(), factSeq(), payload, time.Now().UnixMilli())
-	_ = s.Publish(spec, id)
+	s.handOff(frame.Sign(frame.SignPublisher(frame.Publish(spec), id), id))
 }
 
 func announceCompleted(s *Session, announce bool, realm []byte, id identity.KeyPair, publishID []byte, outcome PublishOutcome) {

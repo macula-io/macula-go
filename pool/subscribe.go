@@ -4,16 +4,15 @@ import (
 	"time"
 
 	"github.com/macula-io/macula-go/cbor"
-	"github.com/macula-io/macula-go/frame"
 )
 
-// Subscribe registers handler for every EVENT matching (realm, topic).
-// The first local subscriber for a given (realm, topic) issues a wire
-// SUBSCRIBE on every currently-connected link (and, via watchLinks, on
-// every link that connects or reconnects afterward); an additional
-// local subscriber to the same (realm, topic) registers for delivery
-// without any new wire traffic -- matches macula_client.erl's own
-// issue_wire_subs/AlreadyTracked check.
+// Subscribe registers handler for every EVENT matching (realm, topic), where
+// a "*" segment in topic matches any one segment, as the station matches it.
+// The first local subscriber for a given (realm, topic) subscribes every
+// currently-connected link (and, via watchLinks, every link that connects
+// or reconnects afterward); an additional local subscriber to the same
+// (realm, topic) registers for delivery without any new wire traffic --
+// matches macula_client.erl's own issue_wire_subs/AlreadyTracked check.
 func (p *Pool) Subscribe(realm []byte, topic string, handler EventHandler) SubID {
 	key := topicKey{realm: string(realm), topic: topic}
 
@@ -29,7 +28,7 @@ func (p *Pool) Subscribe(realm []byte, topic string, handler EventHandler) SubID
 	p.subsMu.Unlock()
 
 	if !alreadyTracked {
-		p.issueWireSubscribe(realm, topic)
+		p.subscribeLinks(key)
 	}
 	return id
 }
@@ -60,20 +59,22 @@ func (p *Pool) Unsubscribe(id SubID) {
 	p.subsMu.Unlock()
 }
 
-func (p *Pool) issueWireSubscribe(realm []byte, topic string) {
-	spec := frame.NewSubscribeSpec(topic, realm, p.opts.Identity.NodeID())
-	for _, a := range p.connectedActors() {
-		_ = a.send(p.ctx, subscribeCmd{spec: spec})
+// subscribeLinks subscribes every connected link to key, each on its own
+// goroutine: a session can take up to its send timeout to write a
+// SUBSCRIBE, and one stalled link must not hold up Subscribe.
+func (p *Pool) subscribeLinks(key topicKey) {
+	for _, ls := range p.connectedSessions() {
+		go ls.subscribe(key)
 	}
 }
 
 // watchLinks drains link lifecycle notifications. Its only job on an
-// "up" transition is replay: re-issue a wire SUBSCRIBE for every
-// currently-tracked (realm, topic) onto the freshly (re)connected
-// actor — the actor itself never remembers what it carried before dying,
-// matching macula_client.erl's own split (macula_client_replay pushes
-// state from the pool onto the fresh link; the link doesn't remember its
-// own past).
+// "up" transition is replay: subscribe the freshly (re)connected session
+// to every currently-tracked (realm, topic) — a session never remembers
+// what the link's previous one carried, matching macula_client.erl's own
+// split (macula_client_replay pushes state from the pool onto the fresh
+// link; the link doesn't remember its own past). Replay runs on its own
+// goroutine for the same reason subscribeLinks does.
 func (p *Pool) watchLinks() {
 	for {
 		select {
@@ -81,7 +82,7 @@ func (p *Pool) watchLinks() {
 			return
 		case ev := <-p.linkEvent:
 			if ev.up {
-				p.replayOnto(ev.actor)
+				go p.replayOnto(ev.session)
 			}
 			if p.opts.OnLinkEvent != nil {
 				// Per-event goroutine, same as deliverOne's own choice
@@ -101,7 +102,7 @@ func (p *Pool) watchLinks() {
 	}
 }
 
-func (p *Pool) replayOnto(a *actor) {
+func (p *Pool) replayOnto(ls *linkSession) {
 	p.subsMu.Lock()
 	keys := make([]topicKey, 0, len(p.topicIndex))
 	for k := range p.topicIndex {
@@ -110,17 +111,14 @@ func (p *Pool) replayOnto(a *actor) {
 	p.subsMu.Unlock()
 
 	for _, k := range keys {
-		spec := frame.NewSubscribeSpec(k.topic, []byte(k.realm), p.opts.Identity.NodeID())
-		_ = a.send(p.ctx, subscribeCmd{spec: spec})
+		ls.subscribe(k)
 	}
 }
 
-// fanoutEvents drains parsed inbound EVENTs from every link's actor,
-// dedupes, and delivers to matching local subscribers. Each delivery
-// runs on its own goroutine -- a slow or panicking EventHandler must
-// never stall dispatch for every other subscriber and link, the same
-// "never block the dispatch path on user code" reasoning actor.go
-// applies to inbound CALLs.
+// fanoutEvents drains the EVENTs every link's subscriptions forward,
+// dedupes, and delivers to matching local subscribers. Each delivery runs
+// on its own goroutine -- a slow or panicking EventHandler must never
+// stall dispatch for every other subscriber and link.
 func (p *Pool) fanoutEvents() {
 	for {
 		select {
@@ -133,12 +131,14 @@ func (p *Pool) fanoutEvents() {
 }
 
 func (p *Pool) deliver(evt inboundEvent) {
-	key := newDedupKey(evt.realm, evt.publisher, evt.seq, evt.topic)
+	key := newDedupKey(evt.pattern, evt.realm, evt.publisher, evt.seq, evt.topic)
 	if p.dedup.CheckAndMark(key, time.Now()) {
 		return
 	}
 
-	tk := topicKey{realm: string(evt.realm), topic: evt.topic}
+	// The subscription that received the event already matched it, "*"
+	// segments included, so its pattern is looked up exactly.
+	tk := topicKey{realm: string(evt.realm), topic: evt.pattern}
 	p.subsMu.Lock()
 	set := p.topicIndex[tk]
 	handlers := make([]EventHandler, 0, len(set))

@@ -67,7 +67,8 @@ other two anywhere, this would fail; it doesn't.
 | Handshake (CONNECT/HELLO) | ✅ | — | Ed25519 identity, S/Kademlia puzzle-hardened; live-verified |
 | Deterministic CBOR codec | ✅ | — | Hand-rolled — see [Codec](#the-cbor-codec-is-hand-rolled-on-purpose) |
 | Unary RPC (CALL/RESULT/ERROR) | ✅ | ✅ | `Session.ServeOneCall`, BOLT#4 error mapping live-verified |
-| PubSub (PUBLISH/SUBSCRIBE/EVENT) | ✅ | ✅ | A subscriber gets its own publish, verified live |
+| PubSub (PUBLISH/SUBSCRIBE/EVENT) | ✅ | ✅ | `Session.Subscribe` returns a `Subscription` (`Recv`, `Close`); a `*` topic segment matches one segment, as the station matches it. A subscriber gets its own publish, verified live |
+| Concurrent use of one session | ✅ | ✅ | One reader per `Session` routes each RESULT/ERROR to its call, each EVENT to every matching `Subscription` and each inbound CALL to a serve loop, so calls, subscriptions and serving share a session; a stalled write ends only that session |
 | Content transfer (single-block + chunked) | ✅ | ✅ | Content-addressed, BLAKE3/SHA-256, Merkle-verified |
 | Streaming RPC (STREAM_OPEN/DATA/END/REPLY) | ✅ | ✅ | Both roles live-verified against the real fleet; `ClientStream` mode's reply path is SDK-correct but currently blocked by a `macula-station` bug — see [Known limitations](#known-limitations) |
 | RPC advertise/unadvertise | ✅ | — | |

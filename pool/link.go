@@ -21,14 +21,14 @@ import (
 // already lands in that process's mailbox for free; Go needs this
 // explicit channel to get the same single-writer property.
 type linkEvent struct {
-	link  *link
-	actor *actor // set when up == true
-	up    bool
-	err   error // set when up == false
+	link    *link
+	session *linkSession // set when up == true
+	up      bool
+	err     error // set when up == false
 }
 
-// link supervises ONE seed or direct-dial target: dial, run its actor
-// until the session dies, back off, redial — for as long as ctx lives.
+// link supervises ONE seed or direct-dial target: dial, run its session
+// until it ends, back off, redial — for as long as ctx lives.
 // One physical Session per link, ever (never two concurrent connections
 // to the same target) — see pool.go's own doc on why: a station kicks a
 // duplicate connection under the same identity, confirmed against
@@ -50,7 +50,7 @@ type link struct {
 	notify  chan<- linkEvent
 
 	mu         sync.Mutex
-	actor      *actor
+	session    *linkSession
 	peerNodeID []byte // updated on every successful dial (a redial can legitimately prove a different node id, e.g. a DNS name repointed); kept across a later respawn/backoff in between, never cleared -- see PeerNodeID's own doc
 }
 
@@ -86,27 +86,28 @@ func (l *link) supervise(ctx context.Context) {
 			continue
 		}
 
-		a := newActor(l.key, dr.session, l.id, l.events, l.livenessInterval, l.livenessMaxMisses)
+		ls := newLinkSession(l.key, dr.session, l.id, l.events, l.livenessInterval, l.livenessMaxMisses)
 		l.mu.Lock()
-		l.actor = a
+		l.session = ls
 		if len(dr.nodeID) > 0 {
 			l.peerNodeID = dr.nodeID
 		}
 		l.mu.Unlock()
 
 		select {
-		case l.notify <- linkEvent{link: l, actor: a, up: true}:
+		case l.notify <- linkEvent{link: l, session: ls, up: true}:
 		case <-ctx.Done():
 			l.mu.Lock()
-			l.actor = nil
+			l.session = nil
 			l.mu.Unlock()
+			_ = dr.session.Close("pool: link closing", nil, l.id)
 			return
 		}
 
-		runErr := a.run(ctx)
+		runErr := ls.run(ctx)
 
 		l.mu.Lock()
-		l.actor = nil
+		l.session = nil
 		l.mu.Unlock()
 
 		select {
@@ -121,22 +122,22 @@ func (l *link) supervise(ctx context.Context) {
 	}
 }
 
-// CurrentActor returns this link's live actor, or nil if it's currently
-// dialing/backing off. Safe from any goroutine.
-func (l *link) CurrentActor() *actor {
+// CurrentSession returns this link's live session, or nil while it is
+// dialing or backing off. Safe from any goroutine.
+func (l *link) CurrentSession() *linkSession {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.actor
+	return l.session
 }
 
 // PeerNodeID returns the last node id this link's target proved at
 // handshake, or nil if it has never dialed successfully even once.
-// Deliberately NOT cleared when the actor dies (unlike CurrentActor) --
+// Deliberately NOT cleared when a session ends (unlike CurrentSession) --
 // a link mid-backoff/redial is still, as far as anyone dealing in
 // station identity is concerned, "the same station we already have a
 // link to," which is exactly what station-discovery's own dedupe-by-
-// node-id needs to keep being true through a respawn, not just while
-// actor happens to be non-nil. Safe from any goroutine.
+// node-id needs to keep being true through a respawn, not just while a
+// session happens to be live. Safe from any goroutine.
 func (l *link) PeerNodeID() []byte {
 	l.mu.Lock()
 	defer l.mu.Unlock()

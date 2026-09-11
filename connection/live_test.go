@@ -23,7 +23,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -148,16 +147,18 @@ func TestLivePubSubRoundTrip(t *testing.T) {
 	realm := randomBytes(t, 32)
 	topic := fmt.Sprintf("macula-go.test.%s", hex.EncodeToString(randomBytes(t, 8)))
 
-	if err := session.Subscribe(frame.NewSubscribeSpec(topic, realm, id.NodeID()), id); err != nil {
+	sub, err := session.Subscribe(frame.NewSubscribeSpec(topic, realm, id.NodeID()), id)
+	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
+	defer sub.Close()
 
 	if err := session.Publish(frame.NewPublishSpec(topic, realm, id.NodeID(), 1,
 		cbor.Text("hello from macula-go"), nowMs()), id); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
-	event, err := session.RecvEvent(5 * time.Second)
+	event, err := sub.Recv(5 * time.Second)
 	if err != nil {
 		t.Logf("OBSERVED: no EVENT arrived within 5s (%v) — a subscriber may not receive its "+
 			"own publish, or delivery may simply be slower than this test waits. Not asserted "+
@@ -175,7 +176,7 @@ func TestLivePubSubRoundTrip(t *testing.T) {
 // real bug found live 2026-08-29, NOT caught by TestLivePubSubRoundTrip
 // above: that test keeps reading on the SAME session that published,
 // so session.Close (deferred) never runs until well after the PUBLISH
-// was already flushed by the blocking RecvEvent call in between --
+// was already flushed by the blocking Recv call in between --
 // structurally unable to race. Every one-shot CLI command (macula-cli
 // pubsub publish, and by the same shape every other fire-and-forget
 // command) instead does exactly: connect, send one frame, close
@@ -212,9 +213,11 @@ func TestLivePublishSurvivesImmediateClose(t *testing.T) {
 	realm := randomBytes(t, 32)
 	topic := fmt.Sprintf("macula-go.test.immediate-close.%s", hex.EncodeToString(randomBytes(t, 8)))
 
-	if err := subSession.Subscribe(frame.NewSubscribeSpec(topic, realm, subID.NodeID()), subID); err != nil {
+	sub, err := subSession.Subscribe(frame.NewSubscribeSpec(topic, realm, subID.NodeID()), subID)
+	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
+	defer sub.Close()
 	// Give the SUBSCRIBE a moment to register before the publish races
 	// it -- this test is about the PUBLISH-then-Close race, not about
 	// subscribe-propagation timing (a separate concern).
@@ -241,42 +244,17 @@ func TestLivePublishSurvivesImmediateClose(t *testing.T) {
 		// instant this function returns, exactly like the CLI.
 	}()
 
-	// Loop, not a single RecvEvent call: this is a real, shared,
-	// busy station (frankfurt), and RecvFrame returns whatever
-	// arrives next on the control stream -- unrelated live traffic
-	// (including a frame that isn't even an EVENT at all) is expected
-	// to interleave, not a sign the race this test guards against has
-	// resurfaced. Only a genuine deadline expiry with nothing matching
-	// received counts as this test failing.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			t.Fatalf("EVENT for our topic never arrived after a publish immediately followed by " +
-				"Close (this is the exact race this test exists to catch)")
-		}
-		event, err := subSession.RecvEvent(remaining)
-		if err != nil {
-			if isTimeout(err) {
-				t.Fatalf("EVENT for our topic never arrived after a publish immediately followed "+
-					"by Close: %v (this is the exact race this test exists to catch)", err)
-			}
-			t.Logf("skipping a non-EVENT frame on this shared, busy station: %v", err)
-			continue
-		}
-		if event.Topic == topic {
-			return // found it -- the race did not reproduce
-		}
-		t.Logf("skipping unrelated live EVENT on this shared station: topic=%s", event.Topic)
+	// The subscription receives only events for its own realm and topic,
+	// so the first event within the deadline is ours; only nothing
+	// arriving in time counts as this test failing.
+	event, err := sub.Recv(5 * time.Second)
+	if err != nil {
+		t.Fatalf("EVENT for our topic never arrived after a publish immediately followed "+
+			"by Close: %v (this is the exact race this test exists to catch)", err)
 	}
-}
-
-func isTimeout(err error) bool {
-	var ne interface{ Timeout() bool }
-	if errors.As(err, &ne) {
-		return ne.Timeout()
+	if event.Topic != topic {
+		t.Fatalf("event.Topic = %q, want %q", event.Topic, topic)
 	}
-	return false
 }
 
 // TestLiveUnaryCallProviderRoundTrip is the real point of §6.9's
@@ -528,7 +506,7 @@ func TestLiveKeepAdvertisedStaysCallableAcrossTicks(t *testing.T) {
 // on one session is a weaker test), RunPublisher's own onDone callback
 // fires with the real outcome, the auto-published
 // pubsub.publish_started_v1/publish_completed_v1 facts genuinely land
-// (checked via a second, independent bare Subscribe/RecvEvent on that
+// (checked via a second, independent bare Subscribe/Recv on that
 // well-known topic, not by trusting RunPublisher's own bookkeeping), and
 // RunSubscriber returns promptly once its ctx is cancelled (no goroutine
 // leak, mirroring TestLiveKeepAdvertisedStaysCallableAcrossTicks's check).
@@ -571,9 +549,11 @@ func TestLiveRunSubscriberAndRunPublisher(t *testing.T) {
 		t.Fatalf("fact watcher handshake should succeed: %v", err)
 	}
 	defer factSession.Close("normal", nil, factWatcherID)
-	if err := factSession.Subscribe(frame.NewSubscribeSpec(publishCompletedTopic, realm, factWatcherID.NodeID()), factWatcherID); err != nil {
+	factSub, err := factSession.Subscribe(frame.NewSubscribeSpec(publishCompletedTopic, realm, factWatcherID.NodeID()), factWatcherID)
+	if err != nil {
 		t.Fatalf("Subscribe (fact watcher): %v", err)
 	}
+	defer factSub.Close()
 
 	received := make(chan frame.EventInfo, 1)
 	subCtx, cancelSub := context.WithCancel(context.Background())
@@ -628,23 +608,11 @@ func TestLiveRunSubscriberAndRunPublisher(t *testing.T) {
 		t.Fatalf("RunSubscriber's handler never received the published EVENT within 5s")
 	}
 
-	// A shared control stream can carry other frame types between one
-	// EVENT and the next (confirmed live: the first attempt here hit
-	// exactly this), so retry past a non-EVENT parse failure instead of
-	// treating RecvEvent's single-call contract as "one shot, no retry" --
-	// same reasoning as RunSubscriber's own frame loop, just inlined here
-	// since this is a bare-primitive test helper, not that wrapper.
-	factDeadline := time.Now().Add(8 * time.Second)
-	var factEvt frame.EventInfo
-	for {
-		var ferr error
-		factEvt, ferr = factSession.RecvEvent(time.Until(factDeadline))
-		if ferr == nil {
-			break
-		}
-		if errors.Is(ferr, frame.ErrNotAnEventFrame) && time.Now().Before(factDeadline) {
-			continue
-		}
+	// The fact watcher's subscription receives only events for the
+	// publish_completed_v1 topic in this realm, whatever else the shared
+	// control stream carries.
+	factEvt, ferr := factSub.Recv(8 * time.Second)
+	if ferr != nil {
 		t.Fatalf("expected a real pubsub.publish_completed_v1 fact, got: %v", ferr)
 	}
 	if factEvt.Topic != publishCompletedTopic {

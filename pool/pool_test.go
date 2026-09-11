@@ -1,14 +1,19 @@
 package pool
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/macula-io/macula-go/bolt4"
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/connection"
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/transport"
@@ -19,61 +24,184 @@ var (
 	errNotSubscribeFrame      = errors.New("pool_test: frame is not a subscribe frame")
 )
 
-// -- fakeSession: an in-memory sessionLike, driven entirely by the test,
-// so respawn/replay/dedup/timeout logic can be exercised deterministically
-// without a live QUIC connection. Mirrors how connection/serve_ucan_test.go
-// already tests pure dispatch logic with a nil *Session at a smaller scale.
-
-type fakeTimeoutErr struct{}
-
-func (fakeTimeoutErr) Error() string   { return "fake: recv timeout" }
-func (fakeTimeoutErr) Timeout() bool   { return true }
-func (fakeTimeoutErr) Temporary() bool { return true }
+// -- fakeSession: an in-memory sessionLike, driven entirely by the test, so
+// respawn, replay, dedup and fall-through logic can be exercised
+// deterministically without a live QUIC connection. It keeps the contract
+// a connection.Session keeps: a frame pushed on recv is routed the way its
+// reader routes it (RESULT and ERROR to the waiting LinkCall, EVENT to
+// every subscription whose topic matches), anything tried on an ended
+// session is not sent, and a write stalled past the send timeout ends the
+// session.
 
 type fakeSession struct {
 	recv chan cbor.Value
 	done chan struct{}
 
-	// blockSend, when non-nil, makes every SendAny block until it's
-	// closed -- simulates quic-go's Write parking on flow-control
-	// credit, per the R1 finding this file's overflow test reproduces.
-	blockSend chan struct{}
+	// blockSend, when non-nil, makes Publish wait until it closes; if
+	// sendTimeout passes first, the session ends with ErrSendTimeout.
+	blockSend   chan struct{}
+	sendTimeout time.Duration
+	// endOnCall makes the session end as a LinkCall starts, before its
+	// CALL is written, as when the connection drops just then.
+	endOnCall bool
 
-	mu   sync.Mutex
-	sent []cbor.Value
+	mu             sync.Mutex
+	sent           []cbor.Value
+	ops            []string // "subscribe <topic>" and "close <topic>", in order
+	pending        map[string]chan frame.CallResponse
+	subs           []*fakeSubscription
+	err            error
+	callsAttempted int
+	publishWaiting bool
 }
 
 func newFakeSession() *fakeSession {
-	return &fakeSession{recv: make(chan cbor.Value, 16), done: make(chan struct{})}
+	f := &fakeSession{
+		recv:        make(chan cbor.Value, 16),
+		done:        make(chan struct{}),
+		sendTimeout: time.Second,
+		pending:     make(map[string]chan frame.CallResponse),
+	}
+	go f.route()
+	return f
 }
 
-func (f *fakeSession) RecvAny(deadline time.Time) (cbor.Value, error) {
-	timeout := time.Until(deadline)
-	if timeout < 0 {
-		timeout = 0
+func (f *fakeSession) route() {
+	for {
+		select {
+		case <-f.done:
+			return
+		case v := <-f.recv:
+			f.routeFrame(v)
+		}
 	}
+}
+
+func (f *fakeSession) routeFrame(v cbor.Value) {
+	ft, _ := v.Get("frame_type")
+	switch t, _ := ft.AsText(); t {
+	case "result", "error":
+		callID, ok := frame.FrameCallID(v)
+		if !ok {
+			return
+		}
+		resp, err := frame.ParseCallResponse(v)
+		if err != nil {
+			return
+		}
+		f.mu.Lock()
+		waiter, found := f.pending[string(callID)]
+		delete(f.pending, string(callID))
+		f.mu.Unlock()
+		if found {
+			waiter <- resp
+		}
+	case "event":
+		evt, err := frame.ParseEvent(v)
+		if err != nil {
+			return
+		}
+		f.mu.Lock()
+		subs := append([]*fakeSubscription(nil), f.subs...)
+		f.mu.Unlock()
+		for _, sub := range subs {
+			if bytes.Equal(sub.realm, evt.Realm) && fakeTopicMatches(sub.topic, evt.Topic) {
+				sub.offer(evt)
+			}
+		}
+	}
+}
+
+// fakeTopicMatches is the station's topic rule (macula_topic_pattern:matches/2),
+// which a session reader applies before a subscription receives an event.
+func fakeTopicMatches(pattern, topic string) bool {
+	p, c := strings.Split(pattern, "/"), strings.Split(topic, "/")
+	if len(p) != len(c) {
+		return false
+	}
+	for i := range p {
+		if p[i] != "*" && p[i] != c[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *fakeSession) LinkCall(spec frame.CallSpec, _ identity.KeyPair, timeout time.Duration) (frame.CallResponse, error) {
+	if err := f.Err(); err != nil {
+		return frame.CallResponse{}, fmt.Errorf("%w: %w", err, connection.ErrNotSent)
+	}
+	f.mu.Lock()
+	f.callsAttempted++
+	f.mu.Unlock()
+	if f.endOnCall {
+		f.end(fmt.Errorf("%w: connection lost", connection.ErrSessionEnded))
+		return frame.CallResponse{}, fmt.Errorf("%w: %w", f.Err(), connection.ErrNotSent)
+	}
+	callID := make([]byte, 16)
+	_, _ = rand.Read(callID)
+	spec.CallID = callID
+	reply := make(chan frame.CallResponse, 1)
+	f.mu.Lock()
+	f.pending[string(callID)] = reply
+	f.sent = append(f.sent, frame.Call(spec))
+	f.mu.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
-	case v := <-f.recv:
-		return v, nil
+	case resp := <-reply:
+		return resp, nil
+	case <-timer.C:
+		f.mu.Lock()
+		delete(f.pending, string(callID))
+		f.mu.Unlock()
+		return frame.CallResponse{}, fmt.Errorf("%w waiting for a response", connection.ErrCallTimeout)
 	case <-f.done:
-		return cbor.Value{}, fakeTimeoutErr{}
-	case <-time.After(timeout):
-		return cbor.Value{}, fakeTimeoutErr{}
+		return frame.CallResponse{}, f.Err()
 	}
 }
 
-func (f *fakeSession) SendAny(v cbor.Value) error {
+func (f *fakeSession) Publish(spec frame.PublishSpec, _ identity.KeyPair) error {
+	if err := f.Err(); err != nil {
+		return fmt.Errorf("%w: %w", err, connection.ErrNotSent)
+	}
 	if f.blockSend != nil {
+		f.mu.Lock()
+		f.publishWaiting = true
+		f.mu.Unlock()
 		select {
 		case <-f.blockSend:
+		case <-time.After(f.sendTimeout):
+			f.end(fmt.Errorf("%w: %w", connection.ErrSessionEnded, connection.ErrSendTimeout))
+			return fmt.Errorf("fake: send: %w", connection.ErrSendTimeout)
 		case <-f.done:
-			return fakeTimeoutErr{}
+			return f.Err()
 		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.sent = append(f.sent, v)
+	f.sent = append(f.sent, frame.Publish(spec))
 	return nil
+}
+
+func (f *fakeSession) Subscribe(spec frame.SubscribeSpec, _ identity.KeyPair) (subscription, error) {
+	if err := f.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %w", err, connection.ErrNotSent)
+	}
+	sub := &fakeSubscription{
+		session: f,
+		realm:   spec.Realm,
+		topic:   spec.Topic,
+		events:  make(chan frame.EventInfo, 16),
+		stopped: make(chan struct{}),
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.subs = append(f.subs, sub)
+	f.sent = append(f.sent, frame.Subscribe(spec))
+	f.ops = append(f.ops, "subscribe "+spec.Topic)
+	return sub, nil
 }
 
 func (f *fakeSession) Sent() []cbor.Value {
@@ -86,23 +214,144 @@ func (f *fakeSession) Sent() []cbor.Value {
 
 func (f *fakeSession) Done() <-chan struct{} { return f.done }
 
-// Close always returns immediately, deliberately not honoring
-// blockSend -- this models connection.Session.Close's contract (bounded
-// by its own internal write deadline, see connection.go's
-// closeSendTimeout) rather than the bug that contract was fixed to
-// close. The real Session.Close's bounded-write behavior against an
-// actual stalled QUIC peer is exercised directly by
-// connection.TestSendFrameIsBoundedByWriteDeadline (a loopback test,
-// no macula protocol needed) -- this fake's job is only to let a
-// pool-level test exercise what the pool does GIVEN a well-behaved
-// Close, not to re-prove the primitive it depends on.
-func (f *fakeSession) Close(string, *string, identity.KeyPair) error { return nil }
+func (f *fakeSession) Err() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.err
+}
+
+func (f *fakeSession) Close(string, *string, identity.KeyPair) error {
+	f.end(fmt.Errorf("%w: closed", connection.ErrSessionEnded))
+	return nil
+}
 
 func (f *fakeSession) RemoteAddr() string { return "fake" }
 
-// kill simulates the connection dying out from under the actor -- the
-// same signal Session.Done() gives on a real dropped/closed connection.
-func (f *fakeSession) kill() { close(f.done) }
+// kill simulates the connection dying out from under the link.
+func (f *fakeSession) kill() {
+	f.end(fmt.Errorf("%w: connection lost", connection.ErrSessionEnded))
+}
+
+func (f *fakeSession) end(err error) {
+	f.mu.Lock()
+	if f.err != nil {
+		f.mu.Unlock()
+		return
+	}
+	f.err = err
+	subs := f.subs
+	f.subs = nil
+	f.mu.Unlock()
+	close(f.done)
+	for _, sub := range subs {
+		sub.end(err)
+	}
+}
+
+func (f *fakeSession) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.callsAttempted
+}
+
+func (f *fakeSession) waitingToPublish() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.publishWaiting
+}
+
+// subscriptionsTo returns the open subscriptions to topic.
+func (f *fakeSession) subscriptionsTo(topic string) []*fakeSubscription {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []*fakeSubscription
+	for _, sub := range f.subs {
+		if sub.topic == topic {
+			out = append(out, sub)
+		}
+	}
+	return out
+}
+
+// opsOn returns what was done to subscriptions to topic, in order.
+func (f *fakeSession) opsOn(topic string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, op := range f.ops {
+		if verb, t, _ := strings.Cut(op, " "); t == topic {
+			out = append(out, verb)
+		}
+	}
+	return out
+}
+
+type fakeSubscription struct {
+	session *fakeSession
+	realm   []byte
+	topic   string
+	events  chan frame.EventInfo
+	stopped chan struct{}
+
+	mu  sync.Mutex
+	err error
+}
+
+func (s *fakeSubscription) offer(evt frame.EventInfo) {
+	select {
+	case s.events <- evt:
+	default:
+		s.end(connection.ErrConsumerOverflow)
+	}
+}
+
+func (s *fakeSubscription) Recv(timeout time.Duration) (frame.EventInfo, error) {
+	select {
+	case evt := <-s.events:
+		return evt, nil
+	default:
+	}
+	select {
+	case evt := <-s.events:
+		return evt, nil
+	case <-s.stopped:
+		select {
+		case evt := <-s.events:
+			return evt, nil
+		default:
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return frame.EventInfo{}, s.err
+	case <-time.After(timeout):
+		return frame.EventInfo{}, connection.ErrRecvTimeout
+	}
+}
+
+func (s *fakeSubscription) Close() error {
+	f := s.session
+	f.mu.Lock()
+	f.ops = append(f.ops, "close "+s.topic)
+	for i, sub := range f.subs {
+		if sub == s {
+			f.subs = append(f.subs[:i], f.subs[i+1:]...)
+			break
+		}
+	}
+	f.mu.Unlock()
+	s.end(connection.ErrSubscriptionClosed)
+	return nil
+}
+
+func (s *fakeSubscription) end(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return
+	}
+	s.err = err
+	close(s.stopped)
+}
 
 // fakeDialer hands out a scripted sequence of sessions, one per Connect
 // attempt, keyed by host:port -- lets a test control exactly which
@@ -203,24 +452,29 @@ func TestDedupTableCollisionsAreByContentNotAllocation(t *testing.T) {
 	realmACopy := append([]byte(nil), realmA...) // a SEPARATE allocation, same bytes
 	pub := []byte("publisher")
 
-	k1 := newDedupKey(realmA, pub, 1, "topic")
+	k1 := newDedupKey("topic", realmA, pub, 1, "topic")
 	if d.CheckAndMark(k1, now) {
 		t.Fatalf("first sighting reported as duplicate")
 	}
 
-	k2 := newDedupKey(realmACopy, pub, 1, "topic")
+	k2 := newDedupKey("topic", realmACopy, pub, 1, "topic")
 	if !d.CheckAndMark(k2, now) {
 		t.Fatalf("same content from a different byte-slice allocation did not collide")
 	}
 
-	k3 := newDedupKey(realmA, pub, 1, "other-topic")
+	k3 := newDedupKey("other-topic", realmA, pub, 1, "other-topic")
 	if d.CheckAndMark(k3, now) {
 		t.Fatalf("different topic incorrectly collided -- this is the exact bug shape (Realm,Publisher,Seq) without Topic had")
 	}
 
-	k4 := newDedupKey(realmA, pub, 2, "topic")
+	k4 := newDedupKey("topic", realmA, pub, 2, "topic")
 	if d.CheckAndMark(k4, now) {
 		t.Fatalf("different seq incorrectly collided")
+	}
+
+	k5 := newDedupKey("*", realmA, pub, 1, "topic")
+	if d.CheckAndMark(k5, now) {
+		t.Fatalf("the same event received by another subscribed pattern incorrectly collided")
 	}
 }
 
@@ -228,8 +482,8 @@ func TestDedupTableSweepRemovesOnlyStaleEntries(t *testing.T) {
 	d := newDedupTable()
 	base := time.Now()
 
-	old := newDedupKey([]byte("r"), []byte("p"), 1, "t")
-	fresh := newDedupKey([]byte("r"), []byte("p"), 2, "t")
+	old := newDedupKey("t", []byte("r"), []byte("p"), 1, "t")
+	fresh := newDedupKey("t", []byte("r"), []byte("p"), 2, "t")
 
 	d.CheckAndMark(old, base)
 	d.CheckAndMark(fresh, base.Add(50*time.Second))
@@ -244,7 +498,7 @@ func TestDedupTableSweepRemovesOnlyStaleEntries(t *testing.T) {
 	}
 }
 
-// -- Pool integration, driven by fakeDialer/fakeSession: respawn, replay, dedup, call timeout.
+// -- Pool integration, driven by fakeDialer/fakeSession: respawn, replay, dedup, fall-through.
 
 func testOpts(id identity.KeyPair, dial dialFunc) Opts {
 	return Opts{
@@ -360,6 +614,92 @@ func TestEventDeliveredExactlyOnceDespiteDuplicateFrames(t *testing.T) {
 	}
 }
 
+func TestAWildcardSubscriptionThroughThePoolReceivesMatchingEvents(t *testing.T) {
+	id := testIdentity(t)
+	dialer := newFakeDialer()
+	s := newFakeSession()
+	dialer.script("station.example", 4433, s)
+
+	p, err := Connect(context.Background(), []Seed{{Host: "station.example", Port: 4433}}, testOpts(id, dialer.dial))
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer p.Close()
+	waitFor(t, time.Second, func() bool { return p.Status().HealthyLinks == 1 })
+
+	realm := fill32(0x51)
+	var mu sync.Mutex
+	received := map[string][]string{}
+	recordAs := func(name string) EventHandler {
+		return func(_ []byte, topic string, _ cbor.Value) {
+			mu.Lock()
+			defer mu.Unlock()
+			received[name] = append(received[name], topic)
+		}
+	}
+	p.Subscribe(realm, "sensors/*", recordAs("wildcard"))
+	p.Subscribe(realm, "sensors/kitchen", recordAs("concrete"))
+	waitFor(t, time.Second, func() bool { return len(subscribeFrames(s.Sent())) == 2 })
+
+	s.recv <- rawEventFrame(t, realm, fill32(0x52), "sensors/kitchen", 1, cbor.Text("warm"))
+	s.recv <- rawEventFrame(t, realm, fill32(0x52), "sensors/hall", 2, cbor.Text("cold"))
+
+	want := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(received["wildcard"]) == 2 && len(received["concrete"]) == 1
+	}
+	deadline := time.Now().Add(time.Second)
+	for !want() && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond) // a duplicate delivery would have landed by now
+	mu.Lock()
+	defer mu.Unlock()
+	if len(received["wildcard"]) != 2 || len(received["concrete"]) != 1 {
+		t.Fatalf("deliveries = %v, want sensors/* to receive kitchen and hall once each and sensors/kitchen to receive kitchen once", received)
+	}
+}
+
+func TestAnOverflowedSubscriptionIsReplacedBeforeItIsClosed(t *testing.T) {
+	id := testIdentity(t)
+	dialer := newFakeDialer()
+	s := newFakeSession()
+	dialer.script("station.example", 4433, s)
+
+	p, err := Connect(context.Background(), []Seed{{Host: "station.example", Port: 4433}}, testOpts(id, dialer.dial))
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer p.Close()
+	waitFor(t, time.Second, func() bool { return p.Status().HealthyLinks == 1 })
+
+	realm := fill32(0x61)
+	delivered := make(chan string, 4)
+	p.Subscribe(realm, "flood", func(_ []byte, _ string, payload cbor.Value) {
+		txt, _ := payload.AsText()
+		delivered <- txt
+	})
+	waitFor(t, time.Second, func() bool { return len(s.subscriptionsTo("flood")) == 1 })
+
+	s.subscriptionsTo("flood")[0].end(connection.ErrConsumerOverflow)
+
+	waitFor(t, time.Second, func() bool { return len(s.opsOn("flood")) == 3 })
+	if ops := s.opsOn("flood"); ops[1] != "subscribe" || ops[2] != "close" {
+		t.Fatalf("operations on the flood subscriptions = %v, want subscribe, subscribe, close: the replacement subscribes before the overflowed one closes", ops)
+	}
+
+	s.recv <- rawEventFrame(t, realm, fill32(0x62), "flood", 1, cbor.Text("after"))
+	select {
+	case got := <-delivered:
+		if got != "after" {
+			t.Fatalf("delivered %q, want %q", got, "after")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the replacement subscription delivered nothing")
+	}
+}
+
 func TestPanickingHandlerDoesNotStopOtherDelivery(t *testing.T) {
 	id := testIdentity(t)
 	dialer := newFakeDialer()
@@ -401,13 +741,17 @@ func TestPanickingHandlerDoesNotStopOtherDelivery(t *testing.T) {
 	// what this test asserts.
 }
 
+// A link whose session ended just as the call started never sent the
+// CALL, so Call moves on to the next link.
 func TestCallFallsThroughToNextConnectedLink(t *testing.T) {
 	id := testIdentity(t)
 	dialer := newFakeDialer()
-	dead := newFakeSession() // never answers -- Call must not get stuck on it
+	dead := newFakeSession()
+	dead.endOnCall = true
 	live := newFakeSession()
 	dialer.script("dead.example", 4433, dead)
 	dialer.script("live.example", 4433, live)
+	autoReplyWithHostname(live, "live.example")
 
 	p, err := Connect(context.Background(), []Seed{{Host: "dead.example", Port: 4433}, {Host: "live.example", Port: 4433}}, testOpts(id, dialer.dial))
 	if err != nil {
@@ -416,86 +760,71 @@ func TestCallFallsThroughToNextConnectedLink(t *testing.T) {
 	defer p.Close()
 	waitFor(t, time.Second, func() bool { return p.Status().HealthyLinks == 2 })
 
-	// Auto-reply on the "live" session: whatever CALL arrives, answer
-	// with a RESULT for its call_id.
-	go func() {
-		for {
-			select {
-			case <-live.done:
-				return
-			default:
-			}
-			frames := live.Sent()
-			if len(frames) == 0 {
-				time.Sleep(2 * time.Millisecond)
-				continue
-			}
-			callID, ok := frame.FrameCallID(frames[len(frames)-1])
-			if !ok {
-				continue
-			}
-			live.recv <- frame.Result(frame.NewResultSpec(callID, cbor.Text("ok"), fill32(0x01)))
-			return
+	// Which link a call tries first follows map order, so call until one
+	// call has tried the dead link; every call must still be answered.
+	deadline := time.Now().Add(5 * time.Second)
+	for dead.callCount() == 0 && time.Now().Before(deadline) {
+		resp, err := p.Call(context.Background(), fill32(0xEE), "some.procedure", cbor.Null(), time.Second)
+		if err != nil {
+			t.Fatalf("Call: %v", err)
 		}
-	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	resp, err := p.Call(ctx, fill32(0xEE), "some.procedure", cbor.Null(), time.Second)
-	if err != nil {
-		t.Fatalf("Call: %v", err)
+		if txt, _ := resp.Payload.AsText(); txt != "live.example" {
+			t.Fatalf("Call payload = %v, want %q", resp.Payload, "live.example")
+		}
 	}
-	if resp.IsError {
-		t.Fatalf("Call returned an error response: code=%d name=%s", resp.Code, resp.Name)
-	}
-	if txt, _ := resp.Payload.AsText(); txt != "ok" {
-		t.Fatalf("Call payload = %v, want %q", resp.Payload, "ok")
+	if dead.callCount() == 0 {
+		t.Fatal("no call ever tried the dead link first")
 	}
 }
 
-func TestCallTimeoutDoesNotLeakPendingEntry(t *testing.T) {
+func TestAPoolCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherLink(t *testing.T) {
 	id := testIdentity(t)
 	dialer := newFakeDialer()
-	s := newFakeSession() // never answers
-	dialer.script("station.example", 4433, s)
+	silent := newFakeSession() // takes every CALL and never answers
+	live := newFakeSession()
+	dialer.script("silent.example", 4433, silent)
+	dialer.script("live.example", 4433, live)
+	autoReplyWithHostname(live, "live.example")
 
-	p, err := Connect(context.Background(), []Seed{{Host: "station.example", Port: 4433}}, testOpts(id, dialer.dial))
+	p, err := Connect(context.Background(), []Seed{{Host: "silent.example", Port: 4433}, {Host: "live.example", Port: 4433}}, testOpts(id, dialer.dial))
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
 	defer p.Close()
-	waitFor(t, time.Second, func() bool { return p.Status().HealthyLinks == 1 })
+	waitFor(t, time.Second, func() bool { return p.Status().HealthyLinks == 2 })
 
-	ctx := context.Background()
-	_, err = p.Call(ctx, fill32(0x01), "never.answers", cbor.Null(), 50*time.Millisecond)
-	if err != errCallTimeout {
-		t.Fatalf("Call error = %v, want errCallTimeout", err)
+	// Which link a call tries first follows map order, so call until one
+	// call has tried the silent link first.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		silentCalls, liveCalls := silent.callCount(), live.callCount()
+		resp, err := p.Call(context.Background(), fill32(0xEE), "some.procedure", cbor.Null(), 50*time.Millisecond)
+		if silent.callCount() == silentCalls {
+			if err != nil {
+				t.Fatalf("Call answered by the live link: %v", err)
+			}
+			continue
+		}
+		if !errors.Is(err, connection.ErrCallTimeout) || errors.Is(err, connection.ErrNotSent) {
+			t.Fatalf("Call through the silent link = (%v, %v), want ErrCallTimeout without ErrNotSent", resp.Payload, err)
+		}
+		if live.callCount() != liveCalls {
+			t.Fatal("a call that may have reached its provider was sent again on another link")
+		}
+		return
 	}
-
-	a := p.connectedActors()[0]
-	waitFor(t, time.Second, func() bool {
-		n, err := a.pendingCount(context.Background())
-		return err == nil && n == 0
-	})
+	t.Fatal("no call ever tried the silent link first")
 }
 
-// TestStalledWriterRespawnsInsteadOfWedging directly reproduces the R1
-// finding: a stalled peer (SendAny never returning, e.g. quic-go's
-// Write parked on flow-control credit) must not wedge the actor's
-// dispatch loop forever. The FIRST implementation of this package
-// blocked a plain enqueue helper directly from inside the dispatch
-// loop, selecting against a.done for a way out -- but a.done only
-// closes when run() itself returns, and run() can't reach that close
-// while it's the one stuck blocked in enqueue. This test would hang
-// (and eventually time out the whole `go test` run) against that
-// version; against the current one, the actor detects its outbox
-// exceeding outboxCap and returns a fatal error, and the link
-// respawns normally.
+// A link whose writes stall past its session's send timeout ends and is
+// respawned, and while a Publish waits on it the rest of the pool keeps
+// working.
 func TestStalledWriterRespawnsInsteadOfWedging(t *testing.T) {
 	id := testIdentity(t)
 	dialer := newFakeDialer()
 	stalled := newFakeSession()
-	stalled.blockSend = make(chan struct{}) // never closed -- SendAny never returns
+	stalled.blockSend = make(chan struct{}) // never closed
+	stalled.sendTimeout = 300 * time.Millisecond
 	fresh := newFakeSession()
 	dialer.script("station.example", 4433, stalled, fresh)
 
@@ -507,17 +836,29 @@ func TestStalledWriterRespawnsInsteadOfWedging(t *testing.T) {
 	waitFor(t, time.Second, func() bool { return p.Status().HealthyLinks == 1 })
 
 	realm := fill32(0x77)
-	deadline := time.Now().Add(5 * time.Second)
-	for i := 0; i < outboxCap*2+8 && time.Now().Before(deadline); i++ {
-		_ = p.Publish(realm, "overflow.topic", cbor.Uint64(uint64(i))) // errors once the link dies mid-loop -- fine, ignored
+	published := make(chan error, 1)
+	go func() { published <- p.Publish(realm, "stalls", cbor.Uint64(1)) }()
+	waitFor(t, time.Second, stalled.waitingToPublish)
+
+	returned := make(chan struct{})
+	go func() {
+		p.Subscribe(realm, "still.works", func([]byte, string, cbor.Value) {})
+		_ = p.Status()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Subscribe and Status waited on a Publish stalled on one link")
 	}
 
+	if err := <-published; !errors.Is(err, connection.ErrSendTimeout) {
+		t.Fatalf("Publish on the stalled link = %v, want ErrSendTimeout", err)
+	}
 	waitFor(t, 5*time.Second, func() bool { return dialer.dialCount("station.example", 4433) == 2 })
 	waitFor(t, time.Second, func() bool { return p.Status().HealthyLinks == 1 })
-
-	a := p.connectedActors()[0]
-	if a.session != sessionLike(fresh) {
-		t.Fatalf("connected actor is not using the respawned session")
+	if ls := p.connectedSessions()[0]; ls.session != sessionLike(fresh) {
+		t.Fatalf("connected link is not using the respawned session")
 	}
 }
 
@@ -532,7 +873,7 @@ func TestConnectRejectsZeroValueIdentity(t *testing.T) {
 	}
 }
 
-func TestPublishRejectsBadPayloadWithoutTouchingAnyActor(t *testing.T) {
+func TestPublishRejectsBadPayloadWithoutTouchingAnyLink(t *testing.T) {
 	id := testIdentity(t)
 	dialer := newFakeDialer()
 	s := newFakeSession()
@@ -557,7 +898,7 @@ func TestPublishRejectsBadPayloadWithoutTouchingAnyActor(t *testing.T) {
 	}
 }
 
-func TestCallRejectsBadPayloadWithoutTouchingAnyActor(t *testing.T) {
+func TestCallRejectsBadPayloadWithoutTouchingAnyLink(t *testing.T) {
 	id := testIdentity(t)
 	dialer := newFakeDialer()
 	s := newFakeSession()
@@ -660,11 +1001,11 @@ func TestLivenessProbeRespawnsAfterConsecutiveMisses(t *testing.T) {
 	waitFor(t, time.Second, func() bool { return dialer.dialCount("station.example", 4433) == 2 })
 
 	waitFor(t, time.Second, func() bool { return p.Status().HealthyLinks == 1 })
-	a := p.connectedActors()[0]
+	ls := p.connectedSessions()[0]
 	// The survivor must be talking to "fresh", not "silent" -- confirms
 	// respawn actually happened, not a coincidental dial-count bump.
-	if a.session != sessionLike(fresh) {
-		t.Fatalf("connected actor is not using the respawned session")
+	if ls.session != sessionLike(fresh) {
+		t.Fatalf("connected link is not using the respawned session")
 	}
 }
 
@@ -699,7 +1040,7 @@ func TestErrorResponseIsNotGoErr(t *testing.T) {
 	}
 }
 
-// -- test helpers for reading back what an actor sent.
+// -- test helpers for reading back what a link sent.
 
 func subscribeFrames(frames []cbor.Value) []cbor.Value {
 	var out []cbor.Value

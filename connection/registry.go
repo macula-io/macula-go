@@ -68,12 +68,12 @@ func registeredSession(id identity.KeyPair, station []byte) (*Session, bool) {
 	return s, true
 }
 
-// ended reports whether s's connection has ended.
+// ended reports whether s's connection or its reader has ended.
 func (s *Session) ended() bool {
 	select {
 	case <-s.done:
 		return true
 	default:
-		return false
 	}
+	return s.endedErr() != nil
 }

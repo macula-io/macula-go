@@ -9,16 +9,18 @@ import (
 // duplicate deliveries — the same fact relayed to this pool by more than
 // one link (or seen twice off one link, e.g. after a resubscribe).
 //
-// Keyed on (Realm, Publisher, Seq, Topic) — deliberately including
-// Topic, unlike macula_client.erl's own dedup key of just (Realm,
-// Publisher, Seq). That omission is a real, confirmed collision shape:
-// an SDK's own auto-published facts and an app's business publish can
-// share one seq-counter space per publisher, and without Topic in the
-// key a coincidental (publisher, seq) match on two DIFFERENT topics
-// collapses into one delivery — the exact bug fixed on the
-// macula-station side 2026-09-04. Fixed here from the start rather than
-// ported forward.
+// Keyed on (Pattern, Realm, Publisher, Seq, Topic). Pattern is the
+// subscribed topic that received the event, so one event matching two
+// subscriptions, "a/*" and "a/b", reaches each one's handlers exactly once.
+// Topic is included deliberately, unlike macula_client.erl's own dedup key
+// of just (Realm, Publisher, Seq). That omission is a real, confirmed
+// collision shape: an SDK's own auto-published facts and an app's business
+// publish can share one seq-counter space per publisher, and without Topic
+// in the key a coincidental (publisher, seq) match on two DIFFERENT topics
+// collapses into one delivery — the exact bug fixed on the macula-station
+// side 2026-09-04. Fixed here from the start rather than ported forward.
 type dedupKey struct {
+	pattern   string
 	realm     string
 	publisher string
 	seq       uint64
@@ -31,8 +33,8 @@ type dedupKey struct {
 // by content, not by the slice header, so two different byte-slice
 // allocations holding the identical bytes correctly collide as one key,
 // and two different-content slices of the same length do NOT.
-func newDedupKey(realm, publisher []byte, seq uint64, topic string) dedupKey {
-	return dedupKey{realm: string(realm), publisher: string(publisher), seq: seq, topic: topic}
+func newDedupKey(pattern string, realm, publisher []byte, seq uint64, topic string) dedupKey {
+	return dedupKey{pattern: pattern, realm: string(realm), publisher: string(publisher), seq: seq, topic: topic}
 }
 
 // dedupTable tracks recently seen keys so a duplicate delivery is

@@ -63,7 +63,7 @@ func TestWithDefaultsLinkSelectionExplicitOverridesAutoPairing(t *testing.T) {
 
 // -- selectLinks(): the shared choke point Call/Publish route through.
 
-func TestSelectLinksFirstSuccessReturnsEveryConnectedActorUnshuffled(t *testing.T) {
+func TestSelectLinksFirstSuccessReturnsEveryConnectedLinkUnshuffled(t *testing.T) {
 	id := testIdentity(t)
 	dialer := newFakeDialer()
 	s1, s2, s3 := newFakeSession(), newFakeSession(), newFakeSession()
@@ -84,7 +84,7 @@ func TestSelectLinksFirstSuccessReturnsEveryConnectedActorUnshuffled(t *testing.
 
 	selected := p.selectLinks()
 	if len(selected) != 3 {
-		t.Fatalf("selectLinks() returned %d actors, want 3", len(selected))
+		t.Fatalf("selectLinks() returned %d links, want 3", len(selected))
 	}
 	seen := map[string]bool{}
 	for _, a := range selected {
@@ -99,7 +99,7 @@ func TestSelectLinksFirstSuccessReturnsEveryConnectedActorUnshuffled(t *testing.
 
 // TestSelectLinksRandomProducesMultipleOrderings proves selectLinks()
 // actually shuffles under LinkSelectionRandom -- not relying on
-// connectedActors()'s own incidental map-iteration variation (which
+// connectedSessions()'s own incidental map-iteration variation (which
 // this change deliberately does NOT depend on for LinkSelectionRandom's
 // guarantee, unlike the historical LinkSelectionFirstSuccess behavior).
 // 5 links gives 120 possible orderings; seeing fewer than 5 distinct
@@ -129,7 +129,7 @@ func TestSelectLinksRandomProducesMultipleOrderings(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		selected := p.selectLinks()
 		if len(selected) != 5 {
-			t.Fatalf("selectLinks() call %d returned %d actors, want 5", i, len(selected))
+			t.Fatalf("selectLinks() call %d returned %d links, want 5", i, len(selected))
 		}
 		var order string
 		for _, a := range selected {
@@ -146,7 +146,7 @@ func TestSelectLinksRandomProducesMultipleOrderings(t *testing.T) {
 // version of the shuffle test: with every link healthy but only ONE
 // (chosen per-call, unpredictably) actually answering, repeated Call()s
 // under LinkSelectionRandom must eventually route to every link --
-// under the old, unconditional connectedActors()-order behavior this
+// under the old, unconditional connectedSessions()-order behavior this
 // was only ever an accident of map iteration; this asserts it as a
 // guaranteed property of LinkSelectionRandom instead.
 func TestCallUnderLinkSelectionRandomCanReachEveryLink(t *testing.T) {

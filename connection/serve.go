@@ -83,57 +83,50 @@ func (s *Session) ServeOneCall(lookup CallLookup, id identity.KeyPair, timeout t
 // CallHandler never sees the raw token either way, matching the
 // reference's own handler contract (payload only).
 func (s *Session) ServeOneCallGated(lookup CallLookup, policy PolicyLookup, id identity.KeyPair, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		if time.Now().After(deadline) {
-			return ErrServeOneCallTimeout
-		}
-		value, err := s.control.RecvFrame(deadline)
-		if err != nil {
-			if isRecvTimeout(err) {
-				// A read-deadline timeout IS "timeout elapses with no
-				// inbound CALL frame arriving" -- this used to fall
-				// through to the generic wrap below instead, so
-				// ErrServeOneCallTimeout was never actually reachable
-				// on the ordinary "nothing arrived" path, only on the
-				// narrow race where a non-call frame arrives right at
-				// the deadline and the loop's own re-check catches it.
-				// ServeForever depends on this sentinel to tell "keep
-				// looping" apart from "the connection actually died".
-				return ErrServeOneCallTimeout
-			}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case callInfo := <-s.rt.calls:
+		reply := buildCallReply(s, callInfo, lookup, policy, id)
+		if err := s.send(frame.Sign(reply, id), time.Now().Add(s.sendTimeoutOrDefault()), nil); err != nil {
 			return fmt.Errorf("connection: serve_one_call: %w", err)
 		}
-		reply, isCall := replyToFrame(s, value, lookup, policy, id)
-		if !isCall {
-			continue // not a CALL to answer -- see this method's doc on the limitation
-		}
-		return s.control.SendFrame(frame.Sign(reply, id))
+		return nil
+	case <-s.rt.endedCh:
+		return fmt.Errorf("connection: serve_one_call: %w", s.endedErr())
+	case <-timer.C:
+		return ErrServeOneCallTimeout
 	}
 }
 
 // replyToFrame builds the reply to an inbound frame and reports whether it
 // was a CALL to answer. A frame of another type, a malformed "call"-typed
 // frame, or a CALL whose signature doesn't verify against the caller it
-// names gets no reply, and the serve loop keeps going. The last matches
-// macula_station_link.erl's on_inbound_call/3: such a CALL never reaches a
-// policy or a handler, so the caller a policy checks is the one that signed.
+// names gets no reply. The last matches macula_station_link.erl's
+// on_inbound_call/3: such a CALL never reaches a policy or a handler, so the
+// caller a policy checks is the one that signed.
 func replyToFrame(s *Session, value cbor.Value, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) (cbor.Value, bool) {
-	ft, ok := value.Get("frame_type")
+	callInfo, ok := verifiedCall(value)
 	if !ok {
 		return cbor.Value{}, false
 	}
-	if t, _ := ft.AsText(); t != "call" {
-		return cbor.Value{}, false
+	return buildCallReply(s, callInfo, lookup, policy, id), true
+}
+
+// verifiedCall parses value as a CALL whose signature verifies against the
+// caller it names.
+func verifiedCall(value cbor.Value) (frame.CallInfo, bool) {
+	if frameType(value) != "call" {
+		return frame.CallInfo{}, false
 	}
 	callInfo, err := frame.ParseCall(value)
 	if err != nil {
-		return cbor.Value{}, false
+		return frame.CallInfo{}, false
 	}
 	if frame.Verify(value, callInfo.Caller) != nil {
-		return cbor.Value{}, false
+		return frame.CallInfo{}, false
 	}
-	return buildCallReply(s, callInfo, lookup, policy, id), true
+	return callInfo, true
 }
 
 // buildCallReply fires rpc.received_v1/rpc.replied_v1 around dispatch,

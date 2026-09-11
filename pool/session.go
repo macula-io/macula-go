@@ -4,26 +4,42 @@ import (
 	"context"
 	"time"
 
-	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/connection"
+	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/transport"
 )
 
-// sessionLike is the slice of *connection.Session a link actor needs —
-// deliberately an interface, not the concrete type, so a test can supply
-// an in-memory fake and exercise respawn/replay/dedup deterministically
-// without a live QUIC connection (the same reasoning
-// connection/serve_ucan_test.go already applies at a smaller scale by
-// passing a nil *Session into pure dispatch-logic tests). *connection.Session
-// satisfies this today with no changes needed beyond RecvAny/SendAny
-// (connection/raw.go) — every method below already existed.
+// sessionLike is the slice of *connection.Session a link needs, as an
+// interface so a test can supply an in-memory fake and exercise respawn,
+// replay, dedup and fall-through deterministically without a live QUIC
+// connection.
 type sessionLike interface {
-	RecvAny(deadline time.Time) (cbor.Value, error)
-	SendAny(v cbor.Value) error
+	LinkCall(spec frame.CallSpec, id identity.KeyPair, timeout time.Duration) (frame.CallResponse, error)
+	Publish(spec frame.PublishSpec, id identity.KeyPair) error
+	Subscribe(spec frame.SubscribeSpec, id identity.KeyPair) (subscription, error)
 	Done() <-chan struct{}
+	Err() error
 	Close(reason string, detail *string, id identity.KeyPair) error
 	RemoteAddr() string
+}
+
+// subscription is the slice of *connection.Subscription a link needs.
+type subscription interface {
+	Recv(timeout time.Duration) (frame.EventInfo, error)
+	Close() error
+}
+
+// liveSession is a *connection.Session as a sessionLike; only Subscribe
+// differs, returning the subscription interface.
+type liveSession struct{ *connection.Session }
+
+func (s liveSession) Subscribe(spec frame.SubscribeSpec, id identity.KeyPair) (subscription, error) {
+	sub, err := s.Session.Subscribe(spec, id)
+	if err != nil {
+		return nil, err
+	}
+	return sub, nil
 }
 
 // dialResult is what dialing one seed/target produces: the live session,
@@ -45,5 +61,5 @@ func dialSession(ctx context.Context, host string, port uint16, trust transport.
 	if err != nil {
 		return dialResult{}, err
 	}
-	return dialResult{session: session, nodeID: session.Station.NodeID, remote: session.RemoteAddr()}, nil
+	return dialResult{session: liveSession{session}, nodeID: session.Station.NodeID, remote: session.RemoteAddr()}, nil
 }

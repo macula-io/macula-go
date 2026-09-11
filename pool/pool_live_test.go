@@ -45,9 +45,9 @@ func TestLivePoolReconnectsAndReplaysSubscriptionAfterLinkDrop(t *testing.T) {
 	p.linksMu.RLock()
 	lk := p.links[key]
 	p.linksMu.RUnlock()
-	originalActor := lk.CurrentActor()
-	if originalActor == nil {
-		t.Fatalf("no live actor for %s right after Connect reported healthy", key)
+	originalSession := lk.CurrentSession()
+	if originalSession == nil {
+		t.Fatalf("no live session for %s right after Connect reported healthy", key)
 	}
 
 	realm := fill32(0x42)
@@ -76,22 +76,22 @@ func TestLivePoolReconnectsAndReplaysSubscriptionAfterLinkDrop(t *testing.T) {
 	}
 
 	// Simulate the connection dying mid-session: force-close the
-	// underlying session out from under the actor. This is the same
-	// detection path (Session.Done()'s channel, backed by quic-go's own
-	// Conn.Context().Done()) an unexpected network drop would trigger —
-	// see connection/live_test.go's TestLiveSessionDoneFiresOnClose,
-	// which already proves Close() fires Done().
-	_ = originalActor.session.Close("pool_live_test: simulated drop", nil, id)
+	// underlying session out from under the link. This is the same
+	// detection path (Session.Done(), which closes when the session ends)
+	// an unexpected network drop would trigger — see
+	// connection/live_test.go's TestLiveSessionDoneFiresOnClose, which
+	// already proves Close() fires Done().
+	_ = originalSession.session.Close("pool_live_test: simulated drop", nil, id)
 
 	// The pool must notice, back off, redial, and come back healthy —
-	// with a DIFFERENT actor instance, proving an actual respawn
+	// with a DIFFERENT session, proving an actual respawn
 	// happened rather than the original silently surviving.
 	waitFor(t, 15*time.Second, func() bool {
 		p.linksMu.RLock()
 		lk := p.links[key]
 		p.linksMu.RUnlock()
-		a := lk.CurrentActor()
-		return a != nil && a != originalActor
+		ls := lk.CurrentSession()
+		return ls != nil && ls != originalSession
 	})
 
 	// The subscription registered before the drop must have been
@@ -109,10 +109,10 @@ func TestLivePoolReconnectsAndReplaysSubscriptionAfterLinkDrop(t *testing.T) {
 	}
 }
 
-// TestLivePoolLivenessProbeDoesNotKillAHealthyLink proves tickLiveness
-// (actor.go) doesn't itself destabilize a genuinely healthy connection --
-// a short interval so several real _macula.ping round trips happen
-// within the test, asserting the link stays up (same actor instance)
+// TestLivePoolLivenessProbeDoesNotKillAHealthyLink proves the liveness
+// probe (link_session.go) doesn't itself destabilize a genuinely healthy
+// connection -- a short interval so several real _macula.ping round trips
+// happen within the test, asserting the link stays up (same session)
 // throughout, not just that it eventually reconnects.
 func TestLivePoolLivenessProbeDoesNotKillAHealthyLink(t *testing.T) {
 	id, err := identity.Generate()
@@ -134,18 +134,17 @@ func TestLivePoolLivenessProbeDoesNotKillAHealthyLink(t *testing.T) {
 	p.linksMu.RLock()
 	lk := p.links[key]
 	p.linksMu.RUnlock()
-	original := lk.CurrentActor()
+	original := lk.CurrentSession()
 
-	// Several real liveness ticks (2s interval) against the live
-	// station -- if tickLiveness had the miss-counting backwards, or
-	// never actually cleared pingCallID on a real reply, this link would
-	// die well within this window.
+	// Several real liveness probes (2s interval) against the live
+	// station -- if the probe counted a real reply, an ERROR included, as
+	// a miss, this link would die well within this window.
 	time.Sleep(9 * time.Second)
 
 	p.linksMu.RLock()
 	lk = p.links[key]
 	p.linksMu.RUnlock()
-	current := lk.CurrentActor()
+	current := lk.CurrentSession()
 	if current == nil {
 		t.Fatalf("link went down during normal operation with liveness probing active")
 	}

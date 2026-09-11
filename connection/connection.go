@@ -11,6 +11,7 @@ package connection
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"time"
@@ -42,6 +43,10 @@ type Session struct {
 	identity []byte          // the node id this session connected as
 	done     <-chan struct{} // closed when the connection ends
 	leases   *leases         // nil unless DialLeased opened the session
+
+	self        identity.KeyPair // signs the replies the reader sends itself
+	sendTimeout time.Duration    // zero means defaultSendTimeout
+	rt          router
 }
 
 // Seed is one candidate station to dial — a host/port pair, the same
@@ -130,7 +135,7 @@ func connectOne(ctx context.Context, host string, port uint16, trust transport.T
 	}
 	control := newFrameStream(stream)
 
-	session := &Session{conn: conn, control: control, identity: id.NodeID(), done: conn.Context().Done()}
+	session := &Session{conn: conn, control: control, identity: id.NodeID(), done: conn.Context().Done(), self: id}
 
 	puzzleEvidence := id.PuzzleEvidence()
 	spec := frame.NewConnectSpec(id.NodeID(), puzzleEvidence[:])
@@ -162,20 +167,21 @@ func connectOne(ctx context.Context, host string, port uint16, trust transport.T
 		session.leases = &leases{held: 1, close: func() { _ = session.Close("normal", nil, id) }}
 	}
 	register(session)
+	session.startReader()
 	return session, nil
 }
 
-// Done returns a channel that closes when this session's underlying
-// connection is gone — cleanly closed or dropped out from under it —
-// so a caller that wants to react to a dead link (redial, alert, stop)
-// doesn't have to wait for its next Call/Subscribe/etc to fail first.
-// Backed by quic-go's own Conn.Context(), whose Done() channel closes
-// exactly on connection loss; this was previously never called
-// anywhere in this SDK. Follows the same ctx-cancellation idiom already
-// used by RunSubscriber, ServeForever and KeepAdvertised rather than
-// introducing a new signal shape.
+// Done returns a channel that closes once the session has ended: its
+// connection closed or failed, the station said goodbye or broke the protocol,
+// a write stalled past the send timeout, or Close was called. Err says which.
 func (s *Session) Done() <-chan struct{} {
-	return s.done
+	return s.rt.endedCh
+}
+
+// Err returns why the session ended, wrapping ErrSessionEnded, or nil while it
+// is running.
+func (s *Session) Err() error {
+	return s.endedErr()
 }
 
 // OpenDedicatedStream opens a new dedicated QUIC stream on this same
@@ -207,25 +213,136 @@ func (s *Session) AcceptDedicatedStream(ctx context.Context) (*FrameStream, erro
 	return newFrameStream(stream), nil
 }
 
-// Call sends a signed CALL on the control stream and waits for the
-// matching RESULT or ERROR — see FrameStream.Call.
+// Call sends a signed CALL on the control stream and waits for the matching
+// RESULT or ERROR, which the session's reader routes back by call_id, so any
+// number of calls, subscriptions and serve loops can share the session. A
+// timeout that passes before the reply is an error wrapping ErrCallTimeout; it
+// also wraps ErrNotSent when the CALL was never written.
 func (s *Session) Call(procedure string, realm []byte, payload cbor.Value, deadlineMs int64, id identity.KeyPair, timeout time.Duration) (frame.CallResponse, error) {
-	requestID := randomID()
-	announceRPCSent(s, realm, id, requestID)
-	resp, err := s.control.Call(procedure, realm, payload, deadlineMs, id, timeout)
-	announceRPCCompleted(s, realm, id, requestID, resp, err)
-	return resp, err
+	return s.callAnnounced(frame.NewCallSpec(nil, procedure, realm, payload, deadlineMs, id.NodeID()), id, timeout)
 }
 
 // CallWithUCAN is Call, attaching ucanToken (e.g. from ucan.Create) to
 // the outgoing CALL — for invoking a procedure gated by a
 // ucan.Policy.Required policy on the provider side.
 func (s *Session) CallWithUCAN(procedure string, realm []byte, payload cbor.Value, deadlineMs int64, id identity.KeyPair, timeout time.Duration, ucanToken []byte) (frame.CallResponse, error) {
+	spec := frame.NewCallSpec(nil, procedure, realm, payload, deadlineMs, id.NodeID())
+	spec.UcanToken = ucanToken
+	return s.callAnnounced(spec, id, timeout)
+}
+
+// LinkCall makes one call the way a pool link makes it, as
+// macula_station_link:call does: like Call, but it publishes no RPC facts.
+// spec's CallID is replaced with a fresh one.
+func (s *Session) LinkCall(spec frame.CallSpec, id identity.KeyPair, timeout time.Duration) (frame.CallResponse, error) {
+	return s.call(spec, id, timeout, nil)
+}
+
+// callAnnounced makes one call and publishes its rpc.sent_v1 fact once the
+// CALL is written and its rpc.completed_v1 fact once it has an outcome.
+func (s *Session) callAnnounced(spec frame.CallSpec, id identity.KeyPair, timeout time.Duration) (frame.CallResponse, error) {
 	requestID := randomID()
-	announceRPCSent(s, realm, id, requestID)
-	resp, err := s.control.CallWithUCAN(procedure, realm, payload, deadlineMs, id, timeout, ucanToken)
-	announceRPCCompleted(s, realm, id, requestID, resp, err)
+	resp, err := s.call(spec, id, timeout, func() { announceRPCSent(s, spec.Realm, id, requestID) })
+	announceRPCCompleted(s, spec.Realm, id, requestID, resp, err)
 	return resp, err
+}
+
+// call sends spec and waits for its reply. The CALL is written by its own
+// goroutine, so the timeout is kept even while the write waits or stalls; a
+// write that began finishes under the session send timeout. onSent runs once
+// the CALL is written.
+func (s *Session) call(spec frame.CallSpec, id identity.KeyPair, timeout time.Duration, onSent func()) (frame.CallResponse, error) {
+	callID := make([]byte, 16)
+	if _, err := rand.Read(callID); err != nil {
+		return frame.CallResponse{}, fmt.Errorf("connection: generate call_id: %w", err)
+	}
+	spec.CallID = callID
+	key := string(callID)
+	reply := make(chan frame.CallResponse, 1)
+	s.rt.mu.Lock()
+	if s.rt.ended != nil {
+		err := s.rt.ended
+		s.rt.mu.Unlock()
+		return frame.CallResponse{}, fmt.Errorf("%w: %w", err, ErrNotSent)
+	}
+	s.rt.pending[key] = reply
+	s.rt.mu.Unlock()
+
+	deadline := time.Now().Add(timeout)
+	started := make(chan struct{})
+	written := make(chan error, 1)
+	signed := frame.Sign(frame.Call(spec), id)
+	go func() {
+		err := s.send(signed, deadline, func() { close(started) })
+		if err == nil && onSent != nil {
+			onSent()
+		}
+		written <- err
+	}()
+
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	for {
+		select {
+		case err := <-written:
+			if err == nil {
+				written = nil
+				continue
+			}
+			s.forgetCall(key)
+			if errors.Is(err, ErrNotSent) && !errors.Is(err, ErrSessionEnded) {
+				return frame.CallResponse{}, fmt.Errorf("%w before its CALL could be written: %w", ErrCallTimeout, err)
+			}
+			return frame.CallResponse{}, err
+		case resp, ok := <-reply:
+			if !ok {
+				return frame.CallResponse{}, endedWhileCalling(s.endedErr(), started, written)
+			}
+			return resp, nil
+		case <-timer.C:
+			s.forgetCall(key)
+			return frame.CallResponse{}, timedOut(started, written)
+		}
+	}
+}
+
+// timedOut is the error for a call whose timeout passed before its reply. It
+// wraps ErrNotSent only when the CALL's write never began: the writer either
+// began or gave up on the lock at the same deadline, so this waits for which.
+func timedOut(started <-chan struct{}, written <-chan error) error {
+	if written != nil {
+		select {
+		case <-started:
+		case err := <-written:
+			if errors.Is(err, ErrNotSent) {
+				return fmt.Errorf("%w before its CALL could be written: %w", ErrCallTimeout, err)
+			}
+		}
+	}
+	return fmt.Errorf("%w waiting for a response", ErrCallTimeout)
+}
+
+// endedWhileCalling is the error for a call whose session ended before its
+// reply. It wraps ErrNotSent only when the CALL's write never began: a writer
+// still waiting for the lock gives up as soon as the session ends, so this
+// waits to learn which.
+func endedWhileCalling(ended error, started <-chan struct{}, written <-chan error) error {
+	if written != nil {
+		select {
+		case <-started:
+		case err := <-written:
+			if errors.Is(err, ErrNotSent) {
+				return fmt.Errorf("%w: %w", ended, ErrNotSent)
+			}
+		}
+	}
+	return ended
+}
+
+func (s *Session) forgetCall(key string) {
+	s.rt.mu.Lock()
+	defer s.rt.mu.Unlock()
+	delete(s.rt.pending, key)
 }
 
 // Publish sends a signed PUBLISH, carrying the end-to-end
@@ -237,21 +354,11 @@ func (s *Session) CallWithUCAN(procedure string, realm []byte, payload cbor.Valu
 // reference SDK's own default (pubsub_emit_publisher_sig, true since
 // macula 4.6.0). Fire-and-forget — no reply is expected on the wire; a
 // subscriber (this session included, if subscribed to the same
-// topic/realm) receives an EVENT asynchronously, read via RecvEvent.
+// topic/realm) receives an EVENT asynchronously, read through its Subscription.
 func (s *Session) Publish(spec frame.PublishSpec, id identity.KeyPair) error {
 	unsigned := frame.Publish(spec)
 	withPublisherSig := frame.SignPublisher(unsigned, id)
-	return s.control.SendFrame(frame.Sign(withPublisherSig, id))
-}
-
-// Subscribe sends a signed SUBSCRIBE. Fire-and-forget.
-func (s *Session) Subscribe(spec frame.SubscribeSpec, id identity.KeyPair) error {
-	return s.control.SendFrame(frame.Sign(frame.Subscribe(spec), id))
-}
-
-// Unsubscribe sends a signed UNSUBSCRIBE. Fire-and-forget.
-func (s *Session) Unsubscribe(spec frame.UnsubscribeSpec, id identity.KeyPair) error {
-	return s.control.SendFrame(frame.Sign(frame.Unsubscribe(spec), id))
+	return s.send(frame.Sign(withPublisherSig, id), time.Now().Add(s.sendTimeoutOrDefault()), nil)
 }
 
 // Advertise sends a signed ADVERTISE (§6.9) — registers this connection
@@ -260,25 +367,12 @@ func (s *Session) Unsubscribe(spec frame.UnsubscribeSpec, id identity.KeyPair) e
 // STREAM_OPENs (a fresh dedicated stream — see AcceptDedicatedStream)
 // for that procedure back to this connection.
 func (s *Session) Advertise(spec frame.AdvertiseSpec, id identity.KeyPair) error {
-	return s.control.SendFrame(frame.Sign(frame.Advertise(spec), id))
+	return s.send(frame.Sign(frame.Advertise(spec), id), time.Now().Add(s.sendTimeoutOrDefault()), nil)
 }
 
 // Unadvertise sends a signed UNADVERTISE. Fire-and-forget.
 func (s *Session) Unadvertise(spec frame.UnadvertiseSpec, id identity.KeyPair) error {
-	return s.control.SendFrame(frame.Sign(frame.Unadvertise(spec), id))
-}
-
-// RecvEvent reads the next frame and parses it as an EVENT, bounded by
-// timeout. Any non-EVENT frame received first is an error, not
-// silently skipped — unlike Call's response wait, a caller waiting
-// specifically for a pubsub delivery has no reason to expect anything
-// else to legitimately arrive first.
-func (s *Session) RecvEvent(timeout time.Duration) (frame.EventInfo, error) {
-	value, err := s.control.RecvFrame(time.Now().Add(timeout))
-	if err != nil {
-		return frame.EventInfo{}, err
-	}
-	return frame.ParseEvent(value)
+	return s.send(frame.Sign(frame.Unadvertise(spec), id), time.Now().Add(s.sendTimeoutOrDefault()), nil)
 }
 
 // RemoteAddr is the address this session's connection is with.
@@ -332,9 +426,9 @@ const closeSendTimeout = 1 * time.Second
 func (s *Session) Close(reason string, detail *string, id identity.KeyPair) error {
 	unregister(s)
 	goodbye := frame.Sign(frame.Goodbye(reason, detail), id)
-	_ = s.control.stream.SetWriteDeadline(time.Now().Add(closeSendTimeout)) // bounds the write below -- see closeSendTimeout's own doc
-	_ = s.control.SendFrame(goodbye)                                        // best-effort -- the connection is closing regardless
-	_ = s.control.stream.Close()                                            // signal no more writes; still async, see doc above
+	_ = s.control.sendFrame(goodbye, time.Now().Add(closeSendTimeout), closeSendTimeout, nil, nil) // best-effort, bounded -- see closeSendTimeout's own doc
+	s.end(fmt.Errorf("%w: closed", ErrSessionEnded))
+	_ = s.control.stream.Close() // signal no more writes; still async, see doc above
 	time.Sleep(closeDrainMs)
 	return s.conn.CloseWithError(0, reason)
 }

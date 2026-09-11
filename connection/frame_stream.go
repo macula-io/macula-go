@@ -2,6 +2,7 @@ package connection
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -38,30 +39,84 @@ type quicStream interface {
 // Session.OpenDedicatedStream / Session.AcceptDedicatedStream are each
 // one of these — see plans/PLAN_WIRE_PROTOCOL.md §3, §12, §13.
 type FrameStream struct {
-	stream quicStream
-	buf    []byte     // bytes read but not yet consumed by a decoded frame
-	sendMu sync.Mutex // held for one frame's write; see SendFrame
+	stream   quicStream
+	buf      []byte        // bytes read but not yet consumed by a decoded frame
+	gate     chan struct{} // holds a token while a frame is written; see sendFrame
+	gateInit sync.Once
 }
 
 func newFrameStream(stream *quic.Stream) *FrameStream {
 	return &FrameStream{stream: stream}
 }
 
-// SendFrame encodes and writes v to the stream. Frames sent from several
-// goroutines at once are written whole, one after another, without relying
-// on the stream to serialize concurrent writes: quic-go documents concurrent
+// SendFrame encodes and writes v to the stream, waiting as long as it takes
+// for a frame another goroutine is writing to finish. Frames sent from several
+// goroutines at once are written whole, one after another, without relying on
+// the stream to serialize concurrent writes: quic-go documents concurrent
 // Write on a stream as not permitted.
 func (fs *FrameStream) SendFrame(v cbor.Value) error {
+	return fs.sendFrame(v, time.Time{}, 0, nil, nil)
+}
+
+var (
+	// errWriteLockWait is sendFrame's error when waitUntil passed before the
+	// stream was free: nothing was written.
+	errWriteLockWait = errors.New("connection: timed out waiting to write")
+	// errSendStopped is sendFrame's error when stop closed before the stream
+	// was free: nothing was written.
+	errSendStopped = errors.New("connection: stopped waiting to write")
+)
+
+// sendFrame writes v once no other frame is being written on this stream.
+// waitUntil bounds that wait (zero waits as long as it takes) and stop ends it
+// early (nil never does). writeFor bounds the write itself (zero sets no
+// deadline). started, if not nil, is called once the write begins.
+func (fs *FrameStream) sendFrame(v cbor.Value, waitUntil time.Time, writeFor time.Duration, stop <-chan struct{}, started func()) error {
 	encoded, err := frame.Encode(v)
 	if err != nil {
 		return fmt.Errorf("connection: encode frame: %w", err)
 	}
-	fs.sendMu.Lock()
-	defer fs.sendMu.Unlock()
+	if err := fs.takeTurn(waitUntil, stop); err != nil {
+		return err
+	}
+	defer func() { <-fs.gate }()
+	if started != nil {
+		started()
+	}
+	if writeFor > 0 {
+		_ = fs.stream.SetWriteDeadline(time.Now().Add(writeFor))
+		defer func() { _ = fs.stream.SetWriteDeadline(time.Time{}) }()
+	}
 	if _, err := fs.stream.Write(encoded); err != nil {
 		return fmt.Errorf("connection: write frame: %w", err)
 	}
 	return nil
+}
+
+// takeTurn waits until no other frame is being written on this stream, until
+// waitUntil (zero waits as long as it takes) or until stop closes.
+func (fs *FrameStream) takeTurn(waitUntil time.Time, stop <-chan struct{}) error {
+	fs.gateInit.Do(func() { fs.gate = make(chan struct{}, 1) })
+	var expired <-chan time.Time
+	if !waitUntil.IsZero() {
+		timer := time.NewTimer(time.Until(waitUntil))
+		defer timer.Stop()
+		expired = timer.C
+	}
+	select {
+	case fs.gate <- struct{}{}:
+	case <-stop:
+		return errSendStopped
+	case <-expired:
+		return errWriteLockWait
+	}
+	select {
+	case <-stop:
+		<-fs.gate
+		return errSendStopped
+	default:
+		return nil
+	}
 }
 
 // CloseSend closes the send-direction of the underlying QUIC stream —

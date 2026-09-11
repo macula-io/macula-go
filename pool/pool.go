@@ -3,23 +3,15 @@
 // live links to N stations, respawn a dead one with backoff, and replay
 // every tracked subscription onto the fresh link so a caller's
 // subscription survives a link dying underneath it. connection.Session
-// itself deliberately does none of this — see its own doc: "reconnecting
-// and replaying subscriptions ... onto a fresh session is the caller's
-// responsibility."
+// itself deliberately does none of this: reconnecting and replaying
+// subscriptions onto a fresh session is the caller's responsibility.
 //
-// Design note on why this isn't "one Session per seed, subscribe
-// directly": confirmed by reading connection/frame_stream.go,
-// subscriber.go and serve.go that a Session's control stream supports
-// exactly ONE concurrent reader (Call, RunSubscriber and ServeOneCall
-// each document this). A pool that
-// needs one link to carry N tracked subscriptions plus outbound Call
-// fan-out needs to demux those itself — see actor.go's own doc for the
-// reader/writer/actor split this package uses to do that (reviewed
-// adversarially before implementation; that review is why writes are
-// queued through a separate goroutine rather than sent inline from the
-// dispatch loop, and why an inbound CALL — out of scope for v1, see
-// below — would need to run on its own spawned goroutine rather than
-// inline).
+// Each link holds one connection.Session at a time. A session carries any
+// number of concurrent calls, publishes and subscriptions (its single
+// reader routes replies and events), so a link subscribes once per tracked
+// realm and topic and forwards what each subscription receives into the
+// pool, which dedups events across links and fans them out to local
+// handlers -- see link_session.go.
 //
 // v1 scope: Connect/Close/Status/Publish/Subscribe/Unsubscribe/Call/
 // CallStation (direct-dial, macula_client.erl's call_station/6). NOT in
@@ -109,13 +101,13 @@ const (
 	// either way.
 	LinkSelectionAuto LinkSelection = iota
 	// LinkSelectionFirstSuccess tries links in whatever order
-	// connectedActors() currently returns them, first non-error wins --
+	// connectedSessions() currently returns them, first non-error wins --
 	// this package's original, pre-existing behavior. Note that order
 	// was never actually deliberate: p.links is a map, and Go
 	// randomizes map iteration, so this policy already had incidental,
 	// undocumented variation baked in -- LinkSelectionFirstSuccess makes
 	// that historical accident irrelevant by not caring about order at
-	// all beyond "whatever connectedActors() hands back."
+	// all beyond "whatever connectedSessions() hands back."
 	LinkSelectionFirstSuccess
 	// LinkSelectionRandom uniformly shuffles the connected-links list
 	// before the same first-match (Call) or take-first-N (Publish)
@@ -178,7 +170,7 @@ type Opts struct {
 	DedupSweep        time.Duration // 0 -> DefaultDedupSweep
 	// LivenessInterval/LivenessMaxMisses configure the application-level
 	// probe every link runs on top of the transport's own keepalive --
-	// see actor.go's tickLiveness for why the transport layer alone
+	// see link_session.go's probe for why the transport layer alone
 	// isn't enough. 0 -> DefaultLivenessInterval/DefaultLivenessMaxMisses.
 	LivenessInterval  time.Duration
 	LivenessMaxMisses int
@@ -364,16 +356,12 @@ func (p *Pool) addLink(host string, port uint16, trust transport.Trust) *link {
 	return l
 }
 
-// Close cancels every link and waits for each link's supervise loop
-// (and its current actor's run(), which that loop calls synchronously)
-// to return. It does NOT explicitly join an actor's own reader/writer
-// goroutines -- they're stopped via the same cancelled context, and
-// every send they could still attempt is itself guarded against that
-// context, so they can't block past it, but a brief window where one
-// is still returning after run() itself has already returned is
-// possible. Harmless: nothing is shared between one generation's
-// goroutines and the next, only the (already dead) session they were
-// reading/writing.
+// Close cancels every link and waits for each link's supervise loop, and
+// the run of its current session, which that loop calls synchronously, to
+// return. It does not join a session's subscription forwarders or a
+// SUBSCRIBE still being written: they end with the session run closes, so
+// one may still be returning briefly after Close does. Harmless: nothing
+// is shared between one session's goroutines and the next's.
 func (p *Pool) Close() error {
 	p.cancel()
 	p.wg.Wait()
@@ -392,7 +380,7 @@ func (p *Pool) Status() Status {
 	p.linksMu.RLock()
 	total, healthy := len(p.links), 0
 	for _, l := range p.links {
-		if l.CurrentActor() != nil {
+		if l.CurrentSession() != nil {
 			healthy++
 		}
 	}
@@ -405,41 +393,41 @@ func (p *Pool) Status() Status {
 	return Status{ConfiguredLinks: total, HealthyLinks: healthy, Subscriptions: subCount}
 }
 
-// connectedActors snapshots the currently-live actors across every
-// configured link.
-func (p *Pool) connectedActors() []*actor {
+// connectedSessions snapshots the live sessions across every configured
+// link.
+func (p *Pool) connectedSessions() []*linkSession {
 	p.linksMu.RLock()
 	defer p.linksMu.RUnlock()
-	actors := make([]*actor, 0, len(p.links))
+	sessions := make([]*linkSession, 0, len(p.links))
 	for _, l := range p.links {
-		if a := l.CurrentActor(); a != nil {
-			actors = append(actors, a)
+		if ls := l.CurrentSession(); ls != nil {
+			sessions = append(sessions, ls)
 		}
 	}
-	return actors
+	return sessions
 }
 
-// selectLinks returns connectedActors() ordered per p.opts.LinkSelection --
+// selectLinks returns connectedSessions() ordered per p.opts.LinkSelection --
 // the single shared choke point Call and Publish both route through, so
 // the two operations can never drift onto different selection policies
 // by accident. LinkSelectionFirstSuccess passes the list through
-// unchanged (today's original behavior: whatever order connectedActors()
+// unchanged (today's original behavior: whatever order connectedSessions()
 // happens to return, which was always map-iteration-random and never
 // actually deliberate -- see LinkSelectionFirstSuccess's own doc).
 // LinkSelectionRandom uniformly shuffles a COPY of the list (never the
-// slice connectedActors() just built in place, and never anything
+// slice connectedSessions() just built in place, and never anything
 // touching p.links itself) via math/rand/v2, which needs no seeding and
 // is safe for concurrent use from multiple goroutines calling Call/
 // Publish at once -- unlike math/rand's global source pre-v2, which
 // needed its own lock and a deliberate seed to avoid every process
 // producing the identical shuffle sequence.
-func (p *Pool) selectLinks() []*actor {
-	actors := p.connectedActors()
-	if p.opts.LinkSelection != LinkSelectionRandom || len(actors) <= 1 {
-		return actors
+func (p *Pool) selectLinks() []*linkSession {
+	sessions := p.connectedSessions()
+	if p.opts.LinkSelection != LinkSelectionRandom || len(sessions) <= 1 {
+		return sessions
 	}
-	shuffled := make([]*actor, len(actors))
-	copy(shuffled, actors)
+	shuffled := make([]*linkSession, len(sessions))
+	copy(shuffled, sessions)
 	mathrand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
 	return shuffled
 }

@@ -67,7 +67,7 @@ func (p *Pool) discoverStations() {
 
 func (p *Pool) waitForAnyHealthyLink() bool {
 	for {
-		if len(p.connectedActors()) > 0 {
+		if len(p.connectedSessions()) > 0 {
 			return true
 		}
 		select {
