@@ -119,7 +119,7 @@ func TestLiveServeForeverAnswersMultipleCallsAcrossDynamicRegistration(t *testin
 	go func() { serveErrCh <- provider.ServeForever(loopCtx, lookup, openPolicy, providerID) }()
 
 	// First call: only the first procedure is registered.
-	resp1, err := caller.control.Call(firstProc, realm, cbor.Text("one"), nowMs()+10_000, callerID, 15*time.Second)
+	resp1, err := caller.Call(firstProc, realm, cbor.Text("one"), nowMs()+10_000, callerID, 15*time.Second)
 	if err != nil {
 		t.Fatalf("Call (first): %v", err)
 	}
@@ -142,7 +142,7 @@ func TestLiveServeForeverAnswersMultipleCallsAcrossDynamicRegistration(t *testin
 	defer provider.Unadvertise(frame.NewUnadvertiseSpec(realm, secondProc, providerID.NodeID()), providerID)
 	time.Sleep(500 * time.Millisecond)
 
-	resp2, err := caller.control.Call(secondProc, realm, cbor.Text("two"), nowMs()+10_000, callerID, 15*time.Second)
+	resp2, err := caller.Call(secondProc, realm, cbor.Text("two"), nowMs()+10_000, callerID, 15*time.Second)
 	if err != nil {
 		t.Fatalf("Call (second): %v", err)
 	}
