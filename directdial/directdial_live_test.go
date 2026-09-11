@@ -293,7 +293,13 @@ func TestLiveResolverSessionStillConnectedAfterADirectCall(t *testing.T) {
 		host = "station-de-falkenstein.macula.io"
 	}
 	const port = 4433
-	const procedure = "directdial_live_test.resolver_session_reuse_v1"
+	// Unique to this run: advertisements from earlier runs stay in the DHT
+	// for their TTL.
+	suffix := make([]byte, 4)
+	if _, err := rand.Read(suffix); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
+	procedure := "directdial_live_test.resolver_session_reuse_" + hex.EncodeToString(suffix) + "_v1"
 	realm := make([]byte, 32)
 
 	providerID, err := identity.GenerateWithPuzzle(identity.DefaultPuzzleDifficulty)
