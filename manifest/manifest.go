@@ -16,8 +16,10 @@ package manifest
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"lukechampine.com/blake3"
 
@@ -167,6 +169,9 @@ func McidIsChunked(mcid Mcid) bool {
 // Verify checks reassembled data against manifest: size, then a fresh
 // Merkle root over data re-chunked the same way.
 func Verify(m Manifest, data []byte) error {
+	if m.ChunkSize <= 0 {
+		return fmt.Errorf("manifest: verify: chunk size %d is not positive", m.ChunkSize)
+	}
 	if uint64(len(data)) != m.Size {
 		return fmt.Errorf("manifest: verify: data size %d does not match the manifest's %d", len(data), m.Size)
 	}
@@ -177,6 +182,59 @@ func Verify(m Manifest, data []byte) error {
 		return fmt.Errorf("manifest: verify: re-chunked root hash does not match the manifest")
 	}
 	return nil
+}
+
+// ErrManifestMcidMismatch is a manifest that doesn't describe the MCID it
+// was fetched for.
+var ErrManifestMcidMismatch = errors.New("manifest: the manifest does not describe the requested mcid")
+
+// ErrManifestNotWhole is a manifest whose chunks don't describe its content
+// whole.
+var ErrManifestNotWhole = errors.New("manifest: the manifest's chunks do not describe its content whole")
+
+// McidFor is the MCID m's canonical fields describe: its name, size,
+// chunk_size, chunk_count, hash_algorithm and root_hash.
+func McidFor(m Manifest) Mcid {
+	return computeMcid(m.Name, m.Size, m.ChunkSize, m.ChunkCount, m.HashAlgorithm, m.RootHash)
+}
+
+// VerifyMcid checks that m describes mcid, the way macula_manifest's
+// verify_mcid/2 does: m's name must be valid UTF-8, its hash algorithm one
+// this package computes, and the MCID recomputed from its canonical fields
+// (McidFor) must equal mcid. m's own Mcid field is not consulted.
+func VerifyMcid(m Manifest, mcid Mcid) error {
+	known := m.HashAlgorithm == Blake3 || m.HashAlgorithm == Sha256
+	if !utf8.ValidString(m.Name) || !known || McidFor(m) != mcid {
+		return ErrManifestMcidMismatch
+	}
+	return nil
+}
+
+// CheckWhole checks that m's chunks describe its content whole: ChunkCount
+// of them, in index order, each starting where the one before it ended,
+// none empty or larger than a positive ChunkSize, together Size bytes.
+func CheckWhole(m Manifest) error {
+	if m.ChunkSize <= 0 || m.ChunkCount != len(m.Chunks) {
+		return fmt.Errorf("%w: chunk size %d, %d chunks counted, %d listed", ErrManifestNotWhole, m.ChunkSize, m.ChunkCount, len(m.Chunks))
+	}
+	var offset uint64
+	for i, c := range m.Chunks {
+		next := offset + uint64(c.Size)
+		if !chunkFollows(c, i, offset, m.ChunkSize) || next < offset {
+			return fmt.Errorf("%w: chunk %d", ErrManifestNotWhole, i)
+		}
+		offset = next
+	}
+	if offset != m.Size {
+		return fmt.Errorf("%w: the chunks hold %d bytes, the manifest says %d", ErrManifestNotWhole, offset, m.Size)
+	}
+	return nil
+}
+
+// chunkFollows reports whether c is chunk i, starting at offset, neither
+// empty nor larger than chunkSize.
+func chunkFollows(c ChunkInfo, i int, offset uint64, chunkSize int) bool {
+	return c.Index == i && c.Offset >= 0 && uint64(c.Offset) == offset && c.Size > 0 && c.Size <= chunkSize
 }
 
 func doChunk(data []byte, chunkSize int) [][]byte {
@@ -320,7 +378,7 @@ func FromWire(v cbor.Value) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	algName, err := getText(v, "hash_algorithm")
+	algorithm, err := wireAlgorithm(v)
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -351,8 +409,30 @@ func FromWire(v cbor.Value) (Manifest, error) {
 	return Manifest{
 		Mcid: mcid, Version: uint32(version), Name: name, Size: size, Created: created,
 		ChunkSize: int(chunkSize), ChunkCount: int(chunkCount),
-		HashAlgorithm: AlgorithmFromName(algName), RootHash: rootHash, Chunks: chunks,
+		HashAlgorithm: algorithm, RootHash: rootHash, Chunks: chunks,
 	}, nil
+}
+
+// wireAlgorithm reads a manifest's hash_algorithm the way macula_manifest's
+// from_wire/1 does: a missing one is Blake3, and a present one, as text or
+// bytes, must be one this package computes.
+func wireAlgorithm(v cbor.Value) (Algorithm, error) {
+	field, ok := v.Get("hash_algorithm")
+	if !ok {
+		return Blake3, nil
+	}
+	name, isText := field.AsText()
+	if !isText {
+		b, _ := field.AsBytes()
+		name = string(b)
+	}
+	switch name {
+	case Blake3.Name():
+		return Blake3, nil
+	case Sha256.Name():
+		return Sha256, nil
+	}
+	return Blake3, fmt.Errorf("manifest: from_wire: hash_algorithm %q is not one this package computes", name)
 }
 
 func chunkInfoFromWire(v cbor.Value) (ChunkInfo, error) {
@@ -387,18 +467,6 @@ func getUint(v cbor.Value, field string) (uint64, error) {
 		return 0, fmt.Errorf("manifest: from_wire: field %q has the wrong type", field)
 	}
 	return uint64(n), nil
-}
-
-func getText(v cbor.Value, field string) (string, error) {
-	fv, ok := v.Get(field)
-	if !ok {
-		return "", fmt.Errorf("manifest: from_wire: missing field %q", field)
-	}
-	t, ok := fv.AsText()
-	if !ok {
-		return "", fmt.Errorf("manifest: from_wire: field %q has the wrong type", field)
-	}
-	return t, nil
 }
 
 func getStringBytes(v cbor.Value, field string) (string, error) {

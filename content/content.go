@@ -137,7 +137,9 @@ func Put(ctx context.Context, session *connection.Session, data []byte, name str
 	return m.Mcid, nil
 }
 
-// Get fetches and verifies the content addressed by mcid.
+// Get fetches and verifies the content addressed by mcid. For chunked
+// content, the fetched manifest must describe mcid and its content whole
+// before any of it is used (see manifest.VerifyMcid and manifest.CheckWhole).
 func Get(ctx context.Context, session *connection.Session, mcid manifest.Mcid, id identity.KeyPair) ([]byte, error) {
 	stream, err := session.OpenDedicatedStream(ctx)
 	if err != nil {
@@ -159,18 +161,28 @@ func Get(ctx context.Context, session *connection.Session, mcid manifest.Mcid, i
 	if err != nil {
 		return nil, err
 	}
-	data := make([]byte, 0, m.Size)
-	for index := 0; index < m.ChunkCount; index++ {
-		chunkMcid, ok := manifest.ChunkMcid(m, index)
-		if !ok {
-			panic("content: index < m.ChunkCount, so m.Chunks[index] exists")
-		}
-		chunk, err := getBlock(stream, chunkMcid, id)
+	return assemble(mcid, m, func(chunkMcid manifest.Mcid) ([]byte, error) {
+		return getBlock(stream, chunkMcid, id)
+	})
+}
+
+// assemble fetches the chunks of m, the manifest fetched for mcid, through
+// fetchBlock, and returns the content they make up. None of m's fields is
+// used until m describes mcid, as macula_manifest checks it, and its chunks
+// describe its content whole; each chunk must then hash to its MCID and be
+// the size its entry says.
+func assemble(mcid manifest.Mcid, m manifest.Manifest, fetchBlock func(manifest.Mcid) ([]byte, error)) ([]byte, error) {
+	if err := manifest.VerifyMcid(m, mcid); err != nil {
+		return nil, fmt.Errorf("content: %w: %w", ErrHashMismatch, err)
+	}
+	if err := manifest.CheckWhole(m); err != nil {
+		return nil, fmt.Errorf("content: the fetched manifest: %w", err)
+	}
+	var data []byte
+	for index, entry := range m.Chunks {
+		chunk, err := fetchChunk(m, index, entry, fetchBlock)
 		if err != nil {
 			return nil, err
-		}
-		if manifest.BlockMcid(chunk) != chunkMcid {
-			return nil, ErrHashMismatch
 		}
 		data = append(data, chunk...)
 	}
@@ -178,6 +190,20 @@ func Get(ctx context.Context, session *connection.Session, mcid manifest.Mcid, i
 		return nil, fmt.Errorf("content: reassembled content failed verification: %w", err)
 	}
 	return data, nil
+}
+
+// fetchChunk fetches chunk index of m, whose entry is entry, and checks it
+// hashes to its MCID and is the size the entry says.
+func fetchChunk(m manifest.Manifest, index int, entry manifest.ChunkInfo, fetchBlock func(manifest.Mcid) ([]byte, error)) ([]byte, error) {
+	chunkMcid, _ := manifest.ChunkMcid(m, index)
+	chunk, err := fetchBlock(chunkMcid)
+	if err != nil {
+		return nil, err
+	}
+	if manifest.BlockMcid(chunk) != chunkMcid || len(chunk) != entry.Size {
+		return nil, ErrHashMismatch
+	}
+	return chunk, nil
 }
 
 func putBlock(stream *connection.FrameStream, mcid manifest.Mcid, bytes []byte, id identity.KeyPair) error {
