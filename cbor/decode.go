@@ -1,10 +1,14 @@
 package cbor
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash"
 	"math"
+	"sort"
 )
 
 // MaxNestingDepth is how many list or map levels a decoded value may sit
@@ -23,17 +27,28 @@ var ErrNestingTooDeep = errors.New("cbor: decode: list or map nesting exceeds 12
 // this parses untrusted network data (mirrors deterministic.rs's own
 // panic-free-by-construction guarantee).
 func Decode(data []byte) (Value, int, error) {
-	return decodeOne(data, 0)
+	v, _, n, err := decodeOne(data, 0, false)
+	return v, n, err
 }
 
+// keyIdentity is what a map's duplicate keys are matched by: a digest two
+// decoded values share exactly when their canonical encodings are equal. A
+// scalar's is the digest of its canonical encoding. A list's is the digest of
+// its head and its items' identities in order, and a map's the digest of its
+// head and its entries' key and value identities, ordered by key identity.
+// Only a map key, and what nests inside one, needs an identity, and each is
+// worked out once, while it decodes.
+type keyIdentity [sha256.Size]byte
+
 // decodeOne decodes the value at the start of data, which sits depth list or
-// map levels below the top-level value.
-func decodeOne(data []byte, depth int) (Value, int, error) {
+// map levels below the top-level value, and with withIdentity set also
+// returns its key identity.
+func decodeOne(data []byte, depth int, withIdentity bool) (Value, keyIdentity, int, error) {
 	if depth > MaxNestingDepth {
-		return Value{}, 0, ErrNestingTooDeep
+		return Value{}, keyIdentity{}, 0, ErrNestingTooDeep
 	}
 	if len(data) < 1 {
-		return Value{}, 0, fmt.Errorf("cbor: decode: empty input")
+		return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode: empty input")
 	}
 	head := data[0]
 	major := head >> 5
@@ -44,110 +59,175 @@ func decodeOne(data []byte, depth int) (Value, int, error) {
 	case majorUInt:
 		n, used, err := readAIValue(rest, ai)
 		if err != nil {
-			return Value{}, 0, fmt.Errorf("cbor: decode uint: %w", err)
+			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode uint: %w", err)
 		}
-		return Uint64(n), 1 + used, nil
+		return scalar(Uint64(n), 1+used, withIdentity)
 
 	case majorNegInt:
 		n, used, err := readAIValue(rest, ai)
 		if err != nil {
-			return Value{}, 0, fmt.Errorf("cbor: decode negint: %w", err)
+			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode negint: %w", err)
 		}
-		return NegInt(n), 1 + used, nil
+		return scalar(NegInt(n), 1+used, withIdentity)
 
 	case majorBytes:
 		length, used, err := readAIValue(rest, ai)
 		if err != nil {
-			return Value{}, 0, fmt.Errorf("cbor: decode bytes length: %w", err)
+			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode bytes length: %w", err)
 		}
 		body := rest[used:]
 		if uint64(len(body)) < length {
-			return Value{}, 0, fmt.Errorf("cbor: decode bytes: need %d bytes, have %d", length, len(body))
+			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode bytes: need %d bytes, have %d", length, len(body))
 		}
 		b := make([]byte, length)
 		copy(b, body[:length])
-		return Bytes(b), 1 + used + int(length), nil
+		return scalar(Bytes(b), 1+used+int(length), withIdentity)
 
 	case majorText:
 		length, used, err := readAIValue(rest, ai)
 		if err != nil {
-			return Value{}, 0, fmt.Errorf("cbor: decode text length: %w", err)
+			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode text length: %w", err)
 		}
 		body := rest[used:]
 		if uint64(len(body)) < length {
-			return Value{}, 0, fmt.Errorf("cbor: decode text: need %d bytes, have %d", length, len(body))
+			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode text: need %d bytes, have %d", length, len(body))
 		}
 		// No UTF-8 validation on decode — matches the reference encoder's
 		// own leniency (§4); a Go string is just a byte sequence.
-		return Text(string(body[:length])), 1 + used + int(length), nil
+		return scalar(Text(string(body[:length])), 1+used+int(length), withIdentity)
 
 	case majorList:
-		count, used, err := readAIValue(rest, ai)
-		if err != nil {
-			return Value{}, 0, fmt.Errorf("cbor: decode list length: %w", err)
-		}
-		pos := used
-		items := make([]Value, 0, preallocCap(count))
-		for i := uint64(0); i < count; i++ {
-			item, n, err := decodeOne(rest[pos:], depth+1)
-			if err != nil {
-				return Value{}, 0, fmt.Errorf("cbor: decode list item %d: %w", i, err)
-			}
-			items = append(items, item)
-			pos += n
-		}
-		return List(items), 1 + pos, nil
+		return decodeList(rest, ai, depth, withIdentity)
 
 	case majorMap:
-		count, used, err := readAIValue(rest, ai)
-		if err != nil {
-			return Value{}, 0, fmt.Errorf("cbor: decode map length: %w", err)
-		}
-		pos := used
-		// Last-write-wins on duplicate keys, per §4 — not an error.
-		//
-		// Dedup is keyed on each key's own re-encoded canonical bytes via a
-		// map, not a linear scan: a linear scan (the previous
-		// setLastWriteWins, which even re-encoded every existing key on
-		// every comparison) makes this O(n^2) in the key count — a pre-auth
-		// algorithmic-complexity DoS, reachable during frame decode before
-		// any signature check. Confirmed on the equivalent pattern in the
-		// reference Rust NIF (macula-io/macula, native/macula_cbor_nif):
-		// a map with 80,000 distinct keys took over a minute to decode,
-		// scaling quadratically. Re-encoding a decoded key for its
-		// canonical identity is already this codec's own definition of
-		// "the same key" (see Encode's map-key sort, "bytewise order of
-		// their own encoded bytes"), so hashing that byte string is
-		// correctness-preserving, not a new dedup rule.
-		entries := make([]MapEntry, 0, preallocCap(count))
-		indexOfKey := make(map[string]int, preallocCap(count))
-		for i := uint64(0); i < count; i++ {
-			key, kn, err := decodeOne(rest[pos:], depth+1)
-			if err != nil {
-				return Value{}, 0, fmt.Errorf("cbor: decode map key %d: %w", i, err)
-			}
-			pos += kn
-			val, vn, err := decodeOne(rest[pos:], depth+1)
-			if err != nil {
-				return Value{}, 0, fmt.Errorf("cbor: decode map value %d: %w", i, err)
-			}
-			pos += vn
-			kb := string(Encode(key))
-			if idx, ok := indexOfKey[kb]; ok {
-				entries[idx].Val = val
-			} else {
-				indexOfKey[kb] = len(entries)
-				entries = append(entries, MapEntry{Key: key, Val: val})
-			}
-		}
-		return Map(entries), 1 + pos, nil
+		return decodeMap(rest, ai, depth, withIdentity)
 
 	case majorFloat:
-		return decodeMajor7(rest, ai)
+		v, n, err := decodeMajor7(rest, ai)
+		if err != nil {
+			return Value{}, keyIdentity{}, 0, err
+		}
+		return scalar(v, n, withIdentity)
 
 	default: // major 6 (tags): rejected outright, not supported at all.
-		return Value{}, 0, fmt.Errorf("cbor: decode: major type %d (tags) not supported", major)
+		return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode: major type %d (tags) not supported", major)
 	}
+}
+
+// scalar returns a decoded scalar and how many bytes it took, with its key
+// identity when withIdentity is set.
+func scalar(v Value, consumed int, withIdentity bool) (Value, keyIdentity, int, error) {
+	if !withIdentity {
+		return v, keyIdentity{}, consumed, nil
+	}
+	return v, sha256.Sum256(Encode(v)), consumed, nil
+}
+
+func decodeList(rest []byte, ai byte, depth int, withIdentity bool) (Value, keyIdentity, int, error) {
+	count, used, err := readAIValue(rest, ai)
+	if err != nil {
+		return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode list length: %w", err)
+	}
+	pos := used
+	items := make([]Value, 0, preallocCap(count))
+	var digest hash.Hash
+	if withIdentity {
+		digest = sha256.New()
+		digest.Write(appendHead(nil, majorList, count))
+	}
+	for i := uint64(0); i < count; i++ {
+		item, itemIdentity, n, err := decodeOne(rest[pos:], depth+1, withIdentity)
+		if err != nil {
+			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode list item %d: %w", i, err)
+		}
+		items = append(items, item)
+		if withIdentity {
+			digest.Write(itemIdentity[:])
+		}
+		pos += n
+	}
+	return List(items), identityOf(digest), 1 + pos, nil
+}
+
+// entryIdentities is a decoded map entry's key and value identities.
+type entryIdentities struct{ key, val keyIdentity }
+
+func decodeMap(rest []byte, ai byte, depth int, withIdentity bool) (Value, keyIdentity, int, error) {
+	count, used, err := readAIValue(rest, ai)
+	if err != nil {
+		return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode map length: %w", err)
+	}
+	pos := used
+	// Last-write-wins on duplicate keys, per §4 — not an error.
+	//
+	// Duplicates are found by each key's identity through a map, not by a
+	// linear scan: the scan (the previous setLastWriteWins) made this O(n^2)
+	// in the key count, a pre-auth algorithmic-complexity DoS reachable
+	// during frame decode before any signature check. Confirmed on the
+	// equivalent pattern in the reference Rust NIF (macula-io/macula,
+	// native/macula_cbor_nif): a map with 80,000 distinct keys took over a
+	// minute to decode, scaling quadratically. A key's identity stands for
+	// its canonical encoding, this codec's own definition of "the same key"
+	// (see Encode's map-key sort), and it is worked out while the key
+	// decodes: encoding each key again here, as this once did, costs a
+	// nested key's size again at every level above it.
+	entries := make([]MapEntry, 0, preallocCap(count))
+	indexOfKey := make(map[keyIdentity]int, preallocCap(count))
+	var identities []entryIdentities
+	if withIdentity {
+		identities = make([]entryIdentities, 0, preallocCap(count))
+	}
+	for i := uint64(0); i < count; i++ {
+		key, keyID, kn, err := decodeOne(rest[pos:], depth+1, true)
+		if err != nil {
+			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode map key %d: %w", i, err)
+		}
+		pos += kn
+		val, valID, vn, err := decodeOne(rest[pos:], depth+1, withIdentity)
+		if err != nil {
+			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode map value %d: %w", i, err)
+		}
+		pos += vn
+		if idx, ok := indexOfKey[keyID]; ok {
+			entries[idx].Val = val
+			if withIdentity {
+				identities[idx].val = valID
+			}
+			continue
+		}
+		indexOfKey[keyID] = len(entries)
+		entries = append(entries, MapEntry{Key: key, Val: val})
+		if withIdentity {
+			identities = append(identities, entryIdentities{key: keyID, val: valID})
+		}
+	}
+	return Map(entries), mapIdentity(identities, withIdentity), 1 + pos, nil
+}
+
+// mapIdentity is the key identity of a map with these entries, once its
+// duplicates have merged.
+func mapIdentity(entries []entryIdentities, withIdentity bool) keyIdentity {
+	if !withIdentity {
+		return keyIdentity{}
+	}
+	sort.Slice(entries, func(i, j int) bool { return bytes.Compare(entries[i].key[:], entries[j].key[:]) < 0 })
+	digest := sha256.New()
+	digest.Write(appendHead(nil, majorMap, uint64(len(entries))))
+	for _, e := range entries {
+		digest.Write(e.key[:])
+		digest.Write(e.val[:])
+	}
+	return identityOf(digest)
+}
+
+// identityOf is digest's sum as a key identity, or the zero identity when no
+// identity was wanted.
+func identityOf(digest hash.Hash) keyIdentity {
+	var id keyIdentity
+	if digest != nil {
+		copy(id[:], digest.Sum(nil))
+	}
+	return id
 }
 
 // maxPreallocHint bounds a wire-supplied element count before it's used
