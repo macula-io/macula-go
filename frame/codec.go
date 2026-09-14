@@ -40,10 +40,13 @@ func Decode(buf []byte) (Decoded, error) {
 	if len(buf) < 4 {
 		return Decoded{NeedMore: 4 - len(buf)}, nil
 	}
-	length := int(binary.BigEndian.Uint32(buf[:4]))
-	if length > MaxFrameBytes {
-		return Decoded{}, fmt.Errorf("frame: decode: claimed frame length %d exceeds the %d-byte cap", length, MaxFrameBytes)
+	claimed := binary.BigEndian.Uint32(buf[:4])
+	if claimed > MaxFrameBytes {
+		return Decoded{}, fmt.Errorf("frame: decode: claimed frame length %d exceeds the %d-byte cap", claimed, MaxFrameBytes)
 	}
+	// Checked on the header's unsigned value, so the length is within the cap
+	// once it is an int, whatever the size of an int.
+	length := int(claimed)
 	if len(buf) < 4+length {
 		return Decoded{NeedMore: 4 + length - len(buf)}, nil
 	}
