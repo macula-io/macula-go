@@ -176,13 +176,22 @@ func withCaller(payload cbor.Value, caller []byte) cbor.Value {
 	return cbor.Map(append(merged, cbor.MapEntry{Key: cbor.Text("caller"), Val: cbor.Bytes(caller)}))
 }
 
-// appendUnlessCaller is merged with e appended, unless e's key is the text
-// "caller".
+// appendUnlessCaller is merged with e appended, unless e's key is "caller",
+// as text or as a byte string.
 func appendUnlessCaller(merged []cbor.MapEntry, e cbor.MapEntry) []cbor.MapEntry {
-	if key, isText := e.Key.AsText(); isText && key == "caller" {
+	if isCallerKey(e.Key) {
 		return merged
 	}
 	return append(merged, e)
+}
+
+// isCallerKey reports whether key is "caller", as text or as a byte string.
+func isCallerKey(key cbor.Value) bool {
+	if text, isText := key.AsText(); isText {
+		return text == "caller"
+	}
+	raw, isBytes := key.AsBytes()
+	return isBytes && string(raw) == "caller"
 }
 
 // buildCallReply fires rpc.received_v1/rpc.replied_v1 around dispatch,

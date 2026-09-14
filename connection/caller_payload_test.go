@@ -59,16 +59,38 @@ func TestAnInboundCallThreadsItsCallerIntoThePayload(t *testing.T) {
 	}
 }
 
+// A "caller" the sender put in the payload, under a text key or a byte-string
+// key, is replaced: the handler sees exactly one caller, the verified one.
 func TestACallerTheSenderPutInThePayloadIsReplacedByTheVerifiedCaller(t *testing.T) {
-	s, fc, id := readingSession(t)
-	caller := registryIdentity(t)
-	spoofed := registryIdentity(t)
-	payload := servedPayload(t, s, fc, id, caller, cbor.Map([]cbor.MapEntry{{Key: cbor.Text("caller"), Val: cbor.Bytes(spoofed.NodeID())}}))
+	keys := map[string]cbor.Value{"a text key": cbor.Text("caller"), "a byte-string key": cbor.Bytes([]byte("caller"))}
+	for form, key := range keys {
+		s, fc, id := readingSession(t)
+		caller := registryIdentity(t)
+		spoofed := registryIdentity(t)
+		payload := servedPayload(t, s, fc, id, caller, cbor.Map([]cbor.MapEntry{{Key: key, Val: cbor.Bytes(spoofed.NodeID())}}))
 
-	got, ok := payload.Get("caller")
-	if b, isBytes := got.AsBytes(); !ok || !isBytes || !bytes.Equal(b, caller.NodeID()) {
-		t.Fatalf("payload caller = %v, want the verified caller, not the one the sender wrote", got)
+		got, ok := payload.Get("caller")
+		if b, isBytes := got.AsBytes(); !ok || !isBytes || !bytes.Equal(b, caller.NodeID()) {
+			t.Errorf("%s: payload caller = %v, want the verified caller, not the one the sender wrote", form, got)
+		}
+		if n := callerEntries(payload); n != 1 {
+			t.Errorf("%s: payload has %d caller entries, want only the verified one", form, n)
+		}
 	}
+}
+
+// callerEntries counts payload's entries keyed "caller", as text or as bytes.
+func callerEntries(payload cbor.Value) int {
+	entries, _ := payload.AsMap()
+	n := 0
+	for _, e := range entries {
+		text, isText := e.Key.AsText()
+		raw, isBytes := e.Key.AsBytes()
+		if (isText && text == "caller") || (isBytes && string(raw) == "caller") {
+			n++
+		}
+	}
+	return n
 }
 
 func TestANonMapPayloadCarriesNoCaller(t *testing.T) {
