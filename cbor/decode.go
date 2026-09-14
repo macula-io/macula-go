@@ -197,17 +197,12 @@ func decodeMap(rest []byte, ai byte, depth int, withIdentity bool) (Value, keyId
 	pos := used
 	// Last-write-wins on duplicate keys, per §4 — not an error.
 	//
-	// Duplicates are found by each key's identity through a map, not by a
-	// linear scan: the scan (the previous setLastWriteWins) made this O(n^2)
-	// in the key count, a pre-auth algorithmic-complexity DoS reachable
-	// during frame decode before any signature check. Confirmed on the
-	// equivalent pattern in the reference Rust NIF (macula-io/macula,
-	// native/macula_cbor_nif): a map with 80,000 distinct keys took over a
-	// minute to decode, scaling quadratically. A key's identity stands for
-	// its canonical encoding, this codec's own definition of "the same key"
-	// (see Encode's map-key sort), and it is worked out while the key
-	// decodes: encoding each key again here, as this once did, costs a
-	// nested key's size again at every level above it.
+	// Duplicates are found by each key's identity through a map, so the work
+	// grows with the number of keys, not with its square. A key's identity
+	// stands for its canonical encoding, this codec's own definition of "the
+	// same key" (see Encode's map-key sort), and it is worked out while the
+	// key decodes, so a nested key is not encoded again at every level above
+	// it.
 	m := mapDecoder{
 		rest:         rest,
 		pos:          pos,
@@ -320,21 +315,11 @@ func identityOf(digest hash.Hash) keyIdentity {
 	return id
 }
 
-// maxPreallocHint bounds a wire-supplied element count before it's used
-// as a slice/map capacity hint. `count` comes straight from readAIValue
-// on attacker-controlled bytes and is NOT validated against how many
-// bytes actually follow -- a ~10-byte frame can claim count = 2^64-1.
-// Passing that directly to make() either panics ("makeslice: cap out of
-// range") or allocates gigabytes, before the per-element loop below ever
-// bounds-checks against the real remaining input. This decode path has
-// no recover() between it and its connection goroutine (RecvFrame ->
-// frame.Decode -> cbor.Decode), so an unrecovered panic here kills the
-// whole process -- a single small malformed frame as a remote DoS, found
-// during review of the majorMap dedup fix above. Mirrors
-// deterministic.rs's `count.min(1024)` on the equivalent
-// Vec::with_capacity calls in the reference Rust NIF. The loop still
-// runs the full `count` iterations; this only bounds the allocation
-// hint, not correctness.
+// maxPreallocHint bounds an element count read from the input before it is
+// used as a slice or map capacity hint. A count is not checked against how
+// many bytes follow it, so it is never trusted as an allocation size. The
+// loop still runs the full count, decoding each element from the bytes that
+// are there, so this bounds only the capacity hint, not correctness.
 const maxPreallocHint = 1024
 
 func preallocCap(count uint64) int {
