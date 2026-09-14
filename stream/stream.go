@@ -67,7 +67,7 @@ type frameStream interface {
 	CloseSend() error
 	Abort(code uint64)
 	StopReceiving(code uint64)
-	StreamReplyVerifies(v cbor.Value) bool
+	StreamReplyCounts(v cbor.Value, streamID []byte) bool
 }
 
 // Open opens a dedicated stream on session's connection and sends a
@@ -221,8 +221,9 @@ func (h *Handle) Recv(timeout time.Duration) (Item, error) {
 // AwaitReply blocks for the provider's terminal STREAM_REPLY
 // (ClientStream/Bidi modes only) — call after CloseSend. Returns the
 // reply payload and the responding node's id. A STREAM_REPLY that isn't
-// signed by the key its responded_by names is dropped, with a drop warning,
-// and AwaitReply goes on waiting for the genuine one until timeout.
+// signed by the key its responded_by names, doesn't parse, or is for another
+// stream is dropped, with a drop warning, and AwaitReply goes on waiting for
+// the genuine one until timeout.
 func (h *Handle) AwaitReply(timeout time.Duration) (cbor.Value, []byte, error) {
 	deadline := time.Now().Add(timeout)
 	value, err := h.fs.RecvFrame(deadline)
@@ -236,9 +237,9 @@ func (h *Handle) AwaitReply(timeout time.Duration) (cbor.Value, []byte, error) {
 }
 
 // droppedReply reports whether AwaitReply drops value: a STREAM_REPLY that
-// isn't signed by the key its responded_by names.
+// isn't the reply to this stream (connection.FrameStream.StreamReplyCounts).
 func (h *Handle) droppedReply(value cbor.Value) bool {
-	return frameTypeOf(value) == "stream_reply" && !h.fs.StreamReplyVerifies(value)
+	return frameTypeOf(value) == "stream_reply" && !h.fs.StreamReplyCounts(value, h.StreamID)
 }
 
 // replyFrom is what AwaitReply returns for value, a frame it didn't drop.

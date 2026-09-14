@@ -48,7 +48,8 @@ const (
 	// reasonUnexpectedType is a frame of a type not valid on the stream it
 	// arrived on.
 	reasonUnexpectedType dropReason = "unexpected_type"
-	// reasonUnknownCallID is a RESULT or ERROR for no pending call.
+	// reasonUnknownCallID is a RESULT or ERROR for no pending call, or a
+	// STREAM_REPLY for another stream.
 	reasonUnknownCallID dropReason = "unknown_call_id"
 )
 

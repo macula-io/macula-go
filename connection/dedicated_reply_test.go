@@ -111,10 +111,10 @@ func TestAStreamReplyThatDoesNotVerifyIsWarnedAboutAsADroppedReply(t *testing.T)
 	streamID := append([]byte{0xab, 0xcd, 0xef, 0x01}, make([]byte, 12)...)
 	reply := frame.StreamReply(frame.NewStreamReplySpec(streamID, cbor.Text("done"), responder.NodeID()))
 
-	if !fs.StreamReplyVerifies(frame.Sign(reply, responder)) {
+	if !fs.StreamReplyCounts(frame.Sign(reply, responder), streamID) {
 		t.Fatal("a STREAM_REPLY signed by its responder didn't verify")
 	}
-	if fs.StreamReplyVerifies(reply) || fs.StreamReplyVerifies(frame.Sign(reply, other)) {
+	if fs.StreamReplyCounts(reply, streamID) || fs.StreamReplyCounts(frame.Sign(reply, other), streamID) {
 		t.Fatal("a STREAM_REPLY that isn't signed by its responder verified")
 	}
 	intervals.endAll()
@@ -124,5 +124,39 @@ func TestAStreamReplyThatDoesNotVerifyIsWarnedAboutAsADroppedReply(t *testing.T)
 		!hasFields(lines[0], "kind=dropped_reply", "count=1", "reason=unsigned", "stream_id=ABCDEF01") ||
 		!hasFields(lines[1], "kind=dropped_reply", "count=1", "reason=invalid_signature", "stream_id=ABCDEF01") {
 		t.Fatalf("drop warnings = %q, want the unsigned reply at once and the forged one in the closing line", lines)
+	}
+}
+
+// A STREAM_REPLY signed by its responder still isn't the reply when it doesn't
+// parse or is for another stream: it is warned about as a dropped reply,
+// malformed, or unknown_call_id with the other stream's id prefix.
+func TestASignedStreamReplyThatDoesNotParseOrIsForAnotherStreamIsDropped(t *testing.T) {
+	s, _, _ := readingSession(t)
+	logged := &lockedBuffer{}
+	s.SetLogger(slog.New(slog.NewTextHandler(logged, nil)))
+	intervals := captureDropIntervals(s)
+	responder := fakeResponder(t)
+	fs := &FrameStream{stream: &fakeQUICStream{}, session: s}
+	streamID := append([]byte{0xab, 0xcd, 0xef, 0x01}, make([]byte, 12)...)
+	otherStream := append([]byte{0xca, 0xfe, 0xba, 0xbe}, make([]byte, 12)...)
+	reply := func(id []byte) cbor.Value {
+		return frame.StreamReply(frame.NewStreamReplySpec(id, cbor.Text("done"), responder.NodeID()))
+	}
+	unparsed := frame.Sign(withoutField(reply(streamID), "payload"), responder)
+	forAnotherStream := frame.Sign(reply(otherStream), responder)
+
+	if fs.StreamReplyCounts(unparsed, streamID) || fs.StreamReplyCounts(forAnotherStream, streamID) {
+		t.Fatal("a signed STREAM_REPLY that doesn't parse or is for another stream counted")
+	}
+	if !fs.StreamReplyCounts(frame.Sign(reply(streamID), responder), streamID) {
+		t.Fatal("a signed STREAM_REPLY for the stream didn't count")
+	}
+	intervals.endAll()
+
+	lines := dropWarnings(logged)
+	if len(lines) != 2 ||
+		!hasFields(lines[0], "kind=dropped_reply", "count=1", "reason=malformed", "stream_id=ABCDEF01") ||
+		!hasFields(lines[1], "kind=dropped_reply", "count=1", "reason=unknown_call_id", "stream_id=CAFEBABE") {
+		t.Fatalf("drop warnings = %q, want the unparsed reply at once and the other stream's in the closing line", lines)
 	}
 }
