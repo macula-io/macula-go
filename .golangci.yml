@@ -1,0 +1,11 @@
+# Only the nesting limit for now. See "Nesting limit" in CONTRIBUTING.md.
+version: "2"
+linters:
+  default: none
+  enable:
+    - revive
+  settings:
+    revive:
+      rules:
+        - name: max-control-nesting
+          arguments: [1]
