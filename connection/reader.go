@@ -339,7 +339,8 @@ var errClosedLocally = errors.New("closed")
 
 // logEnd writes the one line a session's end gets when a logger is set: a
 // warning when the station or the connection ended it, information when
-// Close did.
+// Close did. The reason, which can carry a station's GOODBYE reason and
+// detail, is cut and escaped like the text a drop warning carries.
 func (s *Session) logEnd(logger *slog.Logger, err error) {
 	if logger == nil {
 		return
@@ -348,7 +349,7 @@ func (s *Session) logEnd(logger *slog.Logger, err error) {
 	if errors.Is(err, errClosedLocally) {
 		level = slog.LevelInfo
 	}
-	logger.Log(context.Background(), level, "macula: session ended", "reason", err.Error(),
+	logger.Log(context.Background(), level, "macula: session ended", "reason", loggable(err.Error()),
 		"node", hex.EncodeToString(s.identity), "station", hex.EncodeToString(s.Station.NodeID))
 }
 
