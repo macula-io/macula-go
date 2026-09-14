@@ -40,3 +40,6 @@ jobs:
       # never block an unrelated PR. Run explicitly:
       #   go test -tags=live ./... -run TestLive -v
       - run: go test ./...
+      # The decoding packages read peer bytes, so their tests also run with a
+      # 32-bit int.
+      - run: GOARCH=386 CGO_ENABLED=0 go test ./cbor ./frame ./manifest
