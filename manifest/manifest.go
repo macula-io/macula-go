@@ -199,12 +199,11 @@ func McidFor(m Manifest) Mcid {
 }
 
 // VerifyMcid checks that m describes mcid, the way macula_manifest's
-// verify_mcid/2 does: m's name must be valid UTF-8, its hash algorithm one
-// this package computes, and the MCID recomputed from its canonical fields
-// (McidFor) must equal mcid. m's own Mcid field is not consulted.
+// verify_mcid/2 does: m's name must be valid UTF-8, its hash algorithm
+// blake3, and the MCID recomputed from its canonical fields (McidFor) must
+// equal mcid. m's own Mcid field is not consulted.
 func VerifyMcid(m Manifest, mcid Mcid) error {
-	known := m.HashAlgorithm == Blake3 || m.HashAlgorithm == Sha256
-	if !utf8.ValidString(m.Name) || !known || McidFor(m) != mcid {
+	if !utf8.ValidString(m.Name) || m.HashAlgorithm != Blake3 || McidFor(m) != mcid {
 		return ErrManifestMcidMismatch
 	}
 	return nil
@@ -356,7 +355,8 @@ func chunkInfoToWire(c ChunkInfo) cbor.Value {
 }
 
 // FromWire parses a manifest as received from a _content.get_manifest
-// RESULT.
+// RESULT. A manifest naming any hash algorithm but blake3, or whose chunks
+// don't describe its content whole (see CheckWhole), is refused.
 func FromWire(v cbor.Value) (Manifest, error) {
 	mcidB, err := getBytesExact(v, "mcid", 34)
 	if err != nil {
@@ -417,16 +417,21 @@ func FromWire(v cbor.Value) (Manifest, error) {
 		chunks[i] = c
 	}
 
-	return Manifest{
+	m := Manifest{
 		Mcid: mcid, Version: uint32(version), Name: name, Size: size, Created: created,
 		ChunkSize: int(chunkSize), ChunkCount: int(chunkCount),
 		HashAlgorithm: algorithm, RootHash: rootHash, Chunks: chunks,
-	}, nil
+	}
+	if err := CheckWhole(m); err != nil {
+		return Manifest{}, fmt.Errorf("manifest: from_wire: %w", err)
+	}
+	return m, nil
 }
 
 // wireAlgorithm reads a manifest's hash_algorithm the way macula_manifest's
-// from_wire/1 does: a missing one is Blake3, and a present one, as text or
-// bytes, must be one this package computes.
+// from_wire/1 does: a missing one is blake3, blake3 as text or bytes is
+// accepted, and any other, sha256 included, is refused. Every chunk fetch
+// checks BLAKE3, so blake3 is the one algorithm a manifest can name.
 func wireAlgorithm(v cbor.Value) (Algorithm, error) {
 	field, ok := v.Get("hash_algorithm")
 	if !ok {
@@ -437,13 +442,10 @@ func wireAlgorithm(v cbor.Value) (Algorithm, error) {
 		b, _ := field.AsBytes()
 		name = string(b)
 	}
-	switch name {
-	case Blake3.Name():
-		return Blake3, nil
-	case Sha256.Name():
-		return Sha256, nil
+	if name != Blake3.Name() {
+		return Blake3, fmt.Errorf("manifest: from_wire: hash_algorithm %q is not blake3", name)
 	}
-	return Blake3, fmt.Errorf("manifest: from_wire: hash_algorithm %q is not one this package computes", name)
+	return Blake3, nil
 }
 
 func chunkInfoFromWire(v cbor.Value) (ChunkInfo, error) {

@@ -119,7 +119,7 @@ func TestVerifyAcceptsReassembledDataAndRejectsTampering(t *testing.T) {
 
 func TestToWireFromWireRoundTrip(t *testing.T) {
 	data := bytes.Repeat([]byte{0x11, 0x22}, 500)
-	m, _ := createWithCreated(data, CreateOptions{Name: "my-file.bin", ChunkSize: 300, HashAlgorithm: Sha256}, 1_700_000_000)
+	m, _ := createWithCreated(data, CreateOptions{Name: "my-file.bin", ChunkSize: 300, HashAlgorithm: Blake3}, 1_700_000_000)
 
 	wire := ToWire(m)
 	back, err := FromWire(wire)

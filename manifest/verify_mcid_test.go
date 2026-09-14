@@ -101,8 +101,8 @@ func TestVerifyRefusesAChunkSizeThatIsNotPositive(t *testing.T) {
 }
 
 // FromWire reads hash_algorithm as macula_manifest's from_wire/1 does: a
-// missing one is blake3, a known name as text or bytes is that algorithm,
-// and an unknown one is refused.
+// missing one is blake3, blake3 as text or bytes is accepted, and any other
+// name, sha256 included, is refused.
 func TestFromWireReadsTheHashAlgorithmAsMaculaDoes(t *testing.T) {
 	m, _ := Create([]byte("some content"), DefaultCreateOptions())
 	wire, _ := ToWire(m).AsMap()
@@ -118,7 +118,8 @@ func TestFromWireReadsTheHashAlgorithmAsMaculaDoes(t *testing.T) {
 		}
 		return cbor.Map(out)
 	}
-	text, raw, unknown := cbor.Text("sha256"), cbor.Bytes([]byte("sha256")), cbor.Text("md5")
+	blake3Text, blake3Raw := cbor.Text("blake3"), cbor.Bytes([]byte("blake3"))
+	shaText, shaRaw, unknown := cbor.Text("sha256"), cbor.Bytes([]byte("sha256")), cbor.Text("md5")
 	cases := []struct {
 		name  string
 		value *cbor.Value
@@ -126,8 +127,10 @@ func TestFromWireReadsTheHashAlgorithmAsMaculaDoes(t *testing.T) {
 		ok    bool
 	}{
 		{"missing", nil, Blake3, true},
-		{"sha256 as text", &text, Sha256, true},
-		{"sha256 as bytes", &raw, Sha256, true},
+		{"blake3 as text", &blake3Text, Blake3, true},
+		{"blake3 as bytes", &blake3Raw, Blake3, true},
+		{"sha256 as text", &shaText, Blake3, false},
+		{"sha256 as bytes", &shaRaw, Blake3, false},
 		{"an unknown name", &unknown, Blake3, false},
 	}
 	for _, tc := range cases {
