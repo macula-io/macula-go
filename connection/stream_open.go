@@ -24,28 +24,47 @@ func (s *Session) AcceptStreamOpen(ctx context.Context, firstFrameTimeout time.D
 }
 
 func (s *Session) acceptStreamOpen(ctx context.Context, firstFrameTimeout time.Duration, accept func(context.Context) (*FrameStream, error)) (*FrameStream, frame.StreamOpenInfo, error) {
-	for {
-		fs, err := accept(ctx)
-		if err != nil {
-			return nil, frame.StreamOpenInfo{}, err
-		}
-		first, err := fs.recvFrame(time.Now().Add(firstFrameTimeout))
-		switch {
-		case errors.Is(err, ErrMalformedFrame):
-			s.refuseStream(fs, reasonMalformed, slog.Attr{})
-			continue
-		case err != nil:
-			fs.Abort(StreamRefusedCode)
-			continue
-		}
-		open, reason := verifiedStreamOpen(first)
-		if reason != "" {
-			s.refuseStream(fs, reason, refusalDetail(first, reason))
-			continue
-		}
-		open.Args = withCaller(open.Args, open.Caller)
-		return fs, open, nil
+	var (
+		fs   *FrameStream
+		open frame.StreamOpenInfo
+		err  error
+	)
+	for fs == nil && err == nil {
+		fs, open, err = s.nextStreamOpen(ctx, firstFrameTimeout, accept)
 	}
+	return fs, open, err
+}
+
+// nextStreamOpen accepts one dedicated stream and returns it with its
+// verified STREAM_OPEN, or refuses it and returns no stream and no error.
+func (s *Session) nextStreamOpen(ctx context.Context, firstFrameTimeout time.Duration, accept func(context.Context) (*FrameStream, error)) (*FrameStream, frame.StreamOpenInfo, error) {
+	fs, err := accept(ctx)
+	if err != nil {
+		return nil, frame.StreamOpenInfo{}, err
+	}
+	first, err := fs.recvFrame(time.Now().Add(firstFrameTimeout))
+	if err != nil {
+		s.releaseUnread(fs, err)
+		return nil, frame.StreamOpenInfo{}, nil
+	}
+	open, reason := verifiedStreamOpen(first)
+	if reason != "" {
+		s.refuseStream(fs, reason, refusalDetail(first, reason))
+		return nil, frame.StreamOpenInfo{}, nil
+	}
+	open.Args = withCaller(open.Args, open.Caller)
+	return fs, open, nil
+}
+
+// releaseUnread refuses fs, whose first frame couldn't be read for err: with a
+// drop warning when its bytes don't decode, and without one when its peer
+// ended it or sent nothing in time.
+func (s *Session) releaseUnread(fs *FrameStream, err error) {
+	if errors.Is(err, ErrMalformedFrame) {
+		s.refuseStream(fs, reasonMalformed, slog.Attr{})
+		return
+	}
+	fs.Abort(StreamRefusedCode)
 }
 
 // verifiedStreamOpen parses first, a dedicated stream's first frame, as a

@@ -178,18 +178,37 @@ func assemble(mcid manifest.Mcid, m manifest.Manifest, fetchBlock func(manifest.
 	if err := manifest.CheckWhole(m); err != nil {
 		return nil, fmt.Errorf("content: the fetched manifest: %w", err)
 	}
-	var data []byte
-	for index, entry := range m.Chunks {
-		chunk, err := fetchChunk(m, index, entry, fetchBlock)
-		if err != nil {
-			return nil, err
-		}
-		data = append(data, chunk...)
+	data, err := fetchChunks(m, fetchBlock)
+	if err != nil {
+		return nil, err
 	}
 	if err := manifest.Verify(m, data); err != nil {
 		return nil, fmt.Errorf("content: reassembled content failed verification: %w", err)
 	}
 	return data, nil
+}
+
+// fetchChunks fetches m's chunks in index order through fetchBlock and returns
+// the content they make up.
+func fetchChunks(m manifest.Manifest, fetchBlock func(manifest.Mcid) ([]byte, error)) ([]byte, error) {
+	var (
+		data []byte
+		err  error
+	)
+	for index := 0; index < len(m.Chunks) && err == nil; index++ {
+		data, err = appendChunk(data, m, index, fetchBlock)
+	}
+	return data, err
+}
+
+// appendChunk is data with chunk index of m appended, once fetchChunk has
+// checked it.
+func appendChunk(data []byte, m manifest.Manifest, index int, fetchBlock func(manifest.Mcid) ([]byte, error)) ([]byte, error) {
+	chunk, err := fetchChunk(m, index, m.Chunks[index], fetchBlock)
+	if err != nil {
+		return nil, err
+	}
+	return append(data, chunk...), nil
 }
 
 // fetchChunk fetches chunk index of m, whose entry is entry, and checks it

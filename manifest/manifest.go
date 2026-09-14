@@ -219,10 +219,12 @@ func CheckWhole(m Manifest) error {
 	if m.ChunkSize <= 0 || m.ChunkCount != len(m.Chunks) || uint64(m.ChunkCount) != chunksFor(m.Size, m.ChunkSize) {
 		return fmt.Errorf("%w: chunk size %d, size %d, %d chunks counted, %d listed", ErrManifestNotWhole, m.ChunkSize, m.Size, m.ChunkCount, len(m.Chunks))
 	}
-	for i, c := range m.Chunks {
-		if !cutAt(c, i, m) {
-			return fmt.Errorf("%w: chunk %d", ErrManifestNotWhole, i)
-		}
+	i := 0
+	for i < len(m.Chunks) && cutAt(m.Chunks[i], i, m) {
+		i++
+	}
+	if i < len(m.Chunks) {
+		return fmt.Errorf("%w: chunk %d", ErrManifestNotWhole, i)
 	}
 	return nil
 }

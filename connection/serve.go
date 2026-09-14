@@ -171,12 +171,18 @@ func withCaller(payload cbor.Value, caller []byte) cbor.Value {
 	}
 	merged := make([]cbor.MapEntry, 0, len(entries)+1)
 	for _, e := range entries {
-		if key, isText := e.Key.AsText(); isText && key == "caller" {
-			continue
-		}
-		merged = append(merged, e)
+		merged = appendUnlessCaller(merged, e)
 	}
 	return cbor.Map(append(merged, cbor.MapEntry{Key: cbor.Text("caller"), Val: cbor.Bytes(caller)}))
+}
+
+// appendUnlessCaller is merged with e appended, unless e's key is the text
+// "caller".
+func appendUnlessCaller(merged []cbor.MapEntry, e cbor.MapEntry) []cbor.MapEntry {
+	if key, isText := e.Key.AsText(); isText && key == "caller" {
+		return merged
+	}
+	return append(merged, e)
 }
 
 // buildCallReply fires rpc.received_v1/rpc.replied_v1 around dispatch,

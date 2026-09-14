@@ -225,16 +225,20 @@ func (h *Handle) Recv(timeout time.Duration) (Item, error) {
 // and AwaitReply goes on waiting for the genuine one until timeout.
 func (h *Handle) AwaitReply(timeout time.Duration) (cbor.Value, []byte, error) {
 	deadline := time.Now().Add(timeout)
-	for {
-		value, err := h.fs.RecvFrame(deadline)
-		if err != nil {
-			return cbor.Value{}, nil, fmt.Errorf("stream: await_reply: %w", err)
-		}
-		if frameTypeOf(value) == "stream_reply" && !h.fs.StreamReplyVerifies(value) {
-			continue
-		}
-		return h.replyFrom(value)
+	value, err := h.fs.RecvFrame(deadline)
+	for err == nil && h.droppedReply(value) {
+		value, err = h.fs.RecvFrame(deadline)
 	}
+	if err != nil {
+		return cbor.Value{}, nil, fmt.Errorf("stream: await_reply: %w", err)
+	}
+	return h.replyFrom(value)
+}
+
+// droppedReply reports whether AwaitReply drops value: a STREAM_REPLY that
+// isn't signed by the key its responded_by names.
+func (h *Handle) droppedReply(value cbor.Value) bool {
+	return frameTypeOf(value) == "stream_reply" && !h.fs.StreamReplyVerifies(value)
 }
 
 // replyFrom is what AwaitReply returns for value, a frame it didn't drop.
@@ -243,20 +247,16 @@ func (h *Handle) replyFrom(value cbor.Value) (cbor.Value, []byte, error) {
 	if err != nil {
 		return cbor.Value{}, nil, fmt.Errorf("stream: await_reply: %w", err)
 	}
-	switch ev.Kind {
-	case frame.StreamEventReply:
-		if err := h.checkStreamID(ev.StreamID); err != nil {
-			return cbor.Value{}, nil, err
-		}
-		return ev.Payload, ev.RespondedBy, nil
-	case frame.StreamEventErr:
-		if err := h.checkStreamID(ev.StreamID); err != nil {
-			return cbor.Value{}, nil, err
-		}
-		return cbor.Value{}, nil, &ErrPeerAborted{Code: ev.Code, Message: ev.Message}
-	default: // Data or End
-		return cbor.Value{}, nil, ErrUnexpectedFrame
+	if ev.Kind != frame.StreamEventReply && ev.Kind != frame.StreamEventErr {
+		return cbor.Value{}, nil, ErrUnexpectedFrame // Data or End
 	}
+	if err := h.checkStreamID(ev.StreamID); err != nil {
+		return cbor.Value{}, nil, err
+	}
+	if ev.Kind == frame.StreamEventErr {
+		return cbor.Value{}, nil, &ErrPeerAborted{Code: ev.Code, Message: ev.Message}
+	}
+	return ev.Payload, ev.RespondedBy, nil
 }
 
 func frameTypeOf(v cbor.Value) string {

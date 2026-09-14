@@ -128,25 +128,62 @@ func decodeList(rest []byte, ai byte, depth int, withIdentity bool) (Value, keyI
 	if err != nil {
 		return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode list length: %w", err)
 	}
-	pos := used
-	items := make([]Value, 0, preallocCap(count))
-	var digest hash.Hash
-	if withIdentity {
-		digest = sha256.New()
-		digest.Write(appendHead(nil, majorList, count))
+	l := listDecoder{
+		rest:         rest,
+		pos:          used,
+		depth:        depth,
+		withIdentity: withIdentity,
+		items:        make([]Value, 0, preallocCap(count)),
+		digest:       listDigest(count, withIdentity),
 	}
-	for i := uint64(0); i < count; i++ {
-		item, itemIdentity, n, err := decodeOne(rest[pos:], depth+1, withIdentity)
-		if err != nil {
-			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode list item %d: %w", i, err)
-		}
-		items = append(items, item)
-		if withIdentity {
-			digest.Write(itemIdentity[:])
-		}
-		pos += n
+	for i := uint64(0); i < count && err == nil; i++ {
+		err = l.next(i)
 	}
-	return List(items), identityOf(digest), 1 + pos, nil
+	if err != nil {
+		return Value{}, keyIdentity{}, 0, err
+	}
+	return List(l.items), identityOf(l.digest), 1 + l.pos, nil
+}
+
+// listDecoder is a list being decoded: the bytes after its head, how far its
+// items reach, and the items and identity digest so far.
+type listDecoder struct {
+	rest         []byte
+	pos          int
+	depth        int
+	withIdentity bool
+	items        []Value
+	digest       hash.Hash
+}
+
+// listDigest starts the identity digest of a list of count items, or is nil
+// when no identity is wanted.
+func listDigest(count uint64, withIdentity bool) hash.Hash {
+	if !withIdentity {
+		return nil
+	}
+	digest := sha256.New()
+	digest.Write(appendHead(nil, majorList, count))
+	return digest
+}
+
+// next decodes item i.
+func (l *listDecoder) next(i uint64) error {
+	item, itemIdentity, n, err := decodeOne(l.rest[l.pos:], l.depth+1, l.withIdentity)
+	if err != nil {
+		return fmt.Errorf("cbor: decode list item %d: %w", i, err)
+	}
+	l.items = append(l.items, item)
+	writeIdentity(l.digest, itemIdentity)
+	l.pos += n
+	return nil
+}
+
+// writeIdentity adds id to digest, when an identity is wanted.
+func writeIdentity(digest hash.Hash, id keyIdentity) {
+	if digest != nil {
+		digest.Write(id[:])
+	}
 }
 
 // entryIdentities is a decoded map entry's key and value identities.
@@ -171,35 +208,82 @@ func decodeMap(rest []byte, ai byte, depth int, withIdentity bool) (Value, keyId
 	// (see Encode's map-key sort), and it is worked out while the key
 	// decodes: encoding each key again here, as this once did, costs a
 	// nested key's size again at every level above it.
-	entries := make([]MapEntry, 0, preallocCap(count))
-	indexOfKey := make(map[keyIdentity]int, preallocCap(count))
-	var identities []entryIdentities
-	if withIdentity {
-		identities = make([]entryIdentities, 0, preallocCap(count))
+	m := mapDecoder{
+		rest:         rest,
+		pos:          pos,
+		depth:        depth,
+		withIdentity: withIdentity,
+		entries:      make([]MapEntry, 0, preallocCap(count)),
+		indexOfKey:   make(map[keyIdentity]int, preallocCap(count)),
+		identities:   entryIdentitiesFor(count, withIdentity),
 	}
-	for i := uint64(0); i < count; i++ {
-		key, keyID, kn, err := decodeOne(rest[pos:], depth+1, true)
-		if err != nil {
-			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode map key %d: %w", i, err)
-		}
-		pos += kn
-		val, valID, vn, err := decodeOne(rest[pos:], depth+1, withIdentity)
-		if err != nil {
-			return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode map value %d: %w", i, err)
-		}
-		pos += vn
-		if idx, ok := indexOfKey[keyID]; ok {
-			entries[idx].Val = val
-			setValueIdentity(identities, idx, valID)
-			continue
-		}
-		indexOfKey[keyID] = len(entries)
-		entries = append(entries, MapEntry{Key: key, Val: val})
-		if withIdentity {
-			identities = append(identities, entryIdentities{key: keyID, val: valID})
-		}
+	for i := uint64(0); i < count && err == nil; i++ {
+		err = m.next(i)
 	}
-	return Map(entries), mapIdentity(identities, withIdentity), 1 + pos, nil
+	if err != nil {
+		return Value{}, keyIdentity{}, 0, err
+	}
+	return Map(m.entries), mapIdentity(m.identities, withIdentity), 1 + m.pos, nil
+}
+
+// mapDecoder is a map being decoded: the bytes after its head, how far its
+// entries reach, the entries so far with where each key's entry is, and their
+// identities when an identity is wanted.
+type mapDecoder struct {
+	rest         []byte
+	pos          int
+	depth        int
+	withIdentity bool
+	entries      []MapEntry
+	indexOfKey   map[keyIdentity]int
+	identities   []entryIdentities
+}
+
+// entryIdentitiesFor is room for count entries' identities, or nil when no
+// identity is wanted.
+func entryIdentitiesFor(count uint64, withIdentity bool) []entryIdentities {
+	if !withIdentity {
+		return nil
+	}
+	return make([]entryIdentities, 0, preallocCap(count))
+}
+
+// next decodes entry i's key and value and records the entry.
+func (m *mapDecoder) next(i uint64) error {
+	key, keyID, kn, err := decodeOne(m.rest[m.pos:], m.depth+1, true)
+	if err != nil {
+		return fmt.Errorf("cbor: decode map key %d: %w", i, err)
+	}
+	m.pos += kn
+	val, valID, vn, err := decodeOne(m.rest[m.pos:], m.depth+1, m.withIdentity)
+	if err != nil {
+		return fmt.Errorf("cbor: decode map value %d: %w", i, err)
+	}
+	m.pos += vn
+	m.put(key, val, entryIdentities{key: keyID, val: valID})
+	return nil
+}
+
+// put records an entry, a later duplicate key replacing the value of the
+// earlier entry with that key.
+func (m *mapDecoder) put(key, val Value, ids entryIdentities) {
+	if idx, ok := m.indexOfKey[ids.key]; ok {
+		m.entries[idx].Val = val
+		setValueIdentity(m.identities, idx, ids.val)
+		return
+	}
+	m.indexOfKey[ids.key] = len(m.entries)
+	m.entries = append(m.entries, MapEntry{Key: key, Val: val})
+	m.identities = appendIdentities(m.identities, m.withIdentity, ids)
+}
+
+// appendIdentities is identities with ids appended, when identities are kept
+// at all.
+func appendIdentities(identities []entryIdentities, withIdentity bool, ids entryIdentities) []entryIdentities {
+	if !withIdentity {
+		return identities
+	}
+	return append(identities, ids)
 }
 
 // setValueIdentity records entry idx's value identity, when identities are

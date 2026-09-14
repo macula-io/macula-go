@@ -105,10 +105,16 @@ func (s *Session) warnDrop(kind dropKind, reason dropReason, detail slog.Attr) {
 		interval = defaultDropWarningInterval
 	}
 	if after == nil {
-		after = func(d time.Duration, end func()) { time.AfterFunc(d, end) }
+		after = endDropIntervalAfter
 	}
 	s.logDrop(logger, kind, 1, reason, detail)
 	after(interval, func() { s.endDropInterval(kind) })
+}
+
+// endDropIntervalAfter runs end once d has passed: how a drop warning interval
+// ends, unless a test sets another way.
+func endDropIntervalAfter(d time.Duration, end func()) {
+	time.AfterFunc(d, end)
 }
 
 // endDropInterval ends kind's drop warning interval, with a closing line for

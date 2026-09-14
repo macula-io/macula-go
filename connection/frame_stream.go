@@ -197,33 +197,48 @@ func (fs *FrameStream) recvFrame(deadline time.Time) (cbor.Value, error) {
 		return cbor.Value{}, fmt.Errorf("connection: set read deadline: %w", err)
 	}
 	chunk := make([]byte, readChunkSize)
-	for {
-		decoded, err := frame.Decode(fs.buf)
-		if err != nil {
-			return cbor.Value{}, fmt.Errorf("%w: %w", ErrMalformedFrame, err)
-		}
-		if decoded.Complete {
-			fs.buf = fs.buf[decoded.Consumed:]
-			return decoded.Frame, nil
-		}
-
-		n, err := fs.stream.Read(chunk)
-		if n > 0 {
-			fs.buf = append(fs.buf, chunk[:n]...)
-		}
-		// Per io.Reader's contract, a Read that delivers the stream's
-		// final bytes is explicitly permitted to return them together
-		// with io.EOF in the same call — quic-go does exactly this
-		// when the peer's last STREAM frame carries both the final
-		// data and the FIN bit. Those bytes must still be checked for
-		// a complete frame (the loop's next iteration does that)
-		// before the error is allowed to end it; discarding them here
-		// turned an already-fully-delivered reply into a bogus EOF
-		// error. Only give up once a read truly comes back empty.
-		if n == 0 && err != nil {
-			return cbor.Value{}, fmt.Errorf("connection: read stream: %w", err)
-		}
+	var (
+		value cbor.Value
+		done  bool
+		err   error
+	)
+	for !done && err == nil {
+		value, done, err = fs.decodeOrRead(chunk)
 	}
+	return value, err
+}
+
+// decodeOrRead returns the next complete frame in fs.buf, or, when fs.buf
+// holds none yet, reads more of the stream into it and reports not done.
+func (fs *FrameStream) decodeOrRead(chunk []byte) (cbor.Value, bool, error) {
+	decoded, err := frame.Decode(fs.buf)
+	if err != nil {
+		return cbor.Value{}, false, fmt.Errorf("%w: %w", ErrMalformedFrame, err)
+	}
+	if decoded.Complete {
+		fs.buf = fs.buf[decoded.Consumed:]
+		return decoded.Frame, true, nil
+	}
+	return cbor.Value{}, false, fs.readInto(chunk)
+}
+
+// readInto reads the stream's next bytes into fs.buf through chunk.
+func (fs *FrameStream) readInto(chunk []byte) error {
+	n, err := fs.stream.Read(chunk)
+	fs.buf = append(fs.buf, chunk[:n]...)
+	// Per io.Reader's contract, a Read that delivers the stream's
+	// final bytes is explicitly permitted to return them together
+	// with io.EOF in the same call — quic-go does exactly this
+	// when the peer's last STREAM frame carries both the final
+	// data and the FIN bit. Those bytes must still be checked for
+	// a complete frame (the next decodeOrRead does that) before the
+	// error is allowed to end the read; discarding them here turned
+	// an already-fully-delivered reply into a bogus EOF error. Only
+	// give up once a read truly comes back empty.
+	if n == 0 && err != nil {
+		return fmt.Errorf("connection: read stream: %w", err)
+	}
+	return nil
 }
 
 // Call sends a signed CALL for procedure on this stream and waits for
