@@ -17,6 +17,7 @@ package manifest
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 	"unicode/utf8"
 
@@ -356,8 +357,9 @@ func chunkInfoToWire(c ChunkInfo) cbor.Value {
 }
 
 // FromWire parses a manifest as received from a _content.get_manifest
-// RESULT. A manifest naming any hash algorithm but blake3, or whose chunks
-// don't describe its content whole (see CheckWhole), is refused.
+// RESULT. A manifest naming any hash algorithm but blake3, whose chunks
+// don't describe its content whole (see CheckWhole), or holding a number too
+// large for the field it fills, is refused.
 func FromWire(v cbor.Value) (Manifest, error) {
 	mcidB, err := getBytesExact(v, "mcid", 34)
 	if err != nil {
@@ -366,7 +368,7 @@ func FromWire(v cbor.Value) (Manifest, error) {
 	var mcid Mcid
 	copy(mcid[:], mcidB)
 
-	version, err := getUint(v, "version")
+	version, err := getBounded(v, "version", math.MaxUint32)
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -382,11 +384,11 @@ func FromWire(v cbor.Value) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	chunkSize, err := getUint(v, "chunk_size")
+	chunkSize, err := getBounded(v, "chunk_size", math.MaxInt)
 	if err != nil {
 		return Manifest{}, err
 	}
-	chunkCount, err := getUint(v, "chunk_count")
+	chunkCount, err := getBounded(v, "chunk_count", math.MaxInt)
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -450,15 +452,15 @@ func wireAlgorithm(v cbor.Value) (Algorithm, error) {
 }
 
 func chunkInfoFromWire(v cbor.Value) (ChunkInfo, error) {
-	index, err := getUint(v, "index")
+	index, err := getBounded(v, "index", math.MaxInt)
 	if err != nil {
 		return ChunkInfo{}, err
 	}
-	offset, err := getUint(v, "offset")
+	offset, err := getBounded(v, "offset", math.MaxInt)
 	if err != nil {
 		return ChunkInfo{}, err
 	}
-	size, err := getUint(v, "size")
+	size, err := getBounded(v, "size", math.MaxInt)
 	if err != nil {
 		return ChunkInfo{}, err
 	}
@@ -481,6 +483,20 @@ func getUint(v cbor.Value, field string) (uint64, error) {
 		return 0, fmt.Errorf("manifest: from_wire: field %q has the wrong type", field)
 	}
 	return uint64(n), nil
+}
+
+// getBounded reads field as an unsigned integer no larger than limit, so it
+// keeps its value when it becomes the narrower type its field holds, whatever
+// the size of an int.
+func getBounded(v cbor.Value, field string, limit uint64) (uint64, error) {
+	n, err := getUint(v, field)
+	if err != nil {
+		return 0, err
+	}
+	if n > limit {
+		return 0, fmt.Errorf("manifest: from_wire: field %q is larger than %d", field, limit)
+	}
+	return n, nil
 }
 
 func getStringBytes(v cbor.Value, field string) (string, error) {
