@@ -377,7 +377,9 @@ func (s *Session) SetLogger(logger *slog.Logger) {
 
 // Unrouted returns how many inbound frames of each type nothing routed: a type
 // the session doesn't handle, an EVENT that doesn't parse or that no
-// subscription matches, or a RESULT or ERROR it dropped.
+// subscription matches, or a RESULT or ERROR it dropped. A frame is counted
+// under its frame type when that is one macula defines, and under "unknown"
+// otherwise, so no text a peer sends becomes a key.
 func (s *Session) Unrouted() map[string]uint64 {
 	s.rt.mu.Lock()
 	defer s.rt.mu.Unlock()
@@ -414,13 +416,44 @@ func (s *Session) dropReply(frameType string, callID []byte, reason dropReason) 
 	s.warnDrop(dropReply, reason, callIDDetail(callID))
 }
 
-// countUnroutedLocked counts one more frame of frameType nothing routed. The
-// caller holds s.rt.mu.
+// countUnroutedLocked counts one more frame of frameType nothing routed, under
+// countedFrameType's key. The caller holds s.rt.mu.
 func (s *Session) countUnroutedLocked(frameType string) {
 	if s.rt.unrouted == nil {
 		s.rt.unrouted = map[string]uint64{}
 	}
-	s.rt.unrouted[frameType]++
+	s.rt.unrouted[countedFrameType(frameType)]++
+}
+
+// unknownFrameType is the count key of every frame type macula doesn't
+// define, and of a frame whose frame_type is missing, not text or empty.
+const unknownFrameType = "unknown"
+
+// definedFrameTypes are the frame types macula_frame defines, each counted
+// under its own name.
+var definedFrameTypes = map[string]bool{
+	"connect": true, "hello": true, "goodbye": true,
+	"swim_ping": true, "swim_ack": true, "swim_suspect": true, "swim_confirm": true,
+	"ping": true, "pong": true, "find_node": true, "nodes": true, "find_value": true, "value": true,
+	"store": true, "store_ack": true, "replicate": true, "replicate_ack": true,
+	"call": true, "result": true, "error": true,
+	"hyparview_join": true, "hyparview_forward_join": true, "hyparview_neighbor": true,
+	"hyparview_disconnect": true, "hyparview_shuffle": true, "hyparview_shuffle_reply": true,
+	"plumtree_gossip": true, "plumtree_ihave": true, "plumtree_graft": true, "plumtree_prune": true,
+	"overlay_relay": true, "publish": true, "subscribe": true, "unsubscribe": true, "event": true,
+	"advertise": true, "unadvertise": true,
+	"stream_open": true, "stream_data": true, "stream_end": true, "stream_error": true, "stream_reply": true,
+	"want": true, "have": true, "block": true, "manifest_req": true, "manifest_res": true, "cancel": true,
+}
+
+// countedFrameType is the key a frame of frameType is counted under: its own
+// name when macula defines it, unknownFrameType otherwise, so no text a peer
+// sends becomes a key.
+func countedFrameType(frameType string) string {
+	if definedFrameTypes[frameType] {
+		return frameType
+	}
+	return unknownFrameType
 }
 
 func frameType(v cbor.Value) string {
