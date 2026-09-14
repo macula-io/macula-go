@@ -214,6 +214,21 @@ func CheckWhole(m Manifest) error {
 	return nil
 }
 
+// ErrManifestChunkHashes is a manifest whose chunk hashes don't combine to its
+// root hash.
+var ErrManifestChunkHashes = errors.New("manifest: the manifest's chunk hashes do not make its root hash")
+
+// CheckChunkHashes checks that m's chunk hashes combine to its root hash, the
+// way Create builds the root hash from them. The root hash is part of m's
+// MCID and the chunk hashes are not, so after VerifyMcid this is what ties
+// each chunk, fetched by its hash, to the MCID asked for.
+func CheckChunkHashes(m Manifest) error {
+	if rootHashFor(m.Chunks, m.HashAlgorithm) != m.RootHash {
+		return ErrManifestChunkHashes
+	}
+	return nil
+}
+
 // chunksFor is how many chunks of chunkSize bytes size bytes make:
 // ceil(size / chunkSize), and 0 for no bytes.
 func chunksFor(size uint64, chunkSize int) uint64 {

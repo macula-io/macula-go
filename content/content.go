@@ -168,15 +168,18 @@ func Get(ctx context.Context, session *connection.Session, mcid manifest.Mcid, i
 
 // assemble fetches the chunks of m, the manifest fetched for mcid, through
 // fetchBlock, and returns the content they make up. None of m's fields is
-// used until m describes mcid, as macula_manifest checks it, and its chunks
-// describe its content whole; each chunk must then hash to its MCID and be
-// the size its entry says.
+// used until m describes mcid, as macula_manifest checks it, its chunks
+// describe its content whole, and its chunk hashes make its root hash; each
+// chunk must then hash to its MCID and be the size its entry says.
 func assemble(mcid manifest.Mcid, m manifest.Manifest, fetchBlock func(manifest.Mcid) ([]byte, error)) ([]byte, error) {
 	if err := manifest.VerifyMcid(m, mcid); err != nil {
 		return nil, fmt.Errorf("content: %w: %w", ErrHashMismatch, err)
 	}
 	if err := manifest.CheckWhole(m); err != nil {
 		return nil, fmt.Errorf("content: the fetched manifest: %w", err)
+	}
+	if err := manifest.CheckChunkHashes(m); err != nil {
+		return nil, fmt.Errorf("content: %w: %w", ErrHashMismatch, err)
 	}
 	data, err := fetchChunks(m, fetchBlock)
 	if err != nil {

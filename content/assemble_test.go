@@ -46,6 +46,19 @@ func assembled(t *testing.T, mcid manifest.Mcid, m manifest.Manifest, fetchBlock
 	return assemble(mcid, m, fetchBlock)
 }
 
+// A manifest whose chunk hashes don't combine to its root hash is refused
+// before any chunk is fetched, even though it describes the MCID asked for:
+// the chunk hashes are not part of the MCID, the root hash is.
+func TestGetRefusesAManifestWhoseChunkHashesDoNotMakeItsRootHash(t *testing.T) {
+	m, blocks, _ := chunkedContent(251)
+	m.Chunks[1].Hash[0] ^= 1
+	fetched := 0
+	_, err := assembled(t, m.Mcid, m, servedBy(blocks, &fetched))
+	if !errors.Is(err, ErrHashMismatch) || fetched != 0 {
+		t.Fatalf("err %v after %d fetches, want ErrHashMismatch and no fetch", err, fetched)
+	}
+}
+
 func TestGetAssemblesTheContentAWholeManifestForItsMcidDescribes(t *testing.T) {
 	m, blocks, data := chunkedContent(251)
 	fetched := 0
