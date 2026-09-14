@@ -14,10 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   node id, replacing a `"caller"` the sender put there under a text or a
   byte-string key. A payload or args that aren't a map are handed over
   unchanged.
-- `manifest.CreateOptions.HashAlgorithm` and `manifest.Sha256` are removed, and
-  `manifest.AlgorithmFromName` returns `Blake3` for every name. Blake3 is the
-  one hash algorithm a manifest can name, and every macula stack refuses a
-  sha256 manifest.
+- `manifest.CreateOptions.HashAlgorithm`, `manifest.Sha256` and
+  `manifest.AlgorithmFromName` are removed. Blake3 is the one hash algorithm a
+  manifest can name, and every macula stack refuses a sha256 manifest.
 
 ### Security
 
@@ -63,10 +62,13 @@ This release fixes these defects in v0.9.0 and earlier releases.
   `FrameStream.Abort` and `FrameStream.StopReceiving`.
 - `manifest.McidFor`, `manifest.VerifyMcid` and `manifest.CheckWhole`, with
   `manifest.ErrManifestMcidMismatch` and `manifest.ErrManifestNotWhole`.
-- `connection.FrameStream.StreamReplyVerifies`, `connection.ErrMalformedFrame`,
+- `connection.FrameStream.StreamReplyCounts`, `connection.ErrMalformedFrame`,
   `cbor.MaxNestingDepth`, `cbor.ErrNestingTooDeep`, `cbor.MaxElements` and
   `cbor.ErrTooManyElements`.
 - `manifest.CheckChunkHashes` and `manifest.ErrManifestChunkHashes`.
+- `pool.Opts.Logger` and `pool.Opts.DropWarningInterval`, given to every
+  session a pool link dials, a redial's included, so a pool link logs its drop
+  warnings and its end as a session connected on its own does.
 
 ### Changed
 
@@ -79,9 +81,9 @@ This release fixes these defects in v0.9.0 and earlier releases.
   and an ERROR only when it is signed by the key its `reported_by` names. This
   holds on the control stream, on dedicated streams (`FrameStream.Call`, which
   content transfer uses) and for a STREAM_REPLY (`Handle.AwaitReply`). A reply
-  that doesn't verify, doesn't parse, or has no call waiting for it is dropped
-  with a `dropped_reply` drop warning, and the call keeps waiting until its
-  timeout.
+  that doesn't verify, doesn't parse, or answers no call or stream waiting for
+  it is dropped with a `dropped_reply` drop warning, and the call keeps waiting
+  until its timeout.
 - On an established dedicated stream, a frame that doesn't decode ends the
   stream: it is reset and stopped with `StreamProtocolErrorCode`, and an
   `aborted_stream` drop warning names the reason `malformed`. A session whose
@@ -97,8 +99,9 @@ This release fixes these defects in v0.9.0 and earlier releases.
   macula's decoder. Duplicate map keys are matched by a digest of each key's
   canonical encoding, built as the key decodes, and still merge exactly when
   their canonical encodings are equal. Decoding refuses a value that would
-  decode to more than `MaxElements` (1<<20) values in all, counting every list
-  item, map key and map value, with `ErrTooManyElements`.
+  decode to more than `MaxElements` (1<<20) values in all, counting every value
+  it decodes: the top-level value, each list and map, and each list item, map
+  key and map value. The error is `ErrTooManyElements`.
 - `content.Get` uses a fetched manifest only once it describes the requested
   MCID (`manifest.VerifyMcid`), its chunks are cut the way `manifest.Create`
   cuts content (`manifest.CheckWhole`), and its chunk hashes make its root hash
@@ -111,8 +114,10 @@ This release fixes these defects in v0.9.0 and earlier releases.
   don't describe its content whole, so empty content has one form: size 0,
   chunk_count 0, no chunks and a positive chunk_size. `manifest.VerifyMcid`
   refuses any hash algorithm but blake3.
-- The session-end log line carries its reason cut to 256 bytes, with control
-  characters escaped as in drop warnings.
+- The session-end log line carries a station's GOODBYE reason and detail each
+  cut to 256 bytes, with control characters escaped as in drop warnings, and
+  the SDK's own words around them whole. Any other reason is cut and escaped
+  as a whole.
 
 ### Fixed
 
@@ -121,6 +126,9 @@ This release fixes these defects in v0.9.0 and earlier releases.
   already signed, no longer rewrites the signature of the frame signed first.
 - `frame.Decode` compares a frame's claimed length with `MaxFrameBytes` before
   converting it to an `int`.
+- `manifest.FromWire` checks a manifest's version against the range of a
+  `uint32`, and its chunk size, chunk count and each chunk's index, offset and
+  size against the range of an `int`, before converting them.
 
 ## [0.9.0] - 2026-09-11
 
