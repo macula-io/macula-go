@@ -38,7 +38,8 @@ func TestASha256ManifestIsRefused(t *testing.T) {
 // VerifyMcid refuses a manifest naming sha256, even for the MCID its own
 // fields describe.
 func TestVerifyMcidRefusesSha256(t *testing.T) {
-	sha, shaMcid := withOwnMcid(edited(threeChunks(), func(c *Manifest) { c.HashAlgorithm = Sha256 }))
+	// Algorithm(1) was Sha256, the one other algorithm a manifest could name.
+	sha, shaMcid := withOwnMcid(edited(threeChunks(), func(c *Manifest) { c.HashAlgorithm = Algorithm(1) }))
 	if err := VerifyMcid(sha, shaMcid); !errors.Is(err, ErrManifestMcidMismatch) {
 		t.Errorf("VerifyMcid = %v, want %v", err, ErrManifestMcidMismatch)
 	}

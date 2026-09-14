@@ -15,7 +15,6 @@
 package manifest
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"time"
@@ -46,38 +45,25 @@ func makeMcid(codec byte, hash [32]byte) Mcid {
 	return out
 }
 
-// Algorithm is a content hash algorithm.
+// Algorithm is a content hash algorithm. Blake3 is the only one: every macula
+// stack checks chunks with BLAKE3 and refuses a manifest naming another.
 type Algorithm int
 
-const (
-	Blake3 Algorithm = iota
-	Sha256
-)
+// Blake3 is BLAKE3, the hash algorithm of every manifest.
+const Blake3 Algorithm = 0
 
 func (a Algorithm) hash(data []byte) [32]byte {
-	switch a {
-	case Sha256:
-		return sha256.Sum256(data)
-	default:
-		return blake3.Sum256(data)
-	}
+	return blake3.Sum256(data)
 }
 
-// Name is the wire spelling of a, used in a manifest's hash_algorithm
-// field.
+// Name is the wire spelling of a manifest's hash_algorithm field: "blake3".
 func (a Algorithm) Name() string {
-	if a == Sha256 {
-		return "sha256"
-	}
 	return "blake3"
 }
 
-// AlgorithmFromName matches to_algorithm/1's own fallback: anything
-// unrecognized defaults to Blake3, it doesn't error.
+// AlgorithmFromName is Blake3 for every name. A manifest naming another
+// algorithm is refused where it is read (see FromWire).
 func AlgorithmFromName(name string) Algorithm {
-	if name == "sha256" {
-		return Sha256
-	}
 	return Blake3
 }
 
@@ -103,16 +89,16 @@ type Manifest struct {
 	Chunks        []ChunkInfo
 }
 
-// CreateOptions configures Create.
+// CreateOptions configures Create. A manifest's hash algorithm is always
+// Blake3, so there is no option for it.
 type CreateOptions struct {
-	Name          string
-	ChunkSize     int
-	HashAlgorithm Algorithm
+	Name      string
+	ChunkSize int
 }
 
 // DefaultCreateOptions matches the reference's own defaults.
 func DefaultCreateOptions() CreateOptions {
-	return CreateOptions{Name: "unnamed", ChunkSize: DefaultChunkSize, HashAlgorithm: Blake3}
+	return CreateOptions{Name: "unnamed", ChunkSize: DefaultChunkSize}
 }
 
 // Create splits data into fixed-size chunks and builds its manifest.
@@ -128,13 +114,13 @@ func Create(data []byte, opts CreateOptions) (Manifest, [][]byte) {
 
 func createWithCreated(data []byte, opts CreateOptions, created uint64) (Manifest, [][]byte) {
 	chunks := doChunk(data, opts.ChunkSize)
-	chunkInfos := makeChunkInfos(chunks, opts.HashAlgorithm)
-	rootHash := rootHashFor(chunkInfos, opts.HashAlgorithm)
+	chunkInfos := makeChunkInfos(chunks, Blake3)
+	rootHash := rootHashFor(chunkInfos, Blake3)
 	chunkCount := len(chunkInfos)
-	mcid := computeMcid(opts.Name, uint64(len(data)), opts.ChunkSize, chunkCount, opts.HashAlgorithm, rootHash)
+	mcid := computeMcid(opts.Name, uint64(len(data)), opts.ChunkSize, chunkCount, Blake3, rootHash)
 	m := Manifest{
 		Mcid: mcid, Version: 1, Name: opts.Name, Size: uint64(len(data)), Created: created,
-		ChunkSize: opts.ChunkSize, ChunkCount: chunkCount, HashAlgorithm: opts.HashAlgorithm,
+		ChunkSize: opts.ChunkSize, ChunkCount: chunkCount, HashAlgorithm: Blake3,
 		RootHash: rootHash, Chunks: chunkInfos,
 	}
 	return m, chunks

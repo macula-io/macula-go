@@ -19,7 +19,7 @@ func TestBlockMcidIsAlwaysBlake3RegardlessOfAlgorithmPreference(t *testing.T) {
 
 func TestCreateChunksExactBoundaryProducesNoEmptyTrailingChunk(t *testing.T) {
 	data := bytes.Repeat([]byte{0x42}, 20)
-	m, chunks := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 10, HashAlgorithm: Blake3}, 1000)
+	m, chunks := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 10}, 1000)
 	if len(chunks) != 2 {
 		t.Fatalf("len(chunks) = %d, want 2 (no empty trailing chunk on an exact boundary)", len(chunks))
 	}
@@ -33,7 +33,7 @@ func TestCreateChunksExactBoundaryProducesNoEmptyTrailingChunk(t *testing.T) {
 
 func TestCreateChunksUnevenRemainder(t *testing.T) {
 	data := bytes.Repeat([]byte{0x7}, 25)
-	m, chunks := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 10, HashAlgorithm: Blake3}, 1000)
+	m, chunks := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 10}, 1000)
 	if len(chunks) != 3 {
 		t.Fatalf("len(chunks) = %d, want 3", len(chunks))
 	}
@@ -47,7 +47,7 @@ func TestCreateChunksUnevenRemainder(t *testing.T) {
 
 func TestMcidIsChunkedDistinguishesSingleBlockFromManifest(t *testing.T) {
 	data := bytes.Repeat([]byte{0x1}, 100)
-	m, _ := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 10, HashAlgorithm: Blake3}, 1000)
+	m, _ := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 10}, 1000)
 	if !McidIsChunked(m.Mcid) {
 		t.Errorf("a manifest's own MCID must report as chunked")
 	}
@@ -56,18 +56,17 @@ func TestMcidIsChunkedDistinguishesSingleBlockFromManifest(t *testing.T) {
 	}
 }
 
-func TestChunkMcidUsesTheManifestsOwnHashAlgorithmUnlikeBlockMcid(t *testing.T) {
+func TestChunkMcidIsTheBlockMcidOfTheChunk(t *testing.T) {
 	data := bytes.Repeat([]byte{0x9}, 25)
-	m, chunks := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 10, HashAlgorithm: Sha256}, 1000)
+	m, chunks := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 10}, 1000)
 	for i, chunk := range chunks {
 		got, ok := ChunkMcid(m, i)
 		if !ok {
 			t.Fatalf("ChunkMcid(%d) not ok", i)
 		}
-		// Unlike BlockMcid (always Blake3), a chunk's storage address
-		// uses the manifest's own hash_algorithm -- Sha256 here.
-		want := makeMcid(codecRaw, Sha256.hash(chunk))
-		if got != want {
+		// A chunk is stored and fetched as a block of its bytes, so its
+		// address is the BLAKE3 block MCID of those bytes.
+		if want := BlockMcid(chunk); got != want {
 			t.Errorf("ChunkMcid(%d) = %x, want %x", i, got, want)
 		}
 	}
@@ -79,7 +78,7 @@ func TestChunkMcidUsesTheManifestsOwnHashAlgorithmUnlikeBlockMcid(t *testing.T) 
 func TestRootHashOddLeafCountPairsLastHashWithItself(t *testing.T) {
 	// 3 chunks -> combine() pairs (0,1) and folds 2 with itself.
 	data := bytes.Repeat([]byte{0x3}, 25) // chunkSize 10 -> 3 chunks: 10,10,5
-	m, _ := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 10, HashAlgorithm: Blake3}, 1000)
+	m, _ := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 10}, 1000)
 
 	infos := m.Chunks
 	h0, h1, h2 := infos[0].Hash, infos[1].Hash, infos[2].Hash
@@ -100,7 +99,7 @@ func combineOne(l, r [32]byte, alg Algorithm) [32]byte {
 
 func TestVerifyAcceptsReassembledDataAndRejectsTampering(t *testing.T) {
 	data := bytes.Repeat([]byte{0x5}, 1000)
-	m, _ := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 300, HashAlgorithm: Blake3}, 1000)
+	m, _ := createWithCreated(data, CreateOptions{Name: "x", ChunkSize: 300}, 1000)
 
 	if err := Verify(m, data); err != nil {
 		t.Fatalf("Verify(original data) = %v, want nil", err)
@@ -119,7 +118,7 @@ func TestVerifyAcceptsReassembledDataAndRejectsTampering(t *testing.T) {
 
 func TestToWireFromWireRoundTrip(t *testing.T) {
 	data := bytes.Repeat([]byte{0x11, 0x22}, 500)
-	m, _ := createWithCreated(data, CreateOptions{Name: "my-file.bin", ChunkSize: 300, HashAlgorithm: Blake3}, 1_700_000_000)
+	m, _ := createWithCreated(data, CreateOptions{Name: "my-file.bin", ChunkSize: 300}, 1_700_000_000)
 
 	wire := ToWire(m)
 	back, err := FromWire(wire)
@@ -158,7 +157,7 @@ func TestNameWireEncodingIsBytesNotText(t *testing.T) {
 	// text-wrapped hash input. FromWire's own getStringBytes would fail
 	// to parse a text-typed name, so a round trip through the real
 	// accessor is the regression guard here.
-	m, _ := createWithCreated([]byte("x"), CreateOptions{Name: "name-as-bytes", ChunkSize: 10, HashAlgorithm: Blake3}, 1)
+	m, _ := createWithCreated([]byte("x"), CreateOptions{Name: "name-as-bytes", ChunkSize: 10}, 1)
 	wire := ToWire(m)
 	nameField, ok := wire.Get("name")
 	if !ok {
@@ -172,9 +171,9 @@ func TestNameWireEncodingIsBytesNotText(t *testing.T) {
 	}
 }
 
-func TestAlgorithmFromNameDefaultsToBlake3ForUnrecognizedNames(t *testing.T) {
-	if AlgorithmFromName("sha256") != Sha256 {
-		t.Errorf("AlgorithmFromName(sha256) != Sha256")
+func TestAlgorithmFromNameIsBlake3ForEveryName(t *testing.T) {
+	if AlgorithmFromName("sha256") != Blake3 {
+		t.Errorf("AlgorithmFromName(sha256) != Blake3: blake3 is the one algorithm a manifest can name")
 	}
 	if AlgorithmFromName("blake3") != Blake3 {
 		t.Errorf("AlgorithmFromName(blake3) != Blake3")
