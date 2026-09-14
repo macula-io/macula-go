@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -54,6 +55,8 @@ type fakeSession struct {
 	err            error
 	callsAttempted int
 	publishWaiting bool
+	logger         *slog.Logger
+	dropInterval   time.Duration
 }
 
 func newFakeSession() *fakeSession {
@@ -227,6 +230,25 @@ func (f *fakeSession) Close(string, *string, identity.KeyPair) error {
 }
 
 func (f *fakeSession) RemoteAddr() string { return "fake" }
+
+func (f *fakeSession) SetLogger(logger *slog.Logger) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.logger = logger
+}
+
+func (f *fakeSession) SetDropWarningInterval(interval time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dropInterval = interval
+}
+
+// logging is the logger and drop warning interval the session was given.
+func (f *fakeSession) logging() (*slog.Logger, time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.logger, f.dropInterval
+}
 
 // kill simulates the connection dying out from under the link.
 func (f *fakeSession) kill() {

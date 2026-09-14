@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -45,6 +46,11 @@ type link struct {
 	livenessInterval  time.Duration
 	livenessMaxMisses int
 
+	// logger and dropInterval are what every session this link dials logs
+	// with (Opts.Logger and Opts.DropWarningInterval).
+	logger       *slog.Logger
+	dropInterval time.Duration
+
 	backoff time.Duration
 	events  chan<- inboundEvent
 	notify  chan<- linkEvent
@@ -54,11 +60,12 @@ type link struct {
 	peerNodeID []byte // updated on every successful dial (a redial can legitimately prove a different node id, e.g. a DNS name repointed); kept across a later respawn/backoff in between, never cleared -- see PeerNodeID's own doc
 }
 
-func newLink(host string, port uint16, trust transport.Trust, id identity.KeyPair, dial dialFunc, backoff, livenessInterval time.Duration, livenessMaxMisses int, events chan<- inboundEvent, notify chan<- linkEvent) *link {
+func newLink(host string, port uint16, trust transport.Trust, id identity.KeyPair, dial dialFunc, backoff, livenessInterval time.Duration, livenessMaxMisses int, logger *slog.Logger, dropInterval time.Duration, events chan<- inboundEvent, notify chan<- linkEvent) *link {
 	return &link{
 		key: linkKey(host, port), host: host, port: port, trust: trust, id: id,
 		dial: dial, backoff: backoff,
 		livenessInterval: livenessInterval, livenessMaxMisses: livenessMaxMisses,
+		logger: logger, dropInterval: dropInterval,
 		events: events, notify: notify,
 	}
 }
@@ -86,6 +93,10 @@ func (l *link) supervise(ctx context.Context) {
 			continue
 		}
 
+		// Given before the link uses the session, so what it drops on this
+		// link's calls, publishes and subscriptions is logged where the pool says.
+		dr.session.SetDropWarningInterval(l.dropInterval)
+		dr.session.SetLogger(l.logger)
 		ls := newLinkSession(l.key, dr.session, l.id, l.events, l.livenessInterval, l.livenessMaxMisses)
 		l.mu.Lock()
 		l.session = ls

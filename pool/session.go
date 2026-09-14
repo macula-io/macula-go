@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/macula-io/macula-go/connection"
@@ -22,6 +23,8 @@ type sessionLike interface {
 	Err() error
 	Close(reason string, detail *string, id identity.KeyPair) error
 	RemoteAddr() string
+	SetLogger(logger *slog.Logger)
+	SetDropWarningInterval(interval time.Duration)
 }
 
 // subscription is the slice of *connection.Subscription a link needs.

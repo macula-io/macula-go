@@ -31,6 +31,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	mathrand "math/rand/v2"
 	"sync"
 	"sync/atomic"
@@ -197,6 +198,16 @@ type Opts struct {
 	// doc. Zero value (Enabled == false) is a complete no-op.
 	StationDiscovery StationDiscoveryOpts
 
+	// Logger, if set, is where each link's session logs: the inbound frames
+	// it drops and the dedicated streams it refuses or aborts, as drop
+	// warnings, and its end (connection.Session.SetLogger). Every session a
+	// link dials, a redial's included, is given it before the link uses it.
+	Logger *slog.Logger
+	// DropWarningInterval is how long a drop warning interval lasts on each
+	// link's session (connection.Session.SetDropWarningInterval). 0 -> the
+	// session's own default, a minute.
+	DropWarningInterval time.Duration
+
 	dial dialFunc // test-only seam; nil -> dialSession
 }
 
@@ -347,7 +358,7 @@ func (p *Pool) addLink(host string, port uint16, trust transport.Trust) *link {
 		return existing
 	}
 	l := newLink(host, port, trust, p.opts.Identity, p.opts.dial, p.opts.RespawnDelay,
-		p.opts.LivenessInterval, p.opts.LivenessMaxMisses, p.events, p.linkEvent)
+		p.opts.LivenessInterval, p.opts.LivenessMaxMisses, p.opts.Logger, p.opts.DropWarningInterval, p.events, p.linkEvent)
 	p.links[key] = l
 	p.linksMu.Unlock()
 
