@@ -152,16 +152,50 @@ func procedureDetail(v cbor.Value) slog.Attr {
 	if procedure == nil {
 		return slog.Attr{}
 	}
-	return slog.String("procedure", cutAtRuneStart(string(procedure), maxDropProcedure))
+	return slog.String("procedure", loggable(string(procedure)))
 }
 
-// frameTypeDetail is a dropped frame's frame_type, cut like a procedure, or
-// nothing when the frame has none.
+// frameTypeDetail is a dropped frame's frame_type, cut and escaped like a
+// procedure, or nothing when the frame has none.
 func frameTypeDetail(frameType string) slog.Attr {
 	if frameType == "" {
 		return slog.Attr{}
 	}
-	return slog.String("frame_type", cutAtRuneStart(frameType, maxDropProcedure))
+	return slog.String("frame_type", loggable(frameType))
+}
+
+// loggable is text from a frame as a warning carries it: cut to
+// maxDropProcedure bytes without splitting a character, then with its control
+// characters escaped, so the line never breaks whatever handler prints it.
+// Every macula stack cuts and escapes the same way.
+func loggable(text string) string {
+	return printable(cutAtRuneStart(text, maxDropProcedure))
+}
+
+// printable is text with its control characters escaped: \n, \r and \t by
+// name and any other as \u{..}, in lowercase hex.
+func printable(text string) string {
+	out := make([]byte, 0, len(text))
+	for _, r := range text {
+		out = append(out, escapedRune(r)...)
+	}
+	return string(out)
+}
+
+// escapedRune is r as printable writes it. The control characters are the
+// Unicode Cc range, U+0000 to U+001F and U+007F to U+009F.
+func escapedRune(r rune) string {
+	switch {
+	case r == '\n':
+		return `\n`
+	case r == '\r':
+		return `\r`
+	case r == '\t':
+		return `\t`
+	case r < 0x20 || (r >= 0x7f && r <= 0x9f):
+		return fmt.Sprintf(`\u{%x}`, r)
+	}
+	return string(r)
 }
 
 // callIDDetail is a dropped reply's call_id: its first 4 bytes in upper-case

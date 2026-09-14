@@ -264,3 +264,29 @@ func TestADropWarningNamesOnlyABinaryProcedure(t *testing.T) {
 		}
 	}
 }
+
+// A drop warning's procedure has its control characters escaped by the SDK
+// itself, \n, \r and \t by name and any other as \u{..}, so the warning stays
+// on one line whatever handler prints it.
+func TestAProcedureWithANewlineStaysOnOneLogLine(t *testing.T) {
+	call := droppableCall(t, registryIdentity(t), nil, "app/a\nkind=forged\x1b\r\t")
+	if got, want := procedureDetail(call).Value.String(), `app/a\nkind=forged\u{1b}\r\t`; got != want {
+		t.Fatalf("procedure field %q, want %q", got, want)
+	}
+}
+
+// A dropped frame's frame_type is escaped the same way.
+func TestAFrameTypeWithControlCharactersStaysOnOneLogLine(t *testing.T) {
+	if got, want := frameTypeDetail("event\nkind=forged\x7f").Value.String(), `event\nkind=forged\u{7f}`; got != want {
+		t.Fatalf("frame_type field %q, want %q", got, want)
+	}
+}
+
+// A name is cut to 256 bytes first and escaped after, as every macula stack
+// does it.
+func TestAFrameTypeIsCutToItsLimitBeforeItIsEscaped(t *testing.T) {
+	name := strings.Repeat("a", maxDropProcedure-1) + "\n" + "past the limit"
+	if got, want := frameTypeDetail(name).Value.String(), strings.Repeat("a", maxDropProcedure-1)+`\n`; got != want {
+		t.Fatalf("frame_type field %q, want %q", got, want)
+	}
+}
