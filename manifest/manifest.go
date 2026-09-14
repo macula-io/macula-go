@@ -62,12 +62,6 @@ func (a Algorithm) Name() string {
 	return "blake3"
 }
 
-// AlgorithmFromName is Blake3 for every name. A manifest naming another
-// algorithm is refused where it is read (see FromWire).
-func AlgorithmFromName(name string) Algorithm {
-	return Blake3
-}
-
 // ChunkInfo describes one chunk of a manifest.
 type ChunkInfo struct {
 	Index  int

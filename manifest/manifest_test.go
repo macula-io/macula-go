@@ -170,15 +170,3 @@ func TestNameWireEncodingIsBytesNotText(t *testing.T) {
 		t.Errorf("wire manifest's \"name\" field must not be text-typed")
 	}
 }
-
-func TestAlgorithmFromNameIsBlake3ForEveryName(t *testing.T) {
-	if AlgorithmFromName("sha256") != Blake3 {
-		t.Errorf("AlgorithmFromName(sha256) != Blake3: blake3 is the one algorithm a manifest can name")
-	}
-	if AlgorithmFromName("blake3") != Blake3 {
-		t.Errorf("AlgorithmFromName(blake3) != Blake3")
-	}
-	if AlgorithmFromName("something-unknown") != Blake3 {
-		t.Errorf("AlgorithmFromName(unknown) must default to Blake3, matching the reference's own fallback")
-	}
-}
