@@ -1,0 +1,6 @@
+=== RUN   TestSigningAFrameLeavesEveryFrameSignedBeforeIntact
+    sign_test.go:22: the frame signed first no longer verifies after the same unsigned frame was signed again: signature does not verify against pubkey
+--- FAIL: TestSigningAFrameLeavesEveryFrameSignedBeforeIntact (0.01s)
+FAIL
+FAIL	github.com/macula-io/macula-go/frame	0.009s
+FAIL

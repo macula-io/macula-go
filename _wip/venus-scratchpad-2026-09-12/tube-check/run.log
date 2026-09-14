@@ -1,0 +1,67 @@
+1 bytes id, tagged output: OK in 342ms
+{
+ "keys": [
+  "channel_id",
+  "clips",
+  "description",
+  "logo_mcid",
+  "name",
+  "owner",
+  "tags"
+ ],
+ "channel_id": {
+  "$bytes": "Y2hhbm5lbC0wMWEwNDcxN2FjZTI3ZDFmYTQxYWVkNDMwZDBlYzcwYQ=="
+ },
+ "name": {
+  "$bytes": "VGhlIEJFQU0gQ2hhbm5lbA=="
+ },
+ "logo_mcid": {
+  "$bytes": "AVXMDnq1XjSXfUOXzCbmjP1iNjh/ckBvCsvrutdJDu1MWg=="
+ },
+ "clip_count": 3,
+ "clip_names": [
+  {
+   "$bytes": "QnJvIHRoaW5rcyBoZSdzIGEgaG9yc2U="
+  },
+  {
+   "$bytes": "VGhlIFRoaXJzdHkgQ3Jvdw=="
+  },
+  {
+   "$bytes": "QW4gRWxlY3RyaWNpYW4ncyBCZXN0IEZyaWVuZA=="
+  }
+ ],
+ "first_clip_id": {
+  "$bytes": "Y2xpcC0wMWEwNDcxOTY5ZmQ3MWMyOTMwY2M0NTlhNzk3ZTZjYQ=="
+ }
+}
+2 bytes id, default hex output: OK in 32ms
+{
+ "keys": [
+  "channel_id",
+  "clips",
+  "description",
+  "logo_mcid",
+  "name",
+  "owner",
+  "tags"
+ ],
+ "channel_id": "0x6368616e6e656c2d3031613034373137616365323764316661343161656434333064306563373061",
+ "name": "0x546865204245414d204368616e6e656c",
+ "logo_mcid": "0x0155cc0e7ab55e34977d4397cc26e68cfd6236387f72406f0acbebbad7490eed4c5a",
+ "clip_count": 3,
+ "clip_names": [
+  "0x42726f207468696e6b732068652773206120686f727365",
+  "0x54686520546869727374792043726f77",
+  "0x416e20456c65637472696369616e2773204265737420467269656e64"
+ ],
+ "first_clip_id": "0x636c69702d3031613034373139363966643731633239333063633435396137393765366361"
+}
+3 the returned channel_id passed straight back: OK in 31ms
+  same channel: false
+4 same id as a plain text string: ERROR in 108ms: macula-ts: CALL failed: unknown_error (bolt4 code 15): not_found
+undefined
+5 nonexistent id as bytes: ERROR in 112ms: macula-ts: CALL failed: unknown_error (bolt4 code 15): not_found
+undefined
+6 invalid base64 under $bytes (must fail locally): ERROR in 53ms: macula-ts/cabi: {"$bytes": ...} is not valid standard padded base64 (RFC 4648 section 4): illegal base64 data at input byte 3
+undefined
+CHECKS {"tagged_channel_id_echoed":true,"tagged_logo_is_bytes":true,"hex_channel_id":true}

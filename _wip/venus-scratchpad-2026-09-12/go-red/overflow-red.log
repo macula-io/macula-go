@@ -1,0 +1,5 @@
+--- FAIL: TestAnOverflowedSubscriptionKeepsTheStationSubscribedUntilItIsClosed (0.02s)
+    reader_test.go:552: overflow error "connection: consumer fell behind its queue" does not tell the subscriber to call Close
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.034s
+FAIL

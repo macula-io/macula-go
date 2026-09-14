@@ -1,0 +1,14 @@
+=== RUN   TestCallReusesAnOpenSessionToTheProviderStation
+--- PASS: TestCallReusesAnOpenSessionToTheProviderStation (0.40s)
+=== RUN   TestADirectCallWhoseReusedSessionHasEndedDialsTheStationFresh
+--- PASS: TestADirectCallWhoseReusedSessionHasEndedDialsTheStationFresh (0.16s)
+=== RUN   TestADirectCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherCandidate
+--- PASS: TestADirectCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherCandidate (0.29s)
+=== RUN   TestADirectCallThatTimedOutWaitingForTheWriteLockMayTryTheNextCandidate
+--- PASS: TestADirectCallThatTimedOutWaitingForTheWriteLockMayTryTheNextCandidate (0.16s)
+=== RUN   TestADirectCallThatWasNotSentIsTriedAgainOnTheNextPass
+    candidates_test.go:1228: Call = (0, directdial: candidates_test.echo_v1: connection: session ended: connection: frame not sent: context deadline exceeded), want the ok answer
+--- FAIL: TestADirectCallThatWasNotSentIsTriedAgainOnTheNextPass (2.24s)
+FAIL
+FAIL	github.com/macula-io/macula-go/directdial	3.254s
+FAIL

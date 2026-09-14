@@ -1,0 +1,6 @@
+=== RUN   TestAnEstablishedStreamWithAFrameThatDoesNotDecodeIsAborted
+    stream_abort_test.go:24: the stream was reset with <nil> and stopped with <nil>, want both with code 3
+--- FAIL: TestAnEstablishedStreamWithAFrameThatDoesNotDecodeIsAborted (0.01s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.017s
+FAIL

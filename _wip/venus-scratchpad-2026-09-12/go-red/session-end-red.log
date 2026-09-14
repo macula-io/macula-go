@@ -1,0 +1,9 @@
+--- FAIL: TestAFrameThatCannotBeDecodedEndsTheSession (2.04s)
+    reader_test.go:574: Done() did not close after a frame that cannot be decoded
+--- FAIL: TestACallOnASessionThatHasEndedReportsItWasNotSent (0.01s)
+    reader_test.go:594: Call after the session ended = connection: session ended: connection: the station said goodbye: shutdown (maintenance), want ErrSessionEnded and ErrNotSent
+--- FAIL: TestACallWaitingForTheWriteLockWhenTheSessionEndsReportsItWasNotSent (0.06s)
+    reader_test.go:614: Call waiting for the write lock = connection: session ended: connection: the station said goodbye: shutdown (maintenance), want ErrSessionEnded and ErrNotSent
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	2.130s
+FAIL

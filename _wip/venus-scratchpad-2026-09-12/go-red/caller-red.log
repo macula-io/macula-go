@@ -1,0 +1,11 @@
+=== RUN   TestAnInboundCallThreadsItsCallerIntoThePayload
+    caller_payload_test.go:55: payload caller = 0, want the verified caller's node id as bytes
+--- FAIL: TestAnInboundCallThreadsItsCallerIntoThePayload (0.01s)
+=== RUN   TestACallerTheSenderPutInThePayloadIsReplacedByTheVerifiedCaller
+    caller_payload_test.go:70: payload caller = bytes(32), want the verified caller, not the one the sender wrote
+--- FAIL: TestACallerTheSenderPutInThePayloadIsReplacedByTheVerifiedCaller (0.01s)
+=== RUN   TestANonMapPayloadCarriesNoCaller
+--- PASS: TestANonMapPayloadCarriesNoCaller (0.01s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.035s
+FAIL

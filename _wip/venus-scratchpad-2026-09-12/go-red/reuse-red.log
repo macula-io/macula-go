@@ -1,0 +1,14 @@
+# github.com/macula-io/macula-go/directdial [github.com/macula-io/macula-go/directdial.test]
+directdial/candidates_test.go:235:69: undefined: held
+directdial/candidates_test.go:237:9: undefined: dial
+directdial/candidates_test.go:238:2: undefined: dial
+directdial/candidates_test.go:238:87: undefined: held
+directdial/candidates_test.go:242:21: undefined: dial
+directdial/candidates_test.go:248:9: undefined: reuse
+directdial/candidates_test.go:249:2: undefined: reuse
+directdial/candidates_test.go:249:49: undefined: held
+directdial/candidates_test.go:255:21: undefined: reuse
+directdial/candidates_test.go:263:47: undefined: held
+directdial/candidates_test.go:263:47: too many errors
+FAIL	github.com/macula-io/macula-go/directdial [build failed]
+FAIL

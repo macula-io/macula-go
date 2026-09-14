@@ -1,0 +1,22 @@
+=== RUN   TestADropBurstLogsOneImmediateLineAndOneClosingLineWithTheRest
+--- PASS: TestADropBurstLogsOneImmediateLineAndOneClosingLineWithTheRest (0.10s)
+=== RUN   TestASingleDropLogsOnlyTheImmediateLine
+--- PASS: TestASingleDropLogsOnlyTheImmediateLine (0.06s)
+=== RUN   TestAnInboundCallIsDroppedForTheFirstThingWrongWithIt
+--- PASS: TestAnInboundCallIsDroppedForTheFirstThingWrongWithIt (0.05s)
+=== RUN   TestAReplyNothingWaitsForIsWarnedAboutAsADroppedReply
+--- PASS: TestAReplyNothingWaitsForIsWarnedAboutAsADroppedReply (0.10s)
+=== RUN   TestAnUnroutedFrameIsCountedByType
+--- PASS: TestAnUnroutedFrameIsCountedByType (0.04s)
+=== RUN   TestACallTimingOutWhileItsFrameIsBeingWrittenReportsItMayHaveBeenSent
+--- PASS: TestACallTimingOutWhileItsFrameIsBeingWrittenReportsItMayHaveBeenSent (0.28s)
+=== RUN   TestAnInboundCallNotSignedByItsCallerIsDropped
+--- PASS: TestAnInboundCallNotSignedByItsCallerIsDropped (0.38s)
+=== RUN   TestReplyToFrameAnswersACallSignedByItsCaller
+--- PASS: TestReplyToFrameAnswersACallSignedByItsCaller (0.25s)
+=== RUN   TestReplyToFrameIgnoresACallNotSignedByItsCaller
+--- PASS: TestReplyToFrameIgnoresACallNotSignedByItsCaller (0.18s)
+=== RUN   TestReplyToFrameIgnoresAnUnsignedCall
+--- PASS: TestReplyToFrameIgnoresAnUnsignedCall (0.09s)
+PASS
+ok  	github.com/macula-io/macula-go/connection	2.559s

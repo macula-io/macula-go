@@ -1,0 +1,14 @@
+# github.com/macula-io/macula-go/connection [github.com/macula-io/macula-go/connection.test]
+connection/lease_test.go:13:83: undefined: Lease
+connection/lease_test.go:17:4: s.leases undefined (type *Session has no field or method leases)
+connection/lease_test.go:17:14: undefined: leases
+connection/lease_test.go:19:13: undefined: Lease
+connection/lease_test.go:25:16: undefined: Acquire
+connection/lease_test.go:45:14: undefined: Acquire
+connection/lease_test.go:55:15: undefined: Acquire
+connection/lease_test.go:60:18: undefined: Acquire
+connection/lease_test.go:68:16: undefined: Acquire
+connection/registry_test.go:49:16: undefined: registeredSession
+connection/registry_test.go:49:16: too many errors
+FAIL	github.com/macula-io/macula-go/connection [build failed]
+FAIL

@@ -1,0 +1,4 @@
+go: v8spike/cand/ebfe imports
+	github.com/ebfe/brainpool tested by
+	github.com/ebfe/brainpool.test imports
+	../brainpool: "../brainpool" is relative, but relative import paths are not supported in module mode

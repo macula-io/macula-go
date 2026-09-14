@@ -1,0 +1,8 @@
+=== RUN   TestAnInboundCallThreadsItsCallerIntoThePayload
+--- PASS: TestAnInboundCallThreadsItsCallerIntoThePayload (0.03s)
+=== RUN   TestACallerTheSenderPutInThePayloadIsReplacedByTheVerifiedCaller
+--- PASS: TestACallerTheSenderPutInThePayloadIsReplacedByTheVerifiedCaller (0.11s)
+=== RUN   TestANonMapPayloadCarriesNoCaller
+--- PASS: TestANonMapPayloadCarriesNoCaller (0.32s)
+PASS
+ok  	github.com/macula-io/macula-go/connection	1.471s

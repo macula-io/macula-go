@@ -1,0 +1,4 @@
+go: downloading github.com/quic-go/go-ossfuzz-seeds v0.1.0
+go: downloading github.com/stretchr/testify v1.12.1
+go: downloading go.uber.org/mock v0.5.2
+go: downloading go.yaml.in/yaml/v3 v3.0.5

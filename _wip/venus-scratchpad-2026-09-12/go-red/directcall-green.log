@@ -1,0 +1,12 @@
+=== RUN   TestCallReusesAnOpenSessionToTheProviderStation
+--- PASS: TestCallReusesAnOpenSessionToTheProviderStation (0.22s)
+=== RUN   TestADirectCallWhoseReusedSessionHasEndedDialsTheStationFresh
+--- PASS: TestADirectCallWhoseReusedSessionHasEndedDialsTheStationFresh (0.17s)
+=== RUN   TestADirectCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherCandidate
+--- PASS: TestADirectCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherCandidate (0.44s)
+=== RUN   TestADirectCallThatTimedOutWaitingForTheWriteLockMayTryTheNextCandidate
+--- PASS: TestADirectCallThatTimedOutWaitingForTheWriteLockMayTryTheNextCandidate (0.26s)
+=== RUN   TestADirectCallThatWasNotSentIsTriedAgainOnTheNextPass
+--- PASS: TestADirectCallThatWasNotSentIsTriedAgainOnTheNextPass (0.27s)
+PASS
+ok  	github.com/macula-io/macula-go/directdial	2.373s

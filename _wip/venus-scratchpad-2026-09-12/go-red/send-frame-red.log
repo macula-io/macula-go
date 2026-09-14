@@ -1,0 +1,6 @@
+=== RUN   TestConcurrentSendFramesAreWrittenWhole
+    frame_stream_concurrent_test.go:64: after 0 whole frames the remaining 17520 bytes don't form a frame (decode error: frame: decode: cbor: decode: empty input)
+--- FAIL: TestConcurrentSendFramesAreWrittenWhole (0.01s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.013s
+FAIL

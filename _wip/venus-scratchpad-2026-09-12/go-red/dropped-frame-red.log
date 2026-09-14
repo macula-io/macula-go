@@ -1,0 +1,12 @@
+=== RUN   TestADroppedEventIsWarnedAboutWithItsReason
+    drop_warning_test.go:237: drop warnings = [], want the malformed EVENT at once and the unmatched one in the closing line
+--- FAIL: TestADroppedEventIsWarnedAboutWithItsReason (0.01s)
+=== RUN   TestADropWarningNamesOnlyABinaryProcedure
+    drop_warning_test.go:260: text: procedure field procedure=the.procedure, want it left out
+--- FAIL: TestADropWarningNamesOnlyABinaryProcedure (0.00s)
+=== RUN   TestAnUnroutedFrameIsCountedByType
+    reader_test.go:688: drop warnings = [], want stream_data at once and the other two in the closing line
+--- FAIL: TestAnUnroutedFrameIsCountedByType (0.02s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.040s
+FAIL

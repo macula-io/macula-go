@@ -1,0 +1,28 @@
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/signed_by_another
+    stream_open_test.go:83: accepted "forged" (err <nil>), want only the verified STREAM_OPEN
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/unsigned
+    stream_open_test.go:83: accepted "unsigned" (err <nil>), want only the verified STREAM_OPEN
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/another_frame_type
+    stream_open_test.go:83: accepted "" (err connection: expected a stream_open frame: frame_type is not "stream_open"), want only the verified STREAM_OPEN
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/bytes_that_don't_decode
+    stream_open_test.go:83: accepted "" (err connection: reading a dedicated stream's first frame: connection: malformed frame: frame: decode: cbor: decode: major 7 additional info 31 not supported (no booleans/undefined)), want only the verified STREAM_OPEN
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/a_verified_STREAM_OPEN_missing_its_mode
+    stream_open_test.go:83: accepted "" (err connection: expected a stream_open frame: missing required field: "mode"), want only the verified STREAM_OPEN
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/finished_before_any_frame
+    stream_open_test.go:83: accepted "" (err connection: reading a dedicated stream's first frame: connection: read stream: EOF), want only the verified STREAM_OPEN
+--- FAIL: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt (0.05s)
+    --- FAIL: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/signed_by_another (0.01s)
+    --- FAIL: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/unsigned (0.02s)
+    --- FAIL: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/another_frame_type (0.01s)
+    --- FAIL: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/bytes_that_don't_decode (0.00s)
+    --- FAIL: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/a_verified_STREAM_OPEN_missing_its_mode (0.01s)
+    --- FAIL: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/finished_before_any_frame (0.00s)
+=== RUN   TestAStreamOpenNotSignedByItsCallerIsRefused
+    stream_open_test.go:159: accepted "forged" (err <nil>), want only the STREAM_OPEN signed by its caller
+--- FAIL: TestAStreamOpenNotSignedByItsCallerIsRefused (0.02s)
+=== RUN   TestAControlFrameThatDoesNotDecodeEndsTheSessionAsMalformed
+--- PASS: TestAControlFrameThatDoesNotDecodeEndsTheSessionAsMalformed (0.00s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.085s
+FAIL

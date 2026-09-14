@@ -1,0 +1,2 @@
+{"sdk":"macula-ts","sdk_version":"0.15.0","run":"baseline","station":"station-fr-paris.macula.io:4433","utc":"2026-09-10T22:42:42.624Z","call":"hello","match":true,"exact_match":true,"duration_ms":94,"is_error":false,"reply":"hello"}
+{"sdk":"macula-ts","sdk_version":"0.15.0","run":"baseline","station":"station-fr-paris.macula.io:4433","utc":"2026-09-10T22:42:42.721Z","call":"map","match":true,"exact_match":true,"duration_ms":92,"is_error":false,"reply":{"run":"baseline","sdk":"macula-ts","sdk_version":"0.15.0"}}

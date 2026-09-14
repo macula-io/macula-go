@@ -1,0 +1,20 @@
+=== RUN   TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual
+=== RUN   TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/maps_with_the_same_entries_in_another_wire_order
+=== RUN   TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/a_map_whose_own_duplicate_leaves_it_equal_to_another
+=== RUN   TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/the_same_uint_with_a_non-minimal_head
+=== RUN   TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/lists_with_their_elements_in_another_order
+=== RUN   TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/a_uint_and_the_equal_float
+=== RUN   TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/bytes_and_text_with_the_same_content
+--- PASS: TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual (0.00s)
+    --- PASS: TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/maps_with_the_same_entries_in_another_wire_order (0.00s)
+    --- PASS: TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/a_map_whose_own_duplicate_leaves_it_equal_to_another (0.00s)
+    --- PASS: TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/the_same_uint_with_a_non-minimal_head (0.00s)
+    --- PASS: TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/lists_with_their_elements_in_another_order (0.00s)
+    --- PASS: TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/a_uint_and_the_equal_float (0.00s)
+    --- PASS: TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual/bytes_and_text_with_the_same_content (0.00s)
+=== RUN   TestDecodeMapWithALargeDeeplyNestedKeyIsNotQuadraticInDepth
+    cbor_test.go:369: decoding 524549 bytes allocated 4258 MiB, want at most 8 times the input
+--- FAIL: TestDecodeMapWithALargeDeeplyNestedKeyIsNotQuadraticInDepth (0.96s)
+FAIL
+FAIL	github.com/macula-io/macula-go/cbor	0.961s
+FAIL

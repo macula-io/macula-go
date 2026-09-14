@@ -1,0 +1,4 @@
+=== RUN   TestAbortingAFrameStreamCancelsBothDirectionsWithItsCode
+--- PASS: TestAbortingAFrameStreamCancelsBothDirectionsWithItsCode (0.00s)
+PASS
+ok  	github.com/macula-io/macula-go/connection	1.020s

@@ -1,0 +1,4 @@
+=== RUN   TestASessionEndIsLoggedOnceWithItsReason
+--- PASS: TestASessionEndIsLoggedOnceWithItsReason (0.53s)
+PASS
+ok  	github.com/macula-io/macula-go/connection	1.543s

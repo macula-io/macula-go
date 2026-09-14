@@ -1,0 +1,14 @@
+=== RUN   TestADedicatedStreamReplyThatDoesNotVerifyLeavesTheCallWaiting
+=== RUN   TestADedicatedStreamReplyThatDoesNotVerifyLeavesTheCallWaiting/a_forged
+    dedicated_reply_test.go:62: a forged reply first: the call got the result tagged "forged", want the genuine one
+=== RUN   TestADedicatedStreamReplyThatDoesNotVerifyLeavesTheCallWaiting/an_unsigned
+    dedicated_reply_test.go:62: an unsigned reply first: the call got the result tagged "unsigned", want the genuine one
+=== RUN   TestADedicatedStreamReplyThatDoesNotVerifyLeavesTheCallWaiting/a_forged_error
+    dedicated_reply_test.go:62: a forged error reply first: the call got {IsError:true Payload:0 RespondedBy:[] Code:1 Name:unknown_next_peer ReportedBy:[212 126 175 58 15 93 178 209 225 37 187 100 21 25 229 43 114 72 200 141 32 34 117 13 226 140 11 40 9 139 145 69] Detail:<nil>}, <nil>; want the genuine result
+--- FAIL: TestADedicatedStreamReplyThatDoesNotVerifyLeavesTheCallWaiting (0.04s)
+    --- FAIL: TestADedicatedStreamReplyThatDoesNotVerifyLeavesTheCallWaiting/a_forged (0.01s)
+    --- FAIL: TestADedicatedStreamReplyThatDoesNotVerifyLeavesTheCallWaiting/an_unsigned (0.00s)
+    --- FAIL: TestADedicatedStreamReplyThatDoesNotVerifyLeavesTheCallWaiting/a_forged_error (0.00s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.047s
+FAIL

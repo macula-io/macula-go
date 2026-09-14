@@ -1,0 +1,12 @@
+=== RUN   TestCallDialsARefusingStationOncePerEndpointVersion
+    candidates_test.go:637: dials = [a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test a.test], want two: one for each version of a.test's endpoint record
+--- FAIL: TestCallDialsARefusingStationOncePerEndpointVersion (3.01s)
+=== RUN   TestCallTriesAnAdvertisementThatAppearsOnALaterPass
+    candidates_test.go:661: dials = [a.test a.test b.test], want [a.test b.test]
+--- FAIL: TestCallTriesAnAdvertisementThatAppearsOnALaterPass (0.11s)
+=== RUN   TestResolutionBacksOffBetweenPasses
+    candidates_test.go:675: DHT lookups within a 3 s deadline = 30, want 5 to 8
+--- FAIL: TestResolutionBacksOffBetweenPasses (3.00s)
+FAIL
+FAIL	github.com/macula-io/macula-go/directdial	6.127s
+FAIL

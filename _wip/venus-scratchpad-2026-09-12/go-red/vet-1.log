@@ -1,0 +1,3 @@
+# github.com/macula-io/macula-go/pool
+# [github.com/macula-io/macula-go/pool]
+vet: pool/session.go:48:29: cannot use session (variable of type *connection.Session) as sessionLike value in struct literal: *connection.Session does not implement sessionLike (missing method RecvAny)

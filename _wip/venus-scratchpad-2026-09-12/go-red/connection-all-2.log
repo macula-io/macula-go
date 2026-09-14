@@ -1,0 +1,93 @@
+=== RUN   TestSendFrameIsBoundedByWriteDeadline
+    close_bounded_test.go:143: write blocked on flow control and failed after 1.000664286s, as expected: deadline exceeded
+--- PASS: TestSendFrameIsBoundedByWriteDeadline (1.01s)
+=== RUN   TestConcurrentSendFramesAreWrittenWhole
+--- PASS: TestConcurrentSendFramesAreWrittenWhole (0.01s)
+=== RUN   TestRecvFrame_FinalChunkWithEOF
+--- PASS: TestRecvFrame_FinalChunkWithEOF (0.00s)
+=== RUN   TestRecvFrame_GenuineEOFBeforeCompleteFrame
+--- PASS: TestRecvFrame_GenuineEOFBeforeCompleteFrame (0.00s)
+=== RUN   TestADialedSessionStaysOpenUntilItsLastLeaseIsReleased
+--- PASS: TestADialedSessionStaysOpenUntilItsLastLeaseIsReleased (0.06s)
+=== RUN   TestASessionThatIsClosingIsNotReused
+--- PASS: TestASessionThatIsClosingIsNotReused (0.04s)
+=== RUN   TestAnApplicationSessionIsNeverClosedByALease
+--- PASS: TestAnApplicationSessionIsNeverClosedByALease (0.06s)
+=== RUN   TestReleasingALeaseTwiceReleasesItOnce
+--- PASS: TestReleasingALeaseTwiceReleasesItOnce (0.12s)
+=== RUN   TestConcurrentCallsOnOneSessionEachGetTheirOwnReply
+--- PASS: TestConcurrentCallsOnOneSessionEachGetTheirOwnReply (0.08s)
+=== RUN   TestAnEventArrivingDuringACallReachesItsSubscriber
+--- PASS: TestAnEventArrivingDuringACallReachesItsSubscriber (0.04s)
+=== RUN   TestServingACallWhileCallingOnTheSameSession
+--- PASS: TestServingACallWhileCallingOnTheSameSession (0.10s)
+=== RUN   TestTwoSubscribersWithDifferentTopicsEachGetOnlyTheirEvents
+--- PASS: TestTwoSubscribersWithDifferentTopicsEachGetOnlyTheirEvents (0.18s)
+=== RUN   TestAWildcardSubscriptionMatchesExactlyOneSegment
+--- PASS: TestAWildcardSubscriptionMatchesExactlyOneSegment (0.10s)
+=== RUN   TestAStalledEventConsumerDoesNotStallCallReplies
+--- PASS: TestAStalledEventConsumerDoesNotStallCallReplies (0.06s)
+=== RUN   TestAnOverflowingEventConsumerEndsWithAnOverflowErrorAndTheSessionStaysUp
+--- PASS: TestAnOverflowingEventConsumerEndsWithAnOverflowErrorAndTheSessionStaysUp (0.18s)
+=== RUN   TestAnOverflowingCallQueueAnswersTheExtraCallAndKeepsServing
+--- PASS: TestAnOverflowingCallQueueAnswersTheExtraCallAndKeepsServing (0.19s)
+=== RUN   TestAGoodbyeFromTheStationFailsPendingCallsAndEndsTheSession
+--- PASS: TestAGoodbyeFromTheStationFailsPendingCallsAndEndsTheSession (0.12s)
+=== RUN   TestAnOverflowedSubscriptionKeepsTheStationSubscribedUntilItIsClosed
+--- PASS: TestAnOverflowedSubscriptionKeepsTheStationSubscribedUntilItIsClosed (0.05s)
+=== RUN   TestAnUnroutedFrameIsCountedByType
+--- PASS: TestAnUnroutedFrameIsCountedByType (0.08s)
+=== RUN   TestAHelloAfterTheHandshakeEndsTheSession
+--- PASS: TestAHelloAfterTheHandshakeEndsTheSession (0.04s)
+=== RUN   TestClosingTheLastSubscriptionForATopicUnsubscribes
+--- PASS: TestClosingTheLastSubscriptionForATopicUnsubscribes (0.19s)
+=== RUN   TestACallThatCannotGetTheWriteLockInTimeTimesOutAndTheSessionStaysUp
+--- PASS: TestACallThatCannotGetTheWriteLockInTimeTimesOutAndTheSessionStaysUp (0.19s)
+=== RUN   TestAWriteStalledPastTheSendTimeoutEndsTheSession
+--- PASS: TestAWriteStalledPastTheSendTimeoutEndsTheSession (0.12s)
+=== RUN   TestTheReaderKeepsDeliveringWhileAWriteIsStalled
+--- PASS: TestTheReaderKeepsDeliveringWhileAWriteIsStalled (0.20s)
+=== RUN   TestACallTimingOutWhileItsFrameIsBeingWrittenReportsItMayHaveBeenSent
+--- PASS: TestACallTimingOutWhileItsFrameIsBeingWrittenReportsItMayHaveBeenSent (0.21s)
+=== RUN   TestAnInboundCallNotSignedByItsCallerIsDropped
+--- PASS: TestAnInboundCallNotSignedByItsCallerIsDropped (0.35s)
+=== RUN   TestAnUnsignedInboundCallIsDropped
+--- PASS: TestAnUnsignedInboundCallIsDropped (0.31s)
+=== RUN   TestAQueuedCallPastItsDeadlineIsStillServed
+--- PASS: TestAQueuedCallPastItsDeadlineIsStillServed (0.18s)
+=== RUN   TestASessionIsFoundByItsIdentityAndStation
+--- PASS: TestASessionIsFoundByItsIdentityAndStation (0.20s)
+=== RUN   TestTheNewestSessionPerIdentityAndStationWins
+--- PASS: TestTheNewestSessionPerIdentityAndStationWins (0.01s)
+=== RUN   TestClosingAnOlderSessionLeavesTheNewerOneRegistered
+--- PASS: TestClosingAnOlderSessionLeavesTheNewerOneRegistered (0.05s)
+=== RUN   TestAClosedSessionIsNoLongerFound
+--- PASS: TestAClosedSessionIsNoLongerFound (0.01s)
+=== RUN   TestASessionWhoseConnectionEndsIsNoLongerFoundForReuse
+--- PASS: TestASessionWhoseConnectionEndsIsNoLongerFoundForReuse (0.03s)
+=== RUN   TestReplyToFrameAnswersACallSignedByItsCaller
+--- PASS: TestReplyToFrameAnswersACallSignedByItsCaller (0.10s)
+=== RUN   TestReplyToFrameIgnoresACallNotSignedByItsCaller
+--- PASS: TestReplyToFrameIgnoresACallNotSignedByItsCaller (0.09s)
+=== RUN   TestReplyToFrameIgnoresAnUnsignedCall
+--- PASS: TestReplyToFrameIgnoresAnUnsignedCall (0.14s)
+=== RUN   TestBuildCallReplyOpenPolicyInvokesHandlerWithoutToken
+--- PASS: TestBuildCallReplyOpenPolicyInvokesHandlerWithoutToken (0.02s)
+=== RUN   TestBuildCallReplyGatedPolicyRejectsMissingTokenWithoutInvokingHandler
+--- PASS: TestBuildCallReplyGatedPolicyRejectsMissingTokenWithoutInvokingHandler (0.05s)
+=== RUN   TestBuildCallReplyGatedPolicyRejectsInvalidTokenWithoutInvokingHandler
+--- PASS: TestBuildCallReplyGatedPolicyRejectsInvalidTokenWithoutInvokingHandler (0.16s)
+=== RUN   TestBuildCallReplyGatedPolicyAcceptsValidTokenAndInvokesHandler
+--- PASS: TestBuildCallReplyGatedPolicyAcceptsValidTokenAndInvokesHandler (0.15s)
+=== RUN   TestServeOneCallStillOpenByDefault
+--- PASS: TestServeOneCallStillOpenByDefault (0.00s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesATokenPresentedByAnotherCaller
+--- PASS: TestBuildCallReplyGatedPolicyRefusesATokenPresentedByAnotherCaller (0.17s)
+=== RUN   TestBuildCallReplyGatedPolicyAcceptsATokenFromItsAudience
+--- PASS: TestBuildCallReplyGatedPolicyAcceptsATokenFromItsAudience (0.19s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesATokenWithoutAudience
+--- PASS: TestBuildCallReplyGatedPolicyRefusesATokenWithoutAudience (0.05s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesACallWithoutCaller
+--- PASS: TestBuildCallReplyGatedPolicyRefusesACallWithoutCaller (0.07s)
+PASS
+ok  	github.com/macula-io/macula-go/connection	6.798s

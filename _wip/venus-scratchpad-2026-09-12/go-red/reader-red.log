@@ -1,0 +1,14 @@
+# github.com/macula-io/macula-go/connection [github.com/macula-io/macula-go/connection.test]
+connection/reader_test.go:276:3: unknown field self in struct literal of type Session
+connection/reader_test.go:279:4: s.startReader undefined (type *Session has no field or method startReader)
+connection/reader_test.go:284:82: undefined: Subscription
+connection/reader_test.go:286:14: assignment mismatch: 2 variables but s.Subscribe returns 1 value
+connection/reader_test.go:428:65: undefined: ErrRecvTimeout
+connection/reader_test.go:444:67: undefined: ErrRecvTimeout
+connection/reader_test.go:452:21: undefined: subscriptionQueue
+connection/reader_test.go:465:17: undefined: subscriptionQueue
+connection/reader_test.go:470:17: undefined: subscriptionQueue
+connection/reader_test.go:476:54: undefined: ErrConsumerOverflow
+connection/reader_test.go:476:54: too many errors
+FAIL	github.com/macula-io/macula-go/connection [build failed]
+FAIL

@@ -1,0 +1,24 @@
+{
+ "passed_back": {
+  "$bytes": "Y2hhbm5lbC0wMWEwNDcxN2FjZTI3ZDFmYTQxYWVkNDMwZDBlYzcwYQ=="
+ },
+ "whole_payload_identical": true,
+ "name_as_utf8": "The BEAM Channel",
+ "description_type": "tagged bytes",
+ "owner_type": "tagged bytes",
+ "tags": [
+  {
+   "$bytes": "QkVBTQ=="
+  },
+  {
+   "$bytes": "ZnVubnk="
+  }
+ ],
+ "clip_fields": [
+  "clip_id",
+  "name",
+  "thumbnail_mcid",
+  "view_count"
+ ],
+ "view_count_type": "number"
+}

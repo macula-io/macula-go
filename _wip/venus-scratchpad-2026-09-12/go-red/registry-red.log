@@ -1,0 +1,14 @@
+# github.com/macula-io/macula-go/connection [github.com/macula-io/macula-go/connection.test]
+connection/registry_test.go:18:59: unknown field identity in struct literal of type Session
+connection/registry_test.go:18:82: unknown field done in struct literal of type Session
+connection/registry_test.go:27:3: undefined: unregister
+connection/registry_test.go:47:2: undefined: register
+connection/registry_test.go:49:16: undefined: SessionFor
+connection/registry_test.go:52:14: undefined: SessionFor
+connection/registry_test.go:55:14: undefined: SessionFor
+connection/registry_test.go:64:2: undefined: register
+connection/registry_test.go:65:2: undefined: register
+connection/registry_test.go:67:16: undefined: SessionFor
+connection/registry_test.go:67:16: too many errors
+FAIL	github.com/macula-io/macula-go/connection [build failed]
+FAIL

@@ -1,0 +1,68 @@
+=== RUN   TestStationDiscoveryAddsNewlyFoundStation
+--- PASS: TestStationDiscoveryAddsNewlyFoundStation (0.03s)
+=== RUN   TestStationDiscoveryDisabledByDefaultChangesNothing
+--- PASS: TestStationDiscoveryDisabledByDefaultChangesNothing (0.26s)
+=== RUN   TestStationDiscoveryRespectsMaxLinks
+--- PASS: TestStationDiscoveryRespectsMaxLinks (0.32s)
+=== RUN   TestStationDiscoveryDoesNotTearDownLinkMissingFromRefresh
+--- PASS: TestStationDiscoveryDoesNotTearDownLinkMissingFromRefresh (0.08s)
+=== RUN   TestResolveListStationsRealmSkipsDirectDialOnlyAdvertisement
+--- PASS: TestResolveListStationsRealmSkipsDirectDialOnlyAdvertisement (0.02s)
+=== RUN   TestDialTargetFromStationRowPrefersHostnameOverBareIP
+--- PASS: TestDialTargetFromStationRowPrefersHostnameOverBareIP (0.00s)
+=== RUN   TestDialTargetFromStationRowFallsBackToHostAdvertised
+--- PASS: TestDialTargetFromStationRowFallsBackToHostAdvertised (0.00s)
+=== RUN   TestAddDiscoveredLinksSkipsStationAlreadyLinkedByNodeID
+--- PASS: TestAddDiscoveredLinksSkipsStationAlreadyLinkedByNodeID (0.06s)
+=== RUN   TestAddDiscoveredLinksSkipsBareIPUnderWebPKI
+--- PASS: TestAddDiscoveredLinksSkipsBareIPUnderWebPKI (0.07s)
+=== RUN   TestWithDefaultsLinkSelectionAutoPairsWithStationDiscovery
+--- PASS: TestWithDefaultsLinkSelectionAutoPairsWithStationDiscovery (0.07s)
+=== RUN   TestWithDefaultsLinkSelectionExplicitOverridesAutoPairing
+--- PASS: TestWithDefaultsLinkSelectionExplicitOverridesAutoPairing (0.09s)
+=== RUN   TestSelectLinksFirstSuccessReturnsEveryConnectedLinkUnshuffled
+--- PASS: TestSelectLinksFirstSuccessReturnsEveryConnectedLinkUnshuffled (0.02s)
+=== RUN   TestSelectLinksRandomProducesMultipleOrderings
+--- PASS: TestSelectLinksRandomProducesMultipleOrderings (0.09s)
+=== RUN   TestCallUnderLinkSelectionRandomCanReachEveryLink
+--- PASS: TestCallUnderLinkSelectionRandomCanReachEveryLink (0.06s)
+=== RUN   TestDedupTableCollisionsAreByContentNotAllocation
+--- PASS: TestDedupTableCollisionsAreByContentNotAllocation (0.00s)
+=== RUN   TestDedupTableSweepRemovesOnlyStaleEntries
+--- PASS: TestDedupTableSweepRemovesOnlyStaleEntries (0.00s)
+=== RUN   TestSubscribeReplaysOntoRespawnedLink
+--- PASS: TestSubscribeReplaysOntoRespawnedLink (0.05s)
+=== RUN   TestEventDeliveredExactlyOnceDespiteDuplicateFrames
+--- PASS: TestEventDeliveredExactlyOnceDespiteDuplicateFrames (0.12s)
+=== RUN   TestAWildcardSubscriptionThroughThePoolReceivesMatchingEvents
+    pool_test.go:660: deliveries = map[concrete:[sensors/kitchen]], want sensors/* to receive kitchen and hall once each and sensors/kitchen to receive kitchen once
+--- FAIL: TestAWildcardSubscriptionThroughThePoolReceivesMatchingEvents (1.16s)
+=== RUN   TestAnOverflowedSubscriptionIsReplacedBeforeItIsClosed
+    pool_test.go:689: operations on the flood subscriptions = [subscribe close subscribe], want subscribe, subscribe, close: the replacement subscribes before the overflowed one closes
+--- FAIL: TestAnOverflowedSubscriptionIsReplacedBeforeItIsClosed (0.09s)
+=== RUN   TestPanickingHandlerDoesNotStopOtherDelivery
+--- PASS: TestPanickingHandlerDoesNotStopOtherDelivery (0.07s)
+=== RUN   TestCallFallsThroughToNextConnectedLink
+--- PASS: TestCallFallsThroughToNextConnectedLink (0.02s)
+=== RUN   TestAPoolCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherLink
+    pool_test.go:809: Call through the silent link = ("live.example", <nil>), want ErrCallTimeout without ErrNotSent
+--- FAIL: TestAPoolCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherLink (0.09s)
+=== RUN   TestStalledWriterRespawnsInsteadOfWedging
+--- PASS: TestStalledWriterRespawnsInsteadOfWedging (0.34s)
+=== RUN   TestConnectRejectsZeroValueIdentity
+--- PASS: TestConnectRejectsZeroValueIdentity (0.00s)
+=== RUN   TestPublishRejectsBadPayloadWithoutTouchingAnyLink
+--- PASS: TestPublishRejectsBadPayloadWithoutTouchingAnyLink (0.01s)
+=== RUN   TestCallRejectsBadPayloadWithoutTouchingAnyLink
+--- PASS: TestCallRejectsBadPayloadWithoutTouchingAnyLink (0.07s)
+=== RUN   TestOnLinkEventFiresWithAnErrorOnAFailedDial
+--- PASS: TestOnLinkEventFiresWithAnErrorOnAFailedDial (0.02s)
+=== RUN   TestOnLinkEventFiresUpOnSuccessfulConnect
+--- PASS: TestOnLinkEventFiresUpOnSuccessfulConnect (0.21s)
+=== RUN   TestLivenessProbeRespawnsAfterConsecutiveMisses
+--- PASS: TestLivenessProbeRespawnsAfterConsecutiveMisses (0.12s)
+=== RUN   TestErrorResponseIsNotGoErr
+--- PASS: TestErrorResponseIsNotGoErr (0.02s)
+FAIL
+FAIL	github.com/macula-io/macula-go/pool	3.532s
+FAIL

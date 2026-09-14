@@ -1,0 +1,14 @@
+=== RUN   TestBuildCallReplyGatedPolicyRefusesATokenPresentedByAnotherCaller
+    serve_ucan_test.go:205: token presented by another caller: isError=false code=0, want ERROR Unauthorized(0x10)
+--- FAIL: TestBuildCallReplyGatedPolicyRefusesATokenPresentedByAnotherCaller (0.02s)
+=== RUN   TestBuildCallReplyGatedPolicyAcceptsATokenFromItsAudience
+--- PASS: TestBuildCallReplyGatedPolicyAcceptsATokenFromItsAudience (0.01s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesATokenWithoutAudience
+    serve_ucan_test.go:230: token without audience: isError=false code=0 invoked=true, want ERROR Unauthorized and no handler
+--- FAIL: TestBuildCallReplyGatedPolicyRefusesATokenWithoutAudience (0.01s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesACallWithoutCaller
+    serve_ucan_test.go:241: call without caller: isError=false code=0 invoked=true, want ERROR Unauthorized and no handler
+--- FAIL: TestBuildCallReplyGatedPolicyRefusesACallWithoutCaller (0.01s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.044s
+FAIL

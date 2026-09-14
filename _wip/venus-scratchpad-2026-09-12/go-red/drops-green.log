@@ -1,0 +1,24 @@
+=== RUN   TestADropBurstLogsOneImmediateLineAndOneClosingLineWithTheRest
+--- PASS: TestADropBurstLogsOneImmediateLineAndOneClosingLineWithTheRest (0.14s)
+=== RUN   TestASingleDropLogsOnlyTheImmediateLine
+--- PASS: TestASingleDropLogsOnlyTheImmediateLine (0.14s)
+=== RUN   TestAnInboundCallIsDroppedForTheFirstThingWrongWithIt
+    drop_warning_test.go:181: signed by its caller: dropped for "invalid_signature", want ""
+--- FAIL: TestAnInboundCallIsDroppedForTheFirstThingWrongWithIt (0.12s)
+=== RUN   TestAReplyNothingWaitsForIsWarnedAboutAsADroppedReply
+--- PASS: TestAReplyNothingWaitsForIsWarnedAboutAsADroppedReply (0.01s)
+=== RUN   TestAnUnroutedFrameIsCountedByType
+--- PASS: TestAnUnroutedFrameIsCountedByType (0.06s)
+=== RUN   TestACallTimingOutWhileItsFrameIsBeingWrittenReportsItMayHaveBeenSent
+--- PASS: TestACallTimingOutWhileItsFrameIsBeingWrittenReportsItMayHaveBeenSent (0.18s)
+=== RUN   TestAnInboundCallNotSignedByItsCallerIsDropped
+--- PASS: TestAnInboundCallNotSignedByItsCallerIsDropped (0.37s)
+=== RUN   TestReplyToFrameAnswersACallSignedByItsCaller
+--- PASS: TestReplyToFrameAnswersACallSignedByItsCaller (0.09s)
+=== RUN   TestReplyToFrameIgnoresACallNotSignedByItsCaller
+--- PASS: TestReplyToFrameIgnoresACallNotSignedByItsCaller (0.17s)
+=== RUN   TestReplyToFrameIgnoresAnUnsignedCall
+--- PASS: TestReplyToFrameIgnoresAnUnsignedCall (0.05s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	1.366s
+FAIL

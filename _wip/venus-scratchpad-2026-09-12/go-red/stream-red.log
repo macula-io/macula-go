@@ -1,0 +1,6 @@
+=== RUN   TestAStreamOpenNotSignedByItsCallerIsRefused
+    accept_test.go:62: served the STREAM_OPEN for "forged", want only the genuine one
+--- FAIL: TestAStreamOpenNotSignedByItsCallerIsRefused (0.42s)
+FAIL
+FAIL	github.com/macula-io/macula-go/stream	0.456s
+FAIL

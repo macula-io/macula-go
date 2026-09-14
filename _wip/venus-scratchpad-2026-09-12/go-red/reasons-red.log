@@ -1,0 +1,10 @@
+=== RUN   TestAnInboundCallIsDroppedForTheFirstThingWrongWithIt
+    drop_warning_test.go:183: a signature that isn't 64 bytes: dropped for "invalid_signature", want "unsigned"
+    drop_warning_test.go:183: a caller that isn't a key: dropped for "invalid_signature", want "unsigned"
+--- FAIL: TestAnInboundCallIsDroppedForTheFirstThingWrongWithIt (0.00s)
+=== RUN   TestAReplyNothingWaitsForIsWarnedAboutAsADroppedReply
+    drop_warning_test.go:209: drop warnings = ["time=2026-09-12T00:18:09.424+02:00 level=WARN msg=\"macula: drop warning\" kind=dropped_reply count=1 reason=unknown_call_id call_id=deadbeef station=0909090909090909090909090909090909090909090909090909090909090909" "time=2026-09-12T00:18:09.426+02:00 level=WARN msg=\"macula: drop warning\" kind=dropped_reply count=1 reason=malformed call_id=deadbeef station=0909090909090909090909090909090909090909090909090909090909090909"], want the unknown call_id at once and the malformed reply in the closing line
+--- FAIL: TestAReplyNothingWaitsForIsWarnedAboutAsADroppedReply (0.01s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.024s
+FAIL

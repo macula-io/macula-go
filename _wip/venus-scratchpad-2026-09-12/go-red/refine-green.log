@@ -1,0 +1,72 @@
+=== RUN   TestCallTriesTheNextAdvertisementWhenAStationHasNoEndpoint
+--- PASS: TestCallTriesTheNextAdvertisementWhenAStationHasNoEndpoint (1.53s)
+=== RUN   TestCallRetriesWhenNoAdvertisementQualifies
+--- PASS: TestCallRetriesWhenNoAdvertisementQualifies (0.11s)
+=== RUN   TestCallTriesTheNextStationWhenADialFails
+=== RUN   TestCallTriesTheNextStationWhenADialFails/Call
+=== RUN   TestCallTriesTheNextStationWhenADialFails/CallWithUCAN
+--- PASS: TestCallTriesTheNextStationWhenADialFails (0.05s)
+    --- PASS: TestCallTriesTheNextStationWhenADialFails/Call (0.03s)
+    --- PASS: TestCallTriesTheNextStationWhenADialFails/CallWithUCAN (0.02s)
+=== RUN   TestCallNeverSendsTheRequestTwice
+--- PASS: TestCallNeverSendsTheRequestTwice (0.03s)
+=== RUN   TestCallTimeoutBoundsResolution
+--- PASS: TestCallTimeoutBoundsResolution (0.30s)
+=== RUN   TestCallTimeoutBoundsTheEndpointLookup
+--- PASS: TestCallTimeoutBoundsTheEndpointLookup (0.31s)
+=== RUN   TestOpenStreamDirectTriesTheNextStationWhenADialFails
+--- PASS: TestOpenStreamDirectTriesTheNextStationWhenADialFails (0.02s)
+=== RUN   TestOpenStreamDirectNeverOpensTheStreamTwice
+--- PASS: TestOpenStreamDirectNeverOpensTheStreamTwice (0.02s)
+=== RUN   TestGetDirectRetriesWhenNoProviderQualifies
+--- PASS: TestGetDirectRetriesWhenNoProviderQualifies (0.11s)
+=== RUN   TestGetDirectTriesTheNextProviderAfterAFailedFetch
+--- PASS: TestGetDirectTriesTheNextProviderAfterAFailedFetch (0.03s)
+=== RUN   TestGetDirectTimeoutBoundsResolution
+--- PASS: TestGetDirectTimeoutBoundsResolution (0.30s)
+=== RUN   TestPutDirectTimeoutBoundsTheEndpointLookup
+--- PASS: TestPutDirectTimeoutBoundsTheEndpointLookup (0.31s)
+=== RUN   TestCallWithCertChainTriesTheNextAdvertisementWhenAStationHasNoEndpoint
+--- PASS: TestCallWithCertChainTriesTheNextAdvertisementWhenAStationHasNoEndpoint (1.53s)
+=== RUN   TestCallWithCertChainReportsTheAuthorizationFailureAtItsDeadline
+--- PASS: TestCallWithCertChainReportsTheAuthorizationFailureAtItsDeadline (0.33s)
+=== RUN   TestResolveReturnsTheFirstStationWithAnEndpoint
+--- PASS: TestResolveReturnsTheFirstStationWithAnEndpoint (1.52s)
+=== RUN   TestResolveStationEndpointStopsAtItsDeadline
+--- PASS: TestResolveStationEndpointStopsAtItsDeadline (0.30s)
+=== RUN   TestCandidateShareSplitsTheRemainingTime
+--- PASS: TestCandidateShareSplitsTheRemainingTime (0.00s)
+=== RUN   TestCallDialsARefusingStationOncePerEndpointVersion
+--- PASS: TestCallDialsARefusingStationOncePerEndpointVersion (3.02s)
+=== RUN   TestCallTriesAnAdvertisementThatAppearsOnALaterPass
+--- PASS: TestCallTriesAnAdvertisementThatAppearsOnALaterPass (0.12s)
+=== RUN   TestResolutionBacksOffBetweenPasses
+--- PASS: TestResolutionBacksOffBetweenPasses (3.00s)
+=== RUN   TestGetDirectFetchesFromAFailingProviderOncePerAnnouncement
+--- PASS: TestGetDirectFetchesFromAFailingProviderOncePerAnnouncement (2.01s)
+=== RUN   TestLiveAdvertiseAndResolve
+    directdial_live_test.go:94: set MACULA_LIVE_TEST=1 to run against the live demo fleet
+--- SKIP: TestLiveAdvertiseAndResolve (0.00s)
+=== RUN   TestLiveDirectDialServeRoundTrip
+    directdial_live_test.go:193: set MACULA_LIVE_TEST=1 to run against the live demo fleet
+--- SKIP: TestLiveDirectDialServeRoundTrip (0.00s)
+=== RUN   TestLiveDirectDialUCANGatedRoundTrip
+    directdial_live_test.go:295: set MACULA_LIVE_TEST=1 to run against the live demo fleet
+--- SKIP: TestLiveDirectDialUCANGatedRoundTrip (0.00s)
+=== RUN   TestLiveResolveWithCertChain
+    directdial_live_test.go:440: set MACULA_LIVE_TEST=1 to run against the live demo fleet
+--- SKIP: TestLiveResolveWithCertChain (0.00s)
+=== RUN   TestLiveKeepAdvertisedDirectRepublishes
+    directdial_live_test.go:508: set MACULA_LIVE_TEST=1 to run against the live demo fleet
+--- SKIP: TestLiveKeepAdvertisedDirectRepublishes (0.00s)
+=== RUN   TestLiveOpenStreamDirectRoundTrip
+    stream_content_live_test.go:48: set MACULA_LIVE_TEST=1 to run against the live demo fleet
+--- SKIP: TestLiveOpenStreamDirectRoundTrip (0.00s)
+=== RUN   TestLivePutDirectRoundTrip
+    stream_content_live_test.go:163: set MACULA_LIVE_TEST=1 to run against the live demo fleet
+--- SKIP: TestLivePutDirectRoundTrip (0.00s)
+=== RUN   TestLiveGetDirectResolvesAndVerifiesButCannotDialALeafIdentity
+    stream_content_live_test.go:252: set MACULA_LIVE_TEST=1 to run against the live demo fleet
+--- SKIP: TestLiveGetDirectResolvesAndVerifiesButCannotDialALeafIdentity (0.00s)
+PASS
+ok  	github.com/macula-io/macula-go/directdial	14.942s

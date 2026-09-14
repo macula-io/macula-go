@@ -1,0 +1,43 @@
+=== RUN   TestCallReportsNotAdvertisedWhenALookupAnsweredBeforeLaterOnesFailed
+    candidates_test.go:1306: Call error = directdial: candidates_test.echo_v1: test: dht connection lost: context deadline exceeded, want ErrProcedureNotAdvertised rather than the later failed lookup
+--- FAIL: TestCallReportsNotAdvertisedWhenALookupAnsweredBeforeLaterOnesFailed (1.00s)
+=== RUN   TestGetDirectReportsNotAnnouncedWhenALookupAnsweredBeforeLaterOnesFailed
+    candidates_test.go:1319: GetDirect error = directdial: find content providers: test: dht connection lost: context deadline exceeded, want ErrContentNotAnnounced rather than the later failed lookup
+--- FAIL: TestGetDirectReportsNotAnnouncedWhenALookupAnsweredBeforeLaterOnesFailed (1.00s)
+=== RUN   TestCallReportsAFailedLookupAtItsDeadlineWhenNoCandidateWasTried
+--- PASS: TestCallReportsAFailedLookupAtItsDeadlineWhenNoCandidateWasTried (1.00s)
+=== RUN   TestGetDirectReportsAFailedLookupAtItsDeadlineWhenNoProviderWasTried
+--- PASS: TestGetDirectReportsAFailedLookupAtItsDeadlineWhenNoProviderWasTried (1.03s)
+=== RUN   TestCallReportsATimeoutWhenNoLookupWasAnsweredInTime
+    candidates_test.go:1358: Call error = directdial: candidates_test.echo_v1: test: lookup ran out its timeout: context deadline exceeded, want only the deadline
+--- FAIL: TestCallReportsATimeoutWhenNoLookupWasAnsweredInTime (0.50s)
+=== RUN   TestGetDirectReportsATimeoutWhenNoLookupWasAnsweredInTime
+    candidates_test.go:1371: GetDirect error = directdial: find content providers: test: lookup ran out its timeout: context deadline exceeded, want only the deadline
+--- FAIL: TestGetDirectReportsATimeoutWhenNoLookupWasAnsweredInTime (0.50s)
+=== RUN   TestCallKeepsALookupErrorWhenALaterLookupIsCutOffByTheDeadline
+    candidates_test.go:1385: Call error = directdial: candidates_test.echo_v1: test: lookup ran out its timeout: context deadline exceeded, want the earlier failed lookup's error
+--- FAIL: TestCallKeepsALookupErrorWhenALaterLookupIsCutOffByTheDeadline (1.00s)
+=== RUN   TestCallRetriesAfterALookupFails
+--- PASS: TestCallRetriesAfterALookupFails (0.11s)
+=== RUN   TestGetDirectRetriesAfterALookupFails
+--- PASS: TestGetDirectRetriesAfterALookupFails (0.11s)
+=== RUN   TestPutDirectReportsNoStationEndpointWhenALookupAnsweredNotFound
+    candidates_test.go:1428: PutDirect error = directdial: resolve station 6d5dfa96ce67e197a8913706f6fadf7c551215f29aeb945240e0c19b4290e3ba: test: dht connection lost, want ErrStationEndpointNotFound rather than the later failed lookup
+--- FAIL: TestPutDirectReportsNoStationEndpointWhenALookupAnsweredNotFound (0.11s)
+=== RUN   TestPutDirectRetriesAnEndpointLookupThatFails
+    candidates_test.go:1442: PutDirect: directdial: resolve station a4f38136bbf0a94ce195c3c965eda9b8bc319aaa06b628a51615ba6f959355f9: test: dht connection lost
+--- FAIL: TestPutDirectRetriesAnEndpointLookupThatFails (0.01s)
+=== RUN   TestPutDirectReportsAFailedEndpointLookupWhenEveryLookupFailed
+    candidates_test.go:1458: endpoint lookups = 1, want the failed lookup asked again
+--- FAIL: TestPutDirectReportsAFailedEndpointLookupWhenEveryLookupFailed (0.03s)
+=== RUN   TestPutDirectReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime
+    candidates_test.go:1471: PutDirect error = directdial: resolve station a86e54625738fb90237e481f452109bbdc69449f4fb5bfa3009b08e93326fda5: test: lookup ran out its timeout, want only the deadline
+--- FAIL: TestPutDirectReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime (0.51s)
+=== RUN   TestPutDirectKeepsALookupErrorWhenALaterEndpointLookupIsCutOffByTheDeadline
+--- PASS: TestPutDirectKeepsALookupErrorWhenALaterEndpointLookupIsCutOffByTheDeadline (0.00s)
+=== RUN   TestCallReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime
+    candidates_test.go:1500: Call error = directdial: candidates_test.echo_v1: test: lookup ran out its timeout: context deadline exceeded, want only the deadline
+--- FAIL: TestCallReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime (0.51s)
+FAIL
+FAIL	github.com/macula-io/macula-go/directdial	7.433s
+FAIL

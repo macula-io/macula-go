@@ -1,0 +1,9 @@
+ok  	github.com/macula-io/macula-go/cbor	0.021s
+ok  	github.com/macula-io/macula-go/connection	1.097s
+ok  	github.com/macula-io/macula-go/dht	0.177s
+ok  	github.com/macula-io/macula-go/directdial	15.635s
+ok  	github.com/macula-io/macula-go/frame	0.012s
+ok  	github.com/macula-io/macula-go/identity	0.027s
+ok  	github.com/macula-io/macula-go/manifest	0.004s
+ok  	github.com/macula-io/macula-go/pool	2.031s
+ok  	github.com/macula-io/macula-go/ucan	0.109s

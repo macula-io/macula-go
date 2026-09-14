@@ -1,0 +1,8 @@
+=== RUN   TestCallReportsTheLastCandidateFailureWhenALaterPassFindsNone
+--- PASS: TestCallReportsTheLastCandidateFailureWhenALaterPassFindsNone (1.03s)
+=== RUN   TestCallReportsTheLastCandidateFailureWhenALaterLookupFails
+--- PASS: TestCallReportsTheLastCandidateFailureWhenALaterLookupFails (1.05s)
+=== RUN   TestGetDirectReportsTheLastCandidateFailureWhenALaterLookupFails
+--- PASS: TestGetDirectReportsTheLastCandidateFailureWhenALaterLookupFails (1.01s)
+PASS
+ok  	github.com/macula-io/macula-go/directdial	3.090s

@@ -1,0 +1,14 @@
+=== RUN   TestGetAssemblesTheContentAWholeManifestForItsMcidDescribes
+--- PASS: TestGetAssemblesTheContentAWholeManifestForItsMcidDescribes (0.00s)
+=== RUN   TestGetRefusesAManifestThatDoesNotDescribeTheRequestedMcid
+    assemble_test.go:66: a substituted manifest gave 786431 bytes and err <nil> after 3 fetches, want ErrHashMismatch, no content and no fetch
+--- FAIL: TestGetRefusesAManifestThatDoesNotDescribeTheRequestedMcid (0.01s)
+=== RUN   TestGetRefusesAManifestCountingMoreChunksThanItLists
+    assemble_test.go:43: assembling the content panicked: content: index < m.ChunkCount, so m.Chunks[index] exists
+--- FAIL: TestGetRefusesAManifestCountingMoreChunksThanItLists (0.00s)
+=== RUN   TestGetRefusesAManifestClaimingMoreBytesThanItsChunksHold
+    assemble_test.go:43: assembling the content panicked: runtime error: makeslice: cap out of range
+--- FAIL: TestGetRefusesAManifestClaimingMoreBytesThanItsChunksHold (0.00s)
+FAIL
+FAIL	github.com/macula-io/macula-go/content	0.019s
+FAIL

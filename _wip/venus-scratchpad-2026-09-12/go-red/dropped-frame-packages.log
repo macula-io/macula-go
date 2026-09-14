@@ -1,0 +1,4 @@
+ok  	github.com/macula-io/macula-go/connection	9.999s
+ok  	github.com/macula-io/macula-go/stream	1.152s
+ok  	github.com/macula-io/macula-go/pool	3.598s
+ok  	github.com/macula-io/macula-go/dht	3.933s

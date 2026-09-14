@@ -1,0 +1,5 @@
+--- FAIL: TestAnOverflowedSubscriptionKeepsTheStationSubscribedUntilItIsClosed (0.06s)
+    reader_test.go:555: UNSUBSCRIBE frames after the overflow = 1, want 0 until the subscription is closed
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.065s
+FAIL

@@ -1,0 +1,64 @@
+=== RUN   TestStationDiscoveryAddsNewlyFoundStation
+--- PASS: TestStationDiscoveryAddsNewlyFoundStation (0.16s)
+=== RUN   TestStationDiscoveryDisabledByDefaultChangesNothing
+--- PASS: TestStationDiscoveryDisabledByDefaultChangesNothing (0.14s)
+=== RUN   TestStationDiscoveryRespectsMaxLinks
+--- PASS: TestStationDiscoveryRespectsMaxLinks (0.17s)
+=== RUN   TestStationDiscoveryDoesNotTearDownLinkMissingFromRefresh
+--- PASS: TestStationDiscoveryDoesNotTearDownLinkMissingFromRefresh (0.08s)
+=== RUN   TestResolveListStationsRealmSkipsDirectDialOnlyAdvertisement
+--- PASS: TestResolveListStationsRealmSkipsDirectDialOnlyAdvertisement (0.06s)
+=== RUN   TestDialTargetFromStationRowPrefersHostnameOverBareIP
+--- PASS: TestDialTargetFromStationRowPrefersHostnameOverBareIP (0.00s)
+=== RUN   TestDialTargetFromStationRowFallsBackToHostAdvertised
+--- PASS: TestDialTargetFromStationRowFallsBackToHostAdvertised (0.00s)
+=== RUN   TestAddDiscoveredLinksSkipsStationAlreadyLinkedByNodeID
+--- PASS: TestAddDiscoveredLinksSkipsStationAlreadyLinkedByNodeID (0.12s)
+=== RUN   TestAddDiscoveredLinksSkipsBareIPUnderWebPKI
+--- PASS: TestAddDiscoveredLinksSkipsBareIPUnderWebPKI (0.08s)
+=== RUN   TestWithDefaultsLinkSelectionAutoPairsWithStationDiscovery
+--- PASS: TestWithDefaultsLinkSelectionAutoPairsWithStationDiscovery (0.05s)
+=== RUN   TestWithDefaultsLinkSelectionExplicitOverridesAutoPairing
+--- PASS: TestWithDefaultsLinkSelectionExplicitOverridesAutoPairing (0.01s)
+=== RUN   TestSelectLinksFirstSuccessReturnsEveryConnectedLinkUnshuffled
+--- PASS: TestSelectLinksFirstSuccessReturnsEveryConnectedLinkUnshuffled (0.11s)
+=== RUN   TestSelectLinksRandomProducesMultipleOrderings
+--- PASS: TestSelectLinksRandomProducesMultipleOrderings (0.11s)
+=== RUN   TestCallUnderLinkSelectionRandomCanReachEveryLink
+--- PASS: TestCallUnderLinkSelectionRandomCanReachEveryLink (0.02s)
+=== RUN   TestDedupTableCollisionsAreByContentNotAllocation
+--- PASS: TestDedupTableCollisionsAreByContentNotAllocation (0.00s)
+=== RUN   TestDedupTableSweepRemovesOnlyStaleEntries
+--- PASS: TestDedupTableSweepRemovesOnlyStaleEntries (0.00s)
+=== RUN   TestSubscribeReplaysOntoRespawnedLink
+--- PASS: TestSubscribeReplaysOntoRespawnedLink (0.05s)
+=== RUN   TestEventDeliveredExactlyOnceDespiteDuplicateFrames
+--- PASS: TestEventDeliveredExactlyOnceDespiteDuplicateFrames (0.27s)
+=== RUN   TestAWildcardSubscriptionThroughThePoolReceivesMatchingEvents
+--- PASS: TestAWildcardSubscriptionThroughThePoolReceivesMatchingEvents (0.15s)
+=== RUN   TestAnOverflowedSubscriptionIsReplacedBeforeItIsClosed
+--- PASS: TestAnOverflowedSubscriptionIsReplacedBeforeItIsClosed (0.03s)
+=== RUN   TestPanickingHandlerDoesNotStopOtherDelivery
+--- PASS: TestPanickingHandlerDoesNotStopOtherDelivery (0.02s)
+=== RUN   TestCallFallsThroughToNextConnectedLink
+--- PASS: TestCallFallsThroughToNextConnectedLink (0.01s)
+=== RUN   TestAPoolCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherLink
+--- PASS: TestAPoolCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherLink (0.07s)
+=== RUN   TestStalledWriterRespawnsInsteadOfWedging
+--- PASS: TestStalledWriterRespawnsInsteadOfWedging (0.39s)
+=== RUN   TestConnectRejectsZeroValueIdentity
+--- PASS: TestConnectRejectsZeroValueIdentity (0.00s)
+=== RUN   TestPublishRejectsBadPayloadWithoutTouchingAnyLink
+--- PASS: TestPublishRejectsBadPayloadWithoutTouchingAnyLink (0.11s)
+=== RUN   TestCallRejectsBadPayloadWithoutTouchingAnyLink
+--- PASS: TestCallRejectsBadPayloadWithoutTouchingAnyLink (0.20s)
+=== RUN   TestOnLinkEventFiresWithAnErrorOnAFailedDial
+--- PASS: TestOnLinkEventFiresWithAnErrorOnAFailedDial (0.07s)
+=== RUN   TestOnLinkEventFiresUpOnSuccessfulConnect
+--- PASS: TestOnLinkEventFiresUpOnSuccessfulConnect (0.01s)
+=== RUN   TestLivenessProbeRespawnsAfterConsecutiveMisses
+--- PASS: TestLivenessProbeRespawnsAfterConsecutiveMisses (0.16s)
+=== RUN   TestErrorResponseIsNotGoErr
+--- PASS: TestErrorResponseIsNotGoErr (0.04s)
+PASS
+ok  	github.com/macula-io/macula-go/pool	3.726s

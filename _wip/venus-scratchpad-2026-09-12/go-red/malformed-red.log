@@ -1,0 +1,9 @@
+=== RUN   TestPutDirectAsksAgainPastAMalformedEndpointRecord
+    candidates_test.go:1524: PutDirect: directdial: resolve station 66bcc72e339c6b98c8717805370de2e79e32b733e9ef4e9bbd64fb6019996e79: directdial: station_endpoint record names no dialable host and port: it has no advertised host
+--- FAIL: TestPutDirectAsksAgainPastAMalformedEndpointRecord (0.01s)
+=== RUN   TestPutDirectReportsAMalformedEndpointRecordAtItsDeadline
+    candidates_test.go:1538: PutDirect error = directdial: resolve station 0122f6c4d3e763352972c90b10093316b59f7d7f19f7301a2b7ce6097411fedb: directdial: station_endpoint record names no dialable host and port: it has no advertised host, want ErrMalformedStationEndpoint at the deadline
+--- FAIL: TestPutDirectReportsAMalformedEndpointRecordAtItsDeadline (0.02s)
+FAIL
+FAIL	github.com/macula-io/macula-go/directdial	0.028s
+FAIL

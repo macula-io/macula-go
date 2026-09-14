@@ -1,0 +1,34 @@
+=== RUN   TestBuildCallReplyOpenPolicyInvokesHandlerWithoutToken
+--- PASS: TestBuildCallReplyOpenPolicyInvokesHandlerWithoutToken (0.01s)
+=== RUN   TestBuildCallReplyGatedPolicyRejectsMissingTokenWithoutInvokingHandler
+--- PASS: TestBuildCallReplyGatedPolicyRejectsMissingTokenWithoutInvokingHandler (0.01s)
+=== RUN   TestBuildCallReplyGatedPolicyRejectsInvalidTokenWithoutInvokingHandler
+--- PASS: TestBuildCallReplyGatedPolicyRejectsInvalidTokenWithoutInvokingHandler (0.02s)
+=== RUN   TestBuildCallReplyGatedPolicyAcceptsValidTokenAndInvokesHandler
+--- PASS: TestBuildCallReplyGatedPolicyAcceptsValidTokenAndInvokesHandler (0.01s)
+=== RUN   TestServeOneCallStillOpenByDefault
+--- PASS: TestServeOneCallStillOpenByDefault (0.00s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesATokenPresentedByAnotherCaller
+--- PASS: TestBuildCallReplyGatedPolicyRefusesATokenPresentedByAnotherCaller (0.03s)
+=== RUN   TestBuildCallReplyGatedPolicyAcceptsATokenFromItsAudience
+--- PASS: TestBuildCallReplyGatedPolicyAcceptsATokenFromItsAudience (0.01s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesATokenWithoutAudience
+--- PASS: TestBuildCallReplyGatedPolicyRefusesATokenWithoutAudience (0.03s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesACallWithoutCaller
+--- PASS: TestBuildCallReplyGatedPolicyRefusesACallWithoutCaller (0.00s)
+PASS
+ok  	github.com/macula-io/macula-go/connection	0.117s
+=== RUN   TestPolicyOpenAlwaysPasses
+--- PASS: TestPolicyOpenAlwaysPasses (0.00s)
+=== RUN   TestPolicyRequiredAcceptsValidToken
+--- PASS: TestPolicyRequiredAcceptsValidToken (0.01s)
+=== RUN   TestPolicyRequiredRejectsMissingToken
+--- PASS: TestPolicyRequiredRejectsMissingToken (0.01s)
+=== RUN   TestPolicyRequiredRejectsTokenFromWrongIssuer
+--- PASS: TestPolicyRequiredRejectsTokenFromWrongIssuer (0.01s)
+=== RUN   TestPolicyRequiredRefusesATokenForAnotherAudience
+--- PASS: TestPolicyRequiredRefusesATokenForAnotherAudience (0.01s)
+=== RUN   TestPolicyRequiredRefusesAMissingOrMalformedAudienceOrCaller
+--- PASS: TestPolicyRequiredRefusesAMissingOrMalformedAudienceOrCaller (0.01s)
+PASS
+ok  	github.com/macula-io/macula-go/ucan	0.045s

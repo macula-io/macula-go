@@ -1,0 +1,6 @@
+=== RUN   TestAStreamOpenThreadsItsCallerIntoTheArgs
+    stream_open_test.go:227: args caller = bytes(32), want the verified caller, not the one the sender wrote
+--- FAIL: TestAStreamOpenThreadsItsCallerIntoTheArgs (0.02s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.026s
+FAIL

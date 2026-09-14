@@ -1,0 +1,40 @@
+=== RUN   TestCallTriesTheNextAdvertisementWhenAStationHasNoEndpoint
+--- PASS: TestCallTriesTheNextAdvertisementWhenAStationHasNoEndpoint (1.54s)
+=== RUN   TestCallRetriesWhenNoAdvertisementQualifies
+--- PASS: TestCallRetriesWhenNoAdvertisementQualifies (0.11s)
+=== RUN   TestCallTriesTheNextStationWhenADialFails
+=== RUN   TestCallTriesTheNextStationWhenADialFails/Call
+=== RUN   TestCallTriesTheNextStationWhenADialFails/CallWithUCAN
+--- PASS: TestCallTriesTheNextStationWhenADialFails (0.04s)
+    --- PASS: TestCallTriesTheNextStationWhenADialFails/Call (0.01s)
+    --- PASS: TestCallTriesTheNextStationWhenADialFails/CallWithUCAN (0.03s)
+=== RUN   TestCallNeverSendsTheRequestTwice
+--- PASS: TestCallNeverSendsTheRequestTwice (0.01s)
+=== RUN   TestCallTimeoutBoundsResolution
+--- PASS: TestCallTimeoutBoundsResolution (0.30s)
+=== RUN   TestCallTimeoutBoundsTheEndpointLookup
+--- PASS: TestCallTimeoutBoundsTheEndpointLookup (0.31s)
+=== RUN   TestOpenStreamDirectTriesTheNextStationWhenADialFails
+--- PASS: TestOpenStreamDirectTriesTheNextStationWhenADialFails (0.05s)
+=== RUN   TestOpenStreamDirectNeverOpensTheStreamTwice
+--- PASS: TestOpenStreamDirectNeverOpensTheStreamTwice (0.02s)
+=== RUN   TestGetDirectRetriesWhenNoProviderQualifies
+--- PASS: TestGetDirectRetriesWhenNoProviderQualifies (0.11s)
+=== RUN   TestGetDirectTriesTheNextProviderAfterAFailedFetch
+--- PASS: TestGetDirectTriesTheNextProviderAfterAFailedFetch (0.01s)
+=== RUN   TestGetDirectTimeoutBoundsResolution
+--- PASS: TestGetDirectTimeoutBoundsResolution (0.31s)
+=== RUN   TestPutDirectTimeoutBoundsTheEndpointLookup
+--- PASS: TestPutDirectTimeoutBoundsTheEndpointLookup (0.31s)
+=== RUN   TestCallWithCertChainTriesTheNextAdvertisementWhenAStationHasNoEndpoint
+--- PASS: TestCallWithCertChainTriesTheNextAdvertisementWhenAStationHasNoEndpoint (1.51s)
+=== RUN   TestCallWithCertChainReportsTheAuthorizationFailureAtItsDeadline
+--- PASS: TestCallWithCertChainReportsTheAuthorizationFailureAtItsDeadline (0.32s)
+=== RUN   TestResolveReturnsTheFirstStationWithAnEndpoint
+--- PASS: TestResolveReturnsTheFirstStationWithAnEndpoint (1.53s)
+=== RUN   TestResolveStationEndpointStopsAtItsDeadline
+--- PASS: TestResolveStationEndpointStopsAtItsDeadline (0.30s)
+=== RUN   TestCandidateShareSplitsTheRemainingTime
+--- PASS: TestCandidateShareSplitsTheRemainingTime (0.00s)
+PASS
+ok  	github.com/macula-io/macula-go/directdial	6.786s

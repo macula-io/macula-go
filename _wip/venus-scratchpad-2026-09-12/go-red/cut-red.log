@@ -1,0 +1,6 @@
+=== RUN   TestCheckWholeRefusesChunksThatDoNotDescribeTheContentWhole
+    verify_mcid_test.go:90: a chunk cut short before the last, with the count still right: CheckWhole = <nil>, want whole false
+--- FAIL: TestCheckWholeRefusesChunksThatDoNotDescribeTheContentWhole (0.00s)
+FAIL
+FAIL	github.com/macula-io/macula-go/manifest	0.002s
+FAIL

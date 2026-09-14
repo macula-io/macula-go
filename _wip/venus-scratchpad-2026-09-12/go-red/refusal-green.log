@@ -1,0 +1,20 @@
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/signed_by_another
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/unsigned
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/another_frame_type
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/bytes_that_don't_decode
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/a_verified_STREAM_OPEN_missing_its_mode
+=== RUN   TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/finished_before_any_frame
+--- PASS: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt (0.69s)
+    --- PASS: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/signed_by_another (0.16s)
+    --- PASS: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/unsigned (0.07s)
+    --- PASS: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/another_frame_type (0.01s)
+    --- PASS: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/bytes_that_don't_decode (0.05s)
+    --- PASS: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/a_verified_STREAM_OPEN_missing_its_mode (0.08s)
+    --- PASS: TestAStreamOpenIsRefusedForTheFirstThingWrongWithIt/finished_before_any_frame (0.24s)
+=== RUN   TestAStreamOpenNotSignedByItsCallerIsRefused
+--- PASS: TestAStreamOpenNotSignedByItsCallerIsRefused (0.26s)
+=== RUN   TestAControlFrameThatDoesNotDecodeEndsTheSessionAsMalformed
+--- PASS: TestAControlFrameThatDoesNotDecodeEndsTheSessionAsMalformed (0.01s)
+PASS
+ok  	github.com/macula-io/macula-go/connection	1.983s

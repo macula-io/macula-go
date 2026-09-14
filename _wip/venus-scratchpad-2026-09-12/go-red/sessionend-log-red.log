@@ -1,0 +1,6 @@
+=== RUN   TestASessionEndIsLoggedOnceWithItsReason
+    reader_test.go:842: session-end lines = 0, want 1; log:
+--- FAIL: TestASessionEndIsLoggedOnceWithItsReason (0.26s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	0.270s
+FAIL

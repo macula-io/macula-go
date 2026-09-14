@@ -1,0 +1,370 @@
+=== RUN   TestSendFrameIsBoundedByWriteDeadline
+    close_bounded_test.go:143: write blocked on flow control and failed after 1.000302036s, as expected: deadline exceeded
+--- PASS: TestSendFrameIsBoundedByWriteDeadline (1.00s)
+=== RUN   TestConcurrentSendFramesAreWrittenWhole
+--- PASS: TestConcurrentSendFramesAreWrittenWhole (0.00s)
+=== RUN   TestRecvFrame_FinalChunkWithEOF
+--- PASS: TestRecvFrame_FinalChunkWithEOF (0.00s)
+=== RUN   TestRecvFrame_GenuineEOFBeforeCompleteFrame
+--- PASS: TestRecvFrame_GenuineEOFBeforeCompleteFrame (0.00s)
+=== RUN   TestADialedSessionStaysOpenUntilItsLastLeaseIsReleased
+--- PASS: TestADialedSessionStaysOpenUntilItsLastLeaseIsReleased (0.00s)
+=== RUN   TestASessionThatIsClosingIsNotReused
+--- PASS: TestASessionThatIsClosingIsNotReused (0.00s)
+=== RUN   TestAnApplicationSessionIsNeverClosedByALease
+--- PASS: TestAnApplicationSessionIsNeverClosedByALease (0.01s)
+=== RUN   TestReleasingALeaseTwiceReleasesItOnce
+--- PASS: TestReleasingALeaseTwiceReleasesItOnce (0.00s)
+=== RUN   TestLiveHandshakeAgainstRealStation
+    live_test.go:75: connected: remote=[2a01:7e01::f03c:94ff:fe22:719e]:4433 station_id=808d48be8780338f9739b96b17a09c086caea2fdac878b28e8b89fc8d72592a6 accepted=true capabilities=1 negotiated=1
+--- PASS: TestLiveHandshakeAgainstRealStation (0.31s)
+=== RUN   TestLiveCallRoundTrip
+    live_test.go:118: OBSERVED: got an ERROR (expected for a nonexistent procedure): code=1 name=unknown_next_peer reported_by=808d48be8780338f9739b96b17a09c086caea2fdac878b28e8b89fc8d72592a6 detail=<nil>
+--- PASS: TestLiveCallRoundTrip (0.31s)
+=== RUN   TestLivePubSubRoundTrip
+    live_test.go:163: OBSERVED: no EVENT arrived within 5s (connection: nothing arrived in time) — a subscriber may not receive its own publish, or delivery may simply be slower than this test waits. Not asserted as a failure either way.
+--- PASS: TestLivePubSubRoundTrip (5.30s)
+=== RUN   TestLivePublishSurvivesImmediateClose
+--- PASS: TestLivePublishSurvivesImmediateClose (1.09s)
+=== RUN   TestLiveUnaryCallProviderRoundTrip
+    live_test.go:343: OBSERVED: provider served the inbound CALL for procedure=macula_go_sdk.test_add.2aa7b909f093b07f, caller got RESULT payload=7
+--- PASS: TestLiveUnaryCallProviderRoundTrip (1.10s)
+=== RUN   TestLiveUnaryCallProviderReportsUnknownNextPeerOnLookupMiss
+    live_test.go:403: OBSERVED: lookup miss correctly reported as ERROR code=1 name=unknown_next_peer
+--- PASS: TestLiveUnaryCallProviderReportsUnknownNextPeerOnLookupMiss (1.12s)
+=== RUN   TestLiveKeepAdvertisedStaysCallableAcrossTicks
+    live_test.go:489: OBSERVED: procedure answered a real call after two KeepAdvertised ticks
+    live_test.go:494: OBSERVED: KeepAdvertised returned promptly after cancel()
+--- PASS: TestLiveKeepAdvertisedStaysCallableAcrossTicks (2.83s)
+=== RUN   TestLiveRunSubscriberAndRunPublisher
+    live_test.go:591: OBSERVED: RunPublisher onDone fired with a clean outcome
+    live_test.go:604: OBSERVED: RunSubscriber's handler received the real EVENT
+    live_test.go:628: OBSERVED: a real pubsub.publish_completed_v1 fact landed with outcome=completed
+    live_test.go:636: OBSERVED: RunSubscriber returned promptly after cancel()
+--- PASS: TestLiveRunSubscriberAndRunPublisher (3.40s)
+=== RUN   TestLiveRPCTelemetryFacts
+    live_test.go:849: OBSERVED: RPC telemetry facts correlate correctly through an independent watcher -- caller request_id=03d1f9b9345f31ce5a5f7f009fbdeb97 (sent+completed, outcome=completed), provider request_id=bc34e9702b290fb9d1992b915f2636de (received+replied, outcome=replied)
+--- PASS: TestLiveRPCTelemetryFacts (8.11s)
+=== RUN   TestConcurrentCallsOnOneSessionEachGetTheirOwnReply
+--- PASS: TestConcurrentCallsOnOneSessionEachGetTheirOwnReply (0.01s)
+=== RUN   TestAnEventArrivingDuringACallReachesItsSubscriber
+--- PASS: TestAnEventArrivingDuringACallReachesItsSubscriber (0.01s)
+=== RUN   TestServingACallWhileCallingOnTheSameSession
+--- PASS: TestServingACallWhileCallingOnTheSameSession (0.01s)
+=== RUN   TestTwoSubscribersWithDifferentTopicsEachGetOnlyTheirEvents
+--- PASS: TestTwoSubscribersWithDifferentTopicsEachGetOnlyTheirEvents (0.10s)
+=== RUN   TestAWildcardSubscriptionMatchesExactlyOneSegment
+--- PASS: TestAWildcardSubscriptionMatchesExactlyOneSegment (0.11s)
+=== RUN   TestAStalledEventConsumerDoesNotStallCallReplies
+--- PASS: TestAStalledEventConsumerDoesNotStallCallReplies (0.02s)
+=== RUN   TestAnOverflowingEventConsumerEndsWithAnOverflowErrorAndTheSessionStaysUp
+--- PASS: TestAnOverflowingEventConsumerEndsWithAnOverflowErrorAndTheSessionStaysUp (0.02s)
+=== RUN   TestAnOverflowingCallQueueAnswersTheExtraCallAndKeepsServing
+--- PASS: TestAnOverflowingCallQueueAnswersTheExtraCallAndKeepsServing (0.01s)
+=== RUN   TestAGoodbyeFromTheStationFailsPendingCallsAndEndsTheSession
+--- PASS: TestAGoodbyeFromTheStationFailsPendingCallsAndEndsTheSession (0.00s)
+=== RUN   TestAnOverflowedSubscriptionKeepsTheStationSubscribedUntilItIsClosed
+--- PASS: TestAnOverflowedSubscriptionKeepsTheStationSubscribedUntilItIsClosed (0.01s)
+=== RUN   TestAFrameThatCannotBeDecodedEndsTheSession
+--- PASS: TestAFrameThatCannotBeDecodedEndsTheSession (0.00s)
+=== RUN   TestACallOnASessionThatHasEndedReportsItWasNotSent
+--- PASS: TestACallOnASessionThatHasEndedReportsItWasNotSent (0.00s)
+=== RUN   TestACallWaitingForTheWriteLockWhenTheSessionEndsReportsItWasNotSent
+--- PASS: TestACallWaitingForTheWriteLockWhenTheSessionEndsReportsItWasNotSent (0.06s)
+=== RUN   TestALinkCallPublishesNoRPCFacts
+--- PASS: TestALinkCallPublishesNoRPCFacts (0.01s)
+=== RUN   TestAnUnroutedFrameIsCountedByType
+--- PASS: TestAnUnroutedFrameIsCountedByType (0.01s)
+=== RUN   TestAHelloAfterTheHandshakeEndsTheSession
+--- PASS: TestAHelloAfterTheHandshakeEndsTheSession (0.01s)
+=== RUN   TestClosingTheLastSubscriptionForATopicUnsubscribes
+--- PASS: TestClosingTheLastSubscriptionForATopicUnsubscribes (0.00s)
+=== RUN   TestACallThatCannotGetTheWriteLockInTimeTimesOutAndTheSessionStaysUp
+--- PASS: TestACallThatCannotGetTheWriteLockInTimeTimesOutAndTheSessionStaysUp (0.11s)
+=== RUN   TestAWriteStalledPastTheSendTimeoutEndsTheSession
+--- PASS: TestAWriteStalledPastTheSendTimeoutEndsTheSession (0.10s)
+=== RUN   TestTheReaderKeepsDeliveringWhileAWriteIsStalled
+--- PASS: TestTheReaderKeepsDeliveringWhileAWriteIsStalled (0.02s)
+=== RUN   TestACallTimingOutWhileItsFrameIsBeingWrittenReportsItMayHaveBeenSent
+--- PASS: TestACallTimingOutWhileItsFrameIsBeingWrittenReportsItMayHaveBeenSent (0.11s)
+=== RUN   TestAnInboundCallNotSignedByItsCallerIsDropped
+--- PASS: TestAnInboundCallNotSignedByItsCallerIsDropped (0.22s)
+=== RUN   TestAnUnsignedInboundCallIsDropped
+--- PASS: TestAnUnsignedInboundCallIsDropped (0.23s)
+=== RUN   TestAQueuedCallPastItsDeadlineIsStillServed
+--- PASS: TestAQueuedCallPastItsDeadlineIsStillServed (0.02s)
+=== RUN   TestASessionEndIsLoggedOnceWithItsReason
+--- PASS: TestASessionEndIsLoggedOnceWithItsReason (0.51s)
+=== RUN   TestASessionIsFoundByItsIdentityAndStation
+--- PASS: TestASessionIsFoundByItsIdentityAndStation (0.01s)
+=== RUN   TestTheNewestSessionPerIdentityAndStationWins
+--- PASS: TestTheNewestSessionPerIdentityAndStationWins (0.01s)
+=== RUN   TestClosingAnOlderSessionLeavesTheNewerOneRegistered
+--- PASS: TestClosingAnOlderSessionLeavesTheNewerOneRegistered (0.00s)
+=== RUN   TestAClosedSessionIsNoLongerFound
+--- PASS: TestAClosedSessionIsNoLongerFound (0.00s)
+=== RUN   TestASessionWhoseConnectionEndsIsNoLongerFoundForReuse
+--- PASS: TestASessionWhoseConnectionEndsIsNoLongerFoundForReuse (0.01s)
+=== RUN   TestLiveConnectSeedsFallsThroughDeadSeed
+    seeds_live_test.go:52: fell through dead seed to: [2a01:7e01::f03c:94ff:fe22:719e]:4433
+--- PASS: TestLiveConnectSeedsFallsThroughDeadSeed (5.29s)
+=== RUN   TestLiveConnectSeedsAllDeadNamesEverySeed
+--- PASS: TestLiveConnectSeedsAllDeadNamesEverySeed (10.00s)
+=== RUN   TestLiveSessionDoneFiresOnClose
+--- PASS: TestLiveSessionDoneFiresOnClose (0.29s)
+=== RUN   TestReplyToFrameAnswersACallSignedByItsCaller
+--- PASS: TestReplyToFrameAnswersACallSignedByItsCaller (0.02s)
+=== RUN   TestReplyToFrameIgnoresACallNotSignedByItsCaller
+--- PASS: TestReplyToFrameIgnoresACallNotSignedByItsCaller (0.01s)
+=== RUN   TestReplyToFrameIgnoresAnUnsignedCall
+--- PASS: TestReplyToFrameIgnoresAnUnsignedCall (0.01s)
+=== RUN   TestLiveServeOneCallGatedTimeoutReturnsSentinel
+--- PASS: TestLiveServeOneCallGatedTimeoutReturnsSentinel (3.29s)
+=== RUN   TestLiveServeForeverAnswersMultipleCallsAcrossDynamicRegistration
+    serve_forever_live_test.go:124: Call (first): connection: decode: frame: decode: claimed frame length 1952839168 exceeds the 16777215-byte cap
+--- FAIL: TestLiveServeForeverAnswersMultipleCallsAcrossDynamicRegistration (10.84s)
+=== RUN   TestBuildCallReplyOpenPolicyInvokesHandlerWithoutToken
+--- PASS: TestBuildCallReplyOpenPolicyInvokesHandlerWithoutToken (0.00s)
+=== RUN   TestBuildCallReplyGatedPolicyRejectsMissingTokenWithoutInvokingHandler
+--- PASS: TestBuildCallReplyGatedPolicyRejectsMissingTokenWithoutInvokingHandler (0.00s)
+=== RUN   TestBuildCallReplyGatedPolicyRejectsInvalidTokenWithoutInvokingHandler
+--- PASS: TestBuildCallReplyGatedPolicyRejectsInvalidTokenWithoutInvokingHandler (0.01s)
+=== RUN   TestBuildCallReplyGatedPolicyAcceptsValidTokenAndInvokesHandler
+--- PASS: TestBuildCallReplyGatedPolicyAcceptsValidTokenAndInvokesHandler (0.01s)
+=== RUN   TestServeOneCallStillOpenByDefault
+--- PASS: TestServeOneCallStillOpenByDefault (0.00s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesATokenPresentedByAnotherCaller
+--- PASS: TestBuildCallReplyGatedPolicyRefusesATokenPresentedByAnotherCaller (0.02s)
+=== RUN   TestBuildCallReplyGatedPolicyAcceptsATokenFromItsAudience
+--- PASS: TestBuildCallReplyGatedPolicyAcceptsATokenFromItsAudience (0.03s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesATokenWithoutAudience
+--- PASS: TestBuildCallReplyGatedPolicyRefusesATokenWithoutAudience (0.03s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesACallWithoutCaller
+--- PASS: TestBuildCallReplyGatedPolicyRefusesACallWithoutCaller (0.02s)
+FAIL
+FAIL	github.com/macula-io/macula-go/connection	56.205s
+=== RUN   TestLiveStationDiscoveryFindsRealStationsFromHecateStations
+    pool_discovery_live_test.go:55: discovery found linkCount=5, waiting for their handshakes to complete
+    pool_discovery_live_test.go:63: after live discovery: linkCount=5 healthyLinks=2
+--- PASS: TestLiveStationDiscoveryFindsRealStationsFromHecateStations (0.59s)
+=== RUN   TestStationDiscoveryAddsNewlyFoundStation
+--- PASS: TestStationDiscoveryAddsNewlyFoundStation (0.06s)
+=== RUN   TestStationDiscoveryDisabledByDefaultChangesNothing
+--- PASS: TestStationDiscoveryDisabledByDefaultChangesNothing (0.10s)
+=== RUN   TestStationDiscoveryRespectsMaxLinks
+--- PASS: TestStationDiscoveryRespectsMaxLinks (0.15s)
+=== RUN   TestStationDiscoveryDoesNotTearDownLinkMissingFromRefresh
+--- PASS: TestStationDiscoveryDoesNotTearDownLinkMissingFromRefresh (0.07s)
+=== RUN   TestResolveListStationsRealmSkipsDirectDialOnlyAdvertisement
+--- PASS: TestResolveListStationsRealmSkipsDirectDialOnlyAdvertisement (0.01s)
+=== RUN   TestDialTargetFromStationRowPrefersHostnameOverBareIP
+--- PASS: TestDialTargetFromStationRowPrefersHostnameOverBareIP (0.00s)
+=== RUN   TestDialTargetFromStationRowFallsBackToHostAdvertised
+--- PASS: TestDialTargetFromStationRowFallsBackToHostAdvertised (0.00s)
+=== RUN   TestAddDiscoveredLinksSkipsStationAlreadyLinkedByNodeID
+--- PASS: TestAddDiscoveredLinksSkipsStationAlreadyLinkedByNodeID (0.06s)
+=== RUN   TestAddDiscoveredLinksSkipsBareIPUnderWebPKI
+--- PASS: TestAddDiscoveredLinksSkipsBareIPUnderWebPKI (0.05s)
+=== RUN   TestWithDefaultsLinkSelectionAutoPairsWithStationDiscovery
+--- PASS: TestWithDefaultsLinkSelectionAutoPairsWithStationDiscovery (0.00s)
+=== RUN   TestWithDefaultsLinkSelectionExplicitOverridesAutoPairing
+--- PASS: TestWithDefaultsLinkSelectionExplicitOverridesAutoPairing (0.00s)
+=== RUN   TestSelectLinksFirstSuccessReturnsEveryConnectedLinkUnshuffled
+--- PASS: TestSelectLinksFirstSuccessReturnsEveryConnectedLinkUnshuffled (0.00s)
+=== RUN   TestSelectLinksRandomProducesMultipleOrderings
+--- PASS: TestSelectLinksRandomProducesMultipleOrderings (0.00s)
+=== RUN   TestCallUnderLinkSelectionRandomCanReachEveryLink
+--- PASS: TestCallUnderLinkSelectionRandomCanReachEveryLink (0.02s)
+=== RUN   TestLivePoolReconnectsAndReplaysSubscriptionAfterLinkDrop
+--- PASS: TestLivePoolReconnectsAndReplaysSubscriptionAfterLinkDrop (2.11s)
+=== RUN   TestLivePoolLivenessProbeDoesNotKillAHealthyLink
+--- PASS: TestLivePoolLivenessProbeDoesNotKillAHealthyLink (9.29s)
+=== RUN   TestDedupTableCollisionsAreByContentNotAllocation
+--- PASS: TestDedupTableCollisionsAreByContentNotAllocation (0.00s)
+=== RUN   TestDedupTableSweepRemovesOnlyStaleEntries
+--- PASS: TestDedupTableSweepRemovesOnlyStaleEntries (0.00s)
+=== RUN   TestSubscribeReplaysOntoRespawnedLink
+--- PASS: TestSubscribeReplaysOntoRespawnedLink (0.03s)
+=== RUN   TestEventDeliveredExactlyOnceDespiteDuplicateFrames
+--- PASS: TestEventDeliveredExactlyOnceDespiteDuplicateFrames (0.12s)
+=== RUN   TestAWildcardSubscriptionThroughThePoolReceivesMatchingEvents
+--- PASS: TestAWildcardSubscriptionThroughThePoolReceivesMatchingEvents (0.11s)
+=== RUN   TestAnOverflowedSubscriptionIsReplacedBeforeItIsClosed
+--- PASS: TestAnOverflowedSubscriptionIsReplacedBeforeItIsClosed (0.01s)
+=== RUN   TestPanickingHandlerDoesNotStopOtherDelivery
+--- PASS: TestPanickingHandlerDoesNotStopOtherDelivery (0.01s)
+=== RUN   TestCallFallsThroughToNextConnectedLink
+--- PASS: TestCallFallsThroughToNextConnectedLink (0.01s)
+=== RUN   TestAPoolCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherLink
+--- PASS: TestAPoolCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherLink (0.06s)
+=== RUN   TestStalledWriterRespawnsInsteadOfWedging
+--- PASS: TestStalledWriterRespawnsInsteadOfWedging (0.33s)
+=== RUN   TestConnectRejectsZeroValueIdentity
+--- PASS: TestConnectRejectsZeroValueIdentity (0.00s)
+=== RUN   TestPublishRejectsBadPayloadWithoutTouchingAnyLink
+--- PASS: TestPublishRejectsBadPayloadWithoutTouchingAnyLink (0.00s)
+=== RUN   TestCallRejectsBadPayloadWithoutTouchingAnyLink
+--- PASS: TestCallRejectsBadPayloadWithoutTouchingAnyLink (0.01s)
+=== RUN   TestOnLinkEventFiresWithAnErrorOnAFailedDial
+--- PASS: TestOnLinkEventFiresWithAnErrorOnAFailedDial (0.00s)
+=== RUN   TestOnLinkEventFiresUpOnSuccessfulConnect
+--- PASS: TestOnLinkEventFiresUpOnSuccessfulConnect (0.01s)
+=== RUN   TestLivenessProbeRespawnsAfterConsecutiveMisses
+--- PASS: TestLivenessProbeRespawnsAfterConsecutiveMisses (0.12s)
+=== RUN   TestErrorResponseIsNotGoErr
+--- PASS: TestErrorResponseIsNotGoErr (0.02s)
+PASS
+ok  	github.com/macula-io/macula-go/pool	13.353s
+=== RUN   TestCallTriesTheNextAdvertisementWhenAStationHasNoEndpoint
+--- PASS: TestCallTriesTheNextAdvertisementWhenAStationHasNoEndpoint (1.52s)
+=== RUN   TestCallRetriesWhenNoAdvertisementQualifies
+--- PASS: TestCallRetriesWhenNoAdvertisementQualifies (0.13s)
+=== RUN   TestCallTriesTheNextStationWhenADialFails
+=== RUN   TestCallTriesTheNextStationWhenADialFails/Call
+=== RUN   TestCallTriesTheNextStationWhenADialFails/CallWithUCAN
+--- PASS: TestCallTriesTheNextStationWhenADialFails (0.05s)
+    --- PASS: TestCallTriesTheNextStationWhenADialFails/Call (0.02s)
+    --- PASS: TestCallTriesTheNextStationWhenADialFails/CallWithUCAN (0.03s)
+=== RUN   TestCallNeverSendsTheRequestTwice
+--- PASS: TestCallNeverSendsTheRequestTwice (0.01s)
+=== RUN   TestCallTimeoutBoundsResolution
+--- PASS: TestCallTimeoutBoundsResolution (0.31s)
+=== RUN   TestCallTimeoutBoundsTheEndpointLookup
+--- PASS: TestCallTimeoutBoundsTheEndpointLookup (0.32s)
+=== RUN   TestOpenStreamDirectTriesTheNextStationWhenADialFails
+--- PASS: TestOpenStreamDirectTriesTheNextStationWhenADialFails (0.02s)
+=== RUN   TestOpenStreamDirectNeverOpensTheStreamTwice
+--- PASS: TestOpenStreamDirectNeverOpensTheStreamTwice (0.02s)
+=== RUN   TestGetDirectRetriesWhenNoProviderQualifies
+--- PASS: TestGetDirectRetriesWhenNoProviderQualifies (0.11s)
+=== RUN   TestGetDirectTriesTheNextProviderAfterAFailedFetch
+--- PASS: TestGetDirectTriesTheNextProviderAfterAFailedFetch (0.02s)
+=== RUN   TestGetDirectTimeoutBoundsResolution
+--- PASS: TestGetDirectTimeoutBoundsResolution (0.31s)
+=== RUN   TestPutDirectTimeoutBoundsTheEndpointLookup
+--- PASS: TestPutDirectTimeoutBoundsTheEndpointLookup (0.31s)
+=== RUN   TestCallWithCertChainTriesTheNextAdvertisementWhenAStationHasNoEndpoint
+--- PASS: TestCallWithCertChainTriesTheNextAdvertisementWhenAStationHasNoEndpoint (1.53s)
+=== RUN   TestCallWithCertChainReportsTheAuthorizationFailureAtItsDeadline
+--- PASS: TestCallWithCertChainReportsTheAuthorizationFailureAtItsDeadline (0.31s)
+=== RUN   TestResolveReturnsTheFirstStationWithAnEndpoint
+--- PASS: TestResolveReturnsTheFirstStationWithAnEndpoint (1.52s)
+=== RUN   TestResolveStationEndpointStopsAtItsDeadline
+--- PASS: TestResolveStationEndpointStopsAtItsDeadline (0.30s)
+=== RUN   TestCandidateShareSplitsTheRemainingTime
+--- PASS: TestCandidateShareSplitsTheRemainingTime (0.00s)
+=== RUN   TestCallDialsARefusingStationOncePerEndpointVersion
+--- PASS: TestCallDialsARefusingStationOncePerEndpointVersion (3.02s)
+=== RUN   TestCallTriesAnAdvertisementThatAppearsOnALaterPass
+--- PASS: TestCallTriesAnAdvertisementThatAppearsOnALaterPass (0.16s)
+=== RUN   TestResolutionBacksOffBetweenPasses
+--- PASS: TestResolutionBacksOffBetweenPasses (3.01s)
+=== RUN   TestGetDirectFetchesFromAFailingProviderOncePerAnnouncement
+--- PASS: TestGetDirectFetchesFromAFailingProviderOncePerAnnouncement (2.00s)
+=== RUN   TestCallPicksUpAnEndpointRecordThatChangesMidDeadline
+--- PASS: TestCallPicksUpAnEndpointRecordThatChangesMidDeadline (0.71s)
+=== RUN   TestCallReportsTheLastCandidateFailureWhenALaterPassFindsNone
+--- PASS: TestCallReportsTheLastCandidateFailureWhenALaterPassFindsNone (1.03s)
+=== RUN   TestCallReportsTheLastCandidateFailureWhenALaterLookupFails
+--- PASS: TestCallReportsTheLastCandidateFailureWhenALaterLookupFails (1.02s)
+=== RUN   TestGetDirectReportsTheLastCandidateFailureWhenALaterLookupFails
+--- PASS: TestGetDirectReportsTheLastCandidateFailureWhenALaterLookupFails (1.01s)
+=== RUN   TestOpenStreamDirectReusesAnOpenSessionToTheProviderStation
+--- PASS: TestOpenStreamDirectReusesAnOpenSessionToTheProviderStation (0.01s)
+=== RUN   TestGetDirectReusesAnOpenSessionToTheProviderStation
+--- PASS: TestGetDirectReusesAnOpenSessionToTheProviderStation (0.02s)
+=== RUN   TestPutDirectReusesAnOpenSessionToTheStation
+--- PASS: TestPutDirectReusesAnOpenSessionToTheStation (0.01s)
+=== RUN   TestAReusedSessionIsNeverClosedByTheRequest
+--- PASS: TestAReusedSessionIsNeverClosedByTheRequest (0.02s)
+=== RUN   TestADialedSessionIsClosedAfterTheRequestEvenWhenItFails
+--- PASS: TestADialedSessionIsClosedAfterTheRequestEvenWhenItFails (0.02s)
+=== RUN   TestCallReusesAnOpenSessionToTheProviderStation
+--- PASS: TestCallReusesAnOpenSessionToTheProviderStation (0.02s)
+=== RUN   TestADirectCallWhoseReusedSessionHasEndedDialsTheStationFresh
+--- PASS: TestADirectCallWhoseReusedSessionHasEndedDialsTheStationFresh (0.11s)
+=== RUN   TestADirectCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherCandidate
+--- PASS: TestADirectCallThatTimedOutAfterItsWriteStartedIsNotTriedOnAnotherCandidate (0.02s)
+=== RUN   TestADirectCallThatTimedOutWaitingForTheWriteLockMayTryTheNextCandidate
+--- PASS: TestADirectCallThatTimedOutWaitingForTheWriteLockMayTryTheNextCandidate (0.02s)
+=== RUN   TestADirectCallThatWasNotSentIsTriedAgainOnTheNextPass
+--- PASS: TestADirectCallThatWasNotSentIsTriedAgainOnTheNextPass (0.11s)
+=== RUN   TestCallReportsNotAdvertisedWhenALookupAnsweredBeforeLaterOnesFailed
+--- PASS: TestCallReportsNotAdvertisedWhenALookupAnsweredBeforeLaterOnesFailed (1.01s)
+=== RUN   TestGetDirectReportsNotAnnouncedWhenALookupAnsweredBeforeLaterOnesFailed
+--- PASS: TestGetDirectReportsNotAnnouncedWhenALookupAnsweredBeforeLaterOnesFailed (1.00s)
+=== RUN   TestCallReportsAFailedLookupAtItsDeadlineWhenNoCandidateWasTried
+--- PASS: TestCallReportsAFailedLookupAtItsDeadlineWhenNoCandidateWasTried (1.00s)
+=== RUN   TestGetDirectReportsAFailedLookupAtItsDeadlineWhenNoProviderWasTried
+--- PASS: TestGetDirectReportsAFailedLookupAtItsDeadlineWhenNoProviderWasTried (1.00s)
+=== RUN   TestCallReportsATimeoutWhenNoLookupWasAnsweredInTime
+--- PASS: TestCallReportsATimeoutWhenNoLookupWasAnsweredInTime (0.51s)
+=== RUN   TestGetDirectReportsATimeoutWhenNoLookupWasAnsweredInTime
+--- PASS: TestGetDirectReportsATimeoutWhenNoLookupWasAnsweredInTime (0.50s)
+=== RUN   TestCallKeepsALookupErrorWhenALaterLookupIsCutOffByTheDeadline
+--- PASS: TestCallKeepsALookupErrorWhenALaterLookupIsCutOffByTheDeadline (1.01s)
+=== RUN   TestCallRetriesAfterALookupFails
+--- PASS: TestCallRetriesAfterALookupFails (0.11s)
+=== RUN   TestGetDirectRetriesAfterALookupFails
+--- PASS: TestGetDirectRetriesAfterALookupFails (0.11s)
+=== RUN   TestPutDirectReportsNoStationEndpointWhenALookupAnsweredNotFound
+--- PASS: TestPutDirectReportsNoStationEndpointWhenALookupAnsweredNotFound (1.01s)
+=== RUN   TestPutDirectRetriesAnEndpointLookupThatFails
+--- PASS: TestPutDirectRetriesAnEndpointLookupThatFails (0.12s)
+=== RUN   TestPutDirectReportsAFailedEndpointLookupWhenEveryLookupFailed
+--- PASS: TestPutDirectReportsAFailedEndpointLookupWhenEveryLookupFailed (1.01s)
+=== RUN   TestPutDirectReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime
+--- PASS: TestPutDirectReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime (0.51s)
+=== RUN   TestPutDirectKeepsALookupErrorWhenALaterEndpointLookupIsCutOffByTheDeadline
+--- PASS: TestPutDirectKeepsALookupErrorWhenALaterEndpointLookupIsCutOffByTheDeadline (1.01s)
+=== RUN   TestCallReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime
+--- PASS: TestCallReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime (0.51s)
+=== RUN   TestPutDirectAsksAgainPastAMalformedEndpointRecord
+--- PASS: TestPutDirectAsksAgainPastAMalformedEndpointRecord (0.13s)
+=== RUN   TestPutDirectReportsAMalformedEndpointRecordAtItsDeadline
+--- PASS: TestPutDirectReportsAMalformedEndpointRecordAtItsDeadline (1.02s)
+=== RUN   TestLiveAdvertiseAndResolve
+    directdial_live_test.go:117: advertiser connected to station ccbd6269f423ab9826b31eff1b140d38beab6cb6989a6c2f8f04e9cd9e32523b via [2a01:4f8:c014:c8b3::be:1]:4433
+    directdial_live_test.go:122: published procedure_advertisement for "directdial_live_test.echo_v1" naming station ccbd6269f423ab9826b31eff1b140d38beab6cb6989a6c2f8f04e9cd9e32523b
+    directdial_live_test.go:154: resolved "directdial_live_test.echo_v1" -> station=ccbd6269f423ab9826b31eff1b140d38beab6cb6989a6c2f8f04e9cd9e32523b host=2a01:4f8:c014:c8b3::be:01 port=4433
+    directdial_live_test.go:176: Call returned a bolt4 error frame as expected past a successful resolve+dial: code=1
+--- PASS: TestLiveAdvertiseAndResolve (0.86s)
+=== RUN   TestLiveDirectDialServeRoundTrip
+    directdial_live_test.go:232: provider ccbd6269f423ab9826b31eff1b140d38beab6cb6989a6c2f8f04e9cd9e32523b advertised (plain + direct) for "directdial_live_test.serve_round_trip_v1"
+    directdial_live_test.go:260: resolved "directdial_live_test.serve_round_trip_v1" -> station=ccbd6269f423ab9826b31eff1b140d38beab6cb6989a6c2f8f04e9cd9e32523b host=2a01:4f8:c014:c8b3::be:01 port=4433
+    directdial_live_test.go:276: OBSERVED: real RESULT received through direct-dial resolve+dial+call: map(1)
+--- PASS: TestLiveDirectDialServeRoundTrip (0.72s)
+=== RUN   TestLiveResolverSessionStillConnectedAfterADirectCall
+--- PASS: TestLiveResolverSessionStillConnectedAfterADirectCall (2.78s)
+=== RUN   TestLiveDirectDialUCANGatedRoundTrip
+    directdial_live_test.go:438: provider ccbd6269f423ab9826b31eff1b140d38beab6cb6989a6c2f8f04e9cd9e32523b advertised (plain + direct) for "directdial_live_test.ucan_gated_v1", gated to issuer 6b56cc7c2561874c90318beadfbe601f79a6467d309a2890020b5b3decf0f97a
+    directdial_live_test.go:485: OBSERVED: plain Call against a gated procedure was refused by the policy, as expected
+    directdial_live_test.go:498: OBSERVED: CallWithUCAN with a token from the wrong issuer was refused, as expected
+    directdial_live_test.go:520: OBSERVED: a UCAN-gated capability, advertised only via AdvertiseDirect, was reached and answered through CallWithUCAN end to end
+--- PASS: TestLiveDirectDialUCANGatedRoundTrip (1.42s)
+=== RUN   TestLiveResolveWithCertChain
+    directdial_live_test.go:562: advertiser ccbd6269f423ab9826b31eff1b140d38beab6cb6989a6c2f8f04e9cd9e32523b published a cert-chain advertisement for "directdial_live_test.cert_chain_v1", org="acme-corp"
+    directdial_live_test.go:577: resolved+authorized "directdial_live_test.cert_chain_v1" -> station=ccbd6269f423ab9826b31eff1b140d38beab6cb6989a6c2f8f04e9cd9e32523b host=2a01:4f8:c014:c8b3::be:01 port=4433
+    directdial_live_test.go:590: OBSERVED: correct org resolves+authorizes over the real wire; wrong org is correctly rejected on the same real record
+--- PASS: TestLiveResolveWithCertChain (2.67s)
+=== RUN   TestLiveKeepAdvertisedDirectRepublishes
+    directdial_live_test.go:640: tick 1: created_at=1789157229968
+    directdial_live_test.go:644: tick 2: created_at=1789157230969
+    directdial_live_test.go:652: after cancel: created_at=1789157230969 (want unchanged from tick 2's 1789157230969)
+--- PASS: TestLiveKeepAdvertisedDirectRepublishes (5.28s)
+=== RUN   TestLiveOpenStreamDirectRoundTrip
+    stream_content_live_test.go:83: provider ccbd6269f423ab9826b31eff1b140d38beab6cb6989a6c2f8f04e9cd9e32523b advertised (plain + direct) for "directdial_live_test.stream_round_trip_v1"
+    stream_content_live_test.go:142: OBSERVED: real data received through direct-dial stream open: "hello direct-dial stream"
+--- PASS: TestLiveOpenStreamDirectRoundTrip (1.18s)
+=== RUN   TestLivePutDirectRoundTrip
+    stream_content_live_test.go:211: OBSERVED: PutDirect stored 95 bytes at station ccbd6269f423ab9826b31eff1b140d38beab6cb6989a6c2f8f04e9cd9e32523b, mcid=0155cccc4eeb0ae8b340ad305afe26ccabf508e3714e57ccc0e44ca552152e68fc0e
+    stream_content_live_test.go:229: OBSERVED: byte-exact round trip confirmed via a plain Get on the original session
+--- PASS: TestLivePutDirectRoundTrip (0.64s)
+=== RUN   TestLiveGetDirectResolvesAndVerifiesButCannotDialALeafIdentity
+    stream_content_live_test.go:293: published a self-signed content_announcement for mcid=01d35c93c6ef1a437e97da09265180b9f80b506788cd1c257c8fa4eb04576cbbecdf naming announcer 3b90fcfdbcfda0adfdb4d8bc83e860aa334fd247431b4198f19aba11827e2897
+    stream_content_live_test.go:322: OBSERVED: content_announcement published, resolved, and verified correctly: {ContentAnnouncement:{AnnouncerNode:[59 144 252 253 188 253 160 173 253 180 216 188 131 232 96 170 51 79 210 71 67 27 65 152 241 154 186 17 130 126 40 151] MCID:[1 211 92 147 198 239 26 67 126 151 218 9 38 81 128 185 248 11 80 103 136 205 28 37 124 143 164 235 4 87 108 187 236 223] Endpoint:https://nowhere-listening.invalid.example:4433 Name: Size:0 ChunkCount:0} version:[1 160 146 20 221 58 114 5 156 237 1 76 115 18 47 216]}
+    stream_content_live_test.go:328: OBSERVED (expected, documented above): GetDirect correctly failed at the dial stage, not the resolve/verify stage: directdial: dial resolved station 3b90fcfdbcfda0adfdb4d8bc83e860aa334fd247431b4198f19aba11827e2897 at nowhere-listening.invalid.example:4433: transport: dial nowhere-listening.invalid.example:4433: lookup nowhere-listening.invalid.example: no such host: context deadline exceeded
+--- PASS: TestLiveGetDirectResolvesAndVerifiesButCannotDialALeafIdentity (10.66s)
+PASS
+ok  	github.com/macula-io/macula-go/directdial	56.901s
+FAIL

@@ -1,0 +1,36 @@
+=== RUN   TestCallReportsNotAdvertisedWhenALookupAnsweredBeforeLaterOnesFailed
+--- PASS: TestCallReportsNotAdvertisedWhenALookupAnsweredBeforeLaterOnesFailed (1.04s)
+=== RUN   TestGetDirectReportsNotAnnouncedWhenALookupAnsweredBeforeLaterOnesFailed
+--- PASS: TestGetDirectReportsNotAnnouncedWhenALookupAnsweredBeforeLaterOnesFailed (1.13s)
+=== RUN   TestCallReportsAFailedLookupAtItsDeadlineWhenNoCandidateWasTried
+--- PASS: TestCallReportsAFailedLookupAtItsDeadlineWhenNoCandidateWasTried (1.08s)
+=== RUN   TestGetDirectReportsAFailedLookupAtItsDeadlineWhenNoProviderWasTried
+--- PASS: TestGetDirectReportsAFailedLookupAtItsDeadlineWhenNoProviderWasTried (1.23s)
+=== RUN   TestCallReportsATimeoutWhenNoLookupWasAnsweredInTime
+--- PASS: TestCallReportsATimeoutWhenNoLookupWasAnsweredInTime (0.53s)
+=== RUN   TestGetDirectReportsATimeoutWhenNoLookupWasAnsweredInTime
+--- PASS: TestGetDirectReportsATimeoutWhenNoLookupWasAnsweredInTime (0.52s)
+=== RUN   TestCallKeepsALookupErrorWhenALaterLookupIsCutOffByTheDeadline
+--- PASS: TestCallKeepsALookupErrorWhenALaterLookupIsCutOffByTheDeadline (1.07s)
+=== RUN   TestCallRetriesAfterALookupFails
+--- PASS: TestCallRetriesAfterALookupFails (0.32s)
+=== RUN   TestGetDirectRetriesAfterALookupFails
+--- PASS: TestGetDirectRetriesAfterALookupFails (0.35s)
+=== RUN   TestPutDirectReportsNoStationEndpointWhenALookupAnsweredNotFound
+--- PASS: TestPutDirectReportsNoStationEndpointWhenALookupAnsweredNotFound (1.12s)
+=== RUN   TestPutDirectRetriesAnEndpointLookupThatFails
+--- PASS: TestPutDirectRetriesAnEndpointLookupThatFails (0.25s)
+=== RUN   TestPutDirectReportsAFailedEndpointLookupWhenEveryLookupFailed
+--- PASS: TestPutDirectReportsAFailedEndpointLookupWhenEveryLookupFailed (1.26s)
+=== RUN   TestPutDirectReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime
+--- PASS: TestPutDirectReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime (0.78s)
+=== RUN   TestPutDirectKeepsALookupErrorWhenALaterEndpointLookupIsCutOffByTheDeadline
+--- PASS: TestPutDirectKeepsALookupErrorWhenALaterEndpointLookupIsCutOffByTheDeadline (1.18s)
+=== RUN   TestCallReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime
+--- PASS: TestCallReportsATimeoutWhenNoEndpointLookupWasAnsweredInTime (0.57s)
+=== RUN   TestPutDirectAsksAgainPastAMalformedEndpointRecord
+--- PASS: TestPutDirectAsksAgainPastAMalformedEndpointRecord (0.22s)
+=== RUN   TestPutDirectReportsAMalformedEndpointRecordAtItsDeadline
+--- PASS: TestPutDirectReportsAMalformedEndpointRecordAtItsDeadline (1.08s)
+PASS
+ok  	github.com/macula-io/macula-go/directdial	14.758s

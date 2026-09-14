@@ -1,0 +1,48 @@
+=== RUN   TestCallTriesTheNextAdvertisementWhenAStationHasNoEndpoint
+    candidates_test.go:242: Call: directdial: resolve candidates_test.echo_v1: directdial: resolved station published no reachable station_endpoint
+--- FAIL: TestCallTriesTheNextAdvertisementWhenAStationHasNoEndpoint (5.04s)
+=== RUN   TestCallRetriesWhenNoAdvertisementQualifies
+    candidates_test.go:263: Call: directdial: resolve candidates_test.echo_v1: directdial: every candidate advertisement failed signature verification
+--- FAIL: TestCallRetriesWhenNoAdvertisementQualifies (0.02s)
+=== RUN   TestCallTriesTheNextStationWhenADialFails
+=== RUN   TestCallTriesTheNextStationWhenADialFails/Call
+    candidates_test.go:295: Call: test: dial failed
+=== RUN   TestCallTriesTheNextStationWhenADialFails/CallWithUCAN
+    candidates_test.go:295: CallWithUCAN: test: dial failed
+--- FAIL: TestCallTriesTheNextStationWhenADialFails (0.05s)
+    --- FAIL: TestCallTriesTheNextStationWhenADialFails/Call (0.01s)
+    --- FAIL: TestCallTriesTheNextStationWhenADialFails/CallWithUCAN (0.04s)
+=== RUN   TestCallNeverSendsTheRequestTwice
+--- PASS: TestCallNeverSendsTheRequestTwice (0.02s)
+=== RUN   TestCallTimeoutBoundsResolution
+    candidates_test.go:336: Call returned after 5.013880742s, want within its 300 ms timeout
+--- FAIL: TestCallTimeoutBoundsResolution (5.01s)
+=== RUN   TestCallTimeoutBoundsTheEndpointLookup
+    candidates_test.go:354: Call returned after 5.010400805s, want within its 300 ms timeout
+--- FAIL: TestCallTimeoutBoundsTheEndpointLookup (5.02s)
+=== RUN   TestOpenStreamDirectTriesTheNextStationWhenADialFails
+    candidates_test.go:373: OpenStreamDirect = (<nil>, test: dial failed), want a stream at b.test
+--- FAIL: TestOpenStreamDirectTriesTheNextStationWhenADialFails (0.01s)
+=== RUN   TestOpenStreamDirectNeverOpensTheStreamTwice
+--- PASS: TestOpenStreamDirectNeverOpensTheStreamTwice (0.02s)
+=== RUN   TestGetDirectRetriesWhenNoProviderQualifies
+    candidates_test.go:432: GetDirect = ("", directdial: content has no verifiable announcement in the DHT), want the content from p.test
+--- FAIL: TestGetDirectRetriesWhenNoProviderQualifies (0.02s)
+=== RUN   TestGetDirectTriesTheNextProviderAfterAFailedFetch
+    candidates_test.go:452: GetDirect = ("", test: content failed verification), want the content from b.test
+--- FAIL: TestGetDirectTriesTheNextProviderAfterAFailedFetch (0.01s)
+=== RUN   TestGetDirectTimeoutBoundsResolution
+    candidates_test.go:470: GetDirect error = directdial: content has no verifiable announcement in the DHT, want one wrapping context.DeadlineExceeded
+--- FAIL: TestGetDirectTimeoutBoundsResolution (0.00s)
+=== RUN   TestPutDirectTimeoutBoundsTheEndpointLookup
+    candidates_test.go:482: PutDirect returned after 5.018753451s, want within its 300 ms timeout
+--- FAIL: TestPutDirectTimeoutBoundsTheEndpointLookup (5.02s)
+=== RUN   TestCallWithCertChainTriesTheNextAdvertisementWhenAStationHasNoEndpoint
+    candidates_test.go:515: CallWithCertChain: directdial: resolve candidates_test.echo_v1: directdial: resolved station published no reachable station_endpoint
+--- FAIL: TestCallWithCertChainTriesTheNextAdvertisementWhenAStationHasNoEndpoint (5.04s)
+=== RUN   TestCallWithCertChainReportsTheAuthorizationFailureAtItsDeadline
+    candidates_test.go:540: CallWithCertChain error = directdial: resolve candidates_test.echo_v1: directdial: no candidate advertisement is cert-chain-authorized for the expected org: dht: leaf cert organization does not match the expected org, want ErrNoAuthorizedAdvertisement wrapped with context.DeadlineExceeded
+--- FAIL: TestCallWithCertChainReportsTheAuthorizationFailureAtItsDeadline (0.02s)
+FAIL
+FAIL	github.com/macula-io/macula-go/directdial	25.307s
+FAIL

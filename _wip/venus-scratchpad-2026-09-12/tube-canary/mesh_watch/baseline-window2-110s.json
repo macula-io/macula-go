@@ -1,0 +1,54 @@
+{
+ "tool_use_id": "toolu_01WnHAFavubagdPhABM1uMAD",
+ "input": {
+  "topic": "io.macula/tube-commons/tube/*",
+  "realm": "abb81b5a614b63551b400b810648c0c8a78efad845442630c94b46cc95d2fcd1",
+  "duration_seconds": 110
+ },
+ "called_at": "2026-09-11T00:11:49.340Z",
+ "returned_at": "2026-09-11T00:13:43.212Z",
+ "result": {
+  "topic": "io.macula/tube-commons/tube/*",
+  "event_count": 2,
+  "events": [
+   {
+    "topic": "io.macula/tube-commons/tube/*",
+    "publisher": "e3adb8be0c406e959a3a72e36502e57aecaa696c7d1e1fc8c31873f67874e090",
+    "seq": 1788389285743501,
+    "payload": {
+     "action": "0x686561727462656174",
+     "announced_at": 1789085557265,
+     "channel_id": "0x6368616e6e656c2d3031613034373137616365323764316661343161656434333064306563373061",
+     "description": "0x41204368616e6e656c20666f7220616c6c206b696e6473206f6620766964656f73",
+     "logo_mcid": "0x0155cc0e7ab55e34977d4397cc26e68cfd6236387f72406f0acbebbad7490eed4c5a",
+     "name": "0x546865204245414d204368616e6e656c",
+     "owner": "0x4265616d6f6c6f67697374",
+     "published_clip_count": 3,
+     "tags": [
+      "0x4245414d",
+      "0x66756e6e79"
+     ]
+    }
+   },
+   {
+    "topic": "io.macula/tube-commons/tube/*",
+    "publisher": "e3adb8be0c406e959a3a72e36502e57aecaa696c7d1e1fc8c31873f67874e090",
+    "seq": 1788389285743504,
+    "payload": {
+     "action": "0x686561727462656174",
+     "announced_at": 1789085617268,
+     "channel_id": "0x6368616e6e656c2d3031613034373137616365323764316661343161656434333064306563373061",
+     "description": "0x41204368616e6e656c20666f7220616c6c206b696e6473206f6620766964656f73",
+     "logo_mcid": "0x0155cc0e7ab55e34977d4397cc26e68cfd6236387f72406f0acbebbad7490eed4c5a",
+     "name": "0x546865204245414d204368616e6e656c",
+     "owner": "0x4265616d6f6c6f67697374",
+     "published_clip_count": 3,
+     "tags": [
+      "0x4245414d",
+      "0x66756e6e79"
+     ]
+    }
+   }
+  ]
+ }
+}

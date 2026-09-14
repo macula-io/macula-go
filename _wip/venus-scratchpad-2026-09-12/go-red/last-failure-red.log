@@ -1,0 +1,12 @@
+=== RUN   TestCallReportsTheLastCandidateFailureWhenALaterPassFindsNone
+    candidates_test.go:751: Call error = directdial: candidates_test.echo_v1: directdial: procedure has no direct-dial advertisement in the DHT: context deadline exceeded, want a.test's dial failure rather than ErrProcedureNotAdvertised
+--- FAIL: TestCallReportsTheLastCandidateFailureWhenALaterPassFindsNone (1.02s)
+=== RUN   TestCallReportsTheLastCandidateFailureWhenALaterLookupFails
+    candidates_test.go:767: Call error = directdial: candidates_test.echo_v1: test: dht connection lost: context deadline exceeded, want a.test's dial failure rather than the failed lookup
+--- FAIL: TestCallReportsTheLastCandidateFailureWhenALaterLookupFails (1.02s)
+=== RUN   TestGetDirectReportsTheLastCandidateFailureWhenALaterLookupFails
+    candidates_test.go:785: GetDirect error = directdial: find content providers: test: dht connection lost: context deadline exceeded, want a.test's failed fetch rather than the failed lookup
+--- FAIL: TestGetDirectReportsTheLastCandidateFailureWhenALaterLookupFails (1.03s)
+FAIL
+FAIL	github.com/macula-io/macula-go/directdial	3.067s
+FAIL

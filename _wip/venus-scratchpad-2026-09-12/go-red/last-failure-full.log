@@ -1,0 +1,17 @@
+?   	github.com/macula-io/macula-go/bolt4	[no test files]
+ok  	github.com/macula-io/macula-go/cbor	0.069s
+ok  	github.com/macula-io/macula-go/connection	1.247s
+?   	github.com/macula-io/macula-go/content	[no test files]
+ok  	github.com/macula-io/macula-go/dht	0.301s
+ok  	github.com/macula-io/macula-go/directdial	19.021s
+?   	github.com/macula-io/macula-go/examples/certchain	[no test files]
+?   	github.com/macula-io/macula-go/examples/directdial	[no test files]
+?   	github.com/macula-io/macula-go/examples/quickstart	[no test files]
+?   	github.com/macula-io/macula-go/examples/ucan	[no test files]
+ok  	github.com/macula-io/macula-go/frame	0.035s
+ok  	github.com/macula-io/macula-go/identity	0.062s
+ok  	github.com/macula-io/macula-go/manifest	0.009s
+ok  	github.com/macula-io/macula-go/pool	1.033s
+?   	github.com/macula-io/macula-go/stream	[no test files]
+?   	github.com/macula-io/macula-go/transport	[no test files]
+ok  	github.com/macula-io/macula-go/ucan	0.188s

@@ -1,0 +1,144 @@
+=== RUN   TestSendFrameIsBoundedByWriteDeadline
+    close_bounded_test.go:143: write blocked on flow control and failed after 1.000633505s, as expected: deadline exceeded
+--- PASS: TestSendFrameIsBoundedByWriteDeadline (1.01s)
+=== RUN   TestConcurrentSendFramesAreWrittenWhole
+--- PASS: TestConcurrentSendFramesAreWrittenWhole (0.00s)
+=== RUN   TestRecvFrame_FinalChunkWithEOF
+--- PASS: TestRecvFrame_FinalChunkWithEOF (0.00s)
+=== RUN   TestRecvFrame_GenuineEOFBeforeCompleteFrame
+--- PASS: TestRecvFrame_GenuineEOFBeforeCompleteFrame (0.00s)
+=== RUN   TestADialedSessionStaysOpenUntilItsLastLeaseIsReleased
+--- PASS: TestADialedSessionStaysOpenUntilItsLastLeaseIsReleased (0.00s)
+=== RUN   TestASessionThatIsClosingIsNotReused
+--- PASS: TestASessionThatIsClosingIsNotReused (0.01s)
+=== RUN   TestAnApplicationSessionIsNeverClosedByALease
+--- PASS: TestAnApplicationSessionIsNeverClosedByALease (0.00s)
+=== RUN   TestReleasingALeaseTwiceReleasesItOnce
+--- PASS: TestReleasingALeaseTwiceReleasesItOnce (0.00s)
+=== RUN   TestLiveHandshakeAgainstRealStation
+    live_test.go:75: connected: remote=[2a01:7e01::f03c:94ff:fe22:719e]:4433 station_id=808d48be8780338f9739b96b17a09c086caea2fdac878b28e8b89fc8d72592a6 accepted=true capabilities=1 negotiated=1
+--- PASS: TestLiveHandshakeAgainstRealStation (0.32s)
+=== RUN   TestLiveCallRoundTrip
+    live_test.go:118: OBSERVED: got an ERROR (expected for a nonexistent procedure): code=1 name=unknown_next_peer reported_by=808d48be8780338f9739b96b17a09c086caea2fdac878b28e8b89fc8d72592a6 detail=<nil>
+--- PASS: TestLiveCallRoundTrip (0.30s)
+=== RUN   TestLivePubSubRoundTrip
+    live_test.go:168: OBSERVED: received our own EVENT back — topic=macula-go.test.36344226b5220cf2 seq=1 delivered_via=direct payload="hello from macula-go"
+--- PASS: TestLivePubSubRoundTrip (0.31s)
+=== RUN   TestLivePublishSurvivesImmediateClose
+--- PASS: TestLivePublishSurvivesImmediateClose (1.09s)
+=== RUN   TestLiveUnaryCallProviderRoundTrip
+    live_test.go:343: OBSERVED: provider served the inbound CALL for procedure=macula_go_sdk.test_add.9a1bcc686668987b, caller got RESULT payload=7
+--- PASS: TestLiveUnaryCallProviderRoundTrip (1.10s)
+=== RUN   TestLiveUnaryCallProviderReportsUnknownNextPeerOnLookupMiss
+    live_test.go:403: OBSERVED: lookup miss correctly reported as ERROR code=1 name=unknown_next_peer
+--- PASS: TestLiveUnaryCallProviderReportsUnknownNextPeerOnLookupMiss (1.12s)
+=== RUN   TestLiveKeepAdvertisedStaysCallableAcrossTicks
+    live_test.go:489: OBSERVED: procedure answered a real call after two KeepAdvertised ticks
+    live_test.go:494: OBSERVED: KeepAdvertised returned promptly after cancel()
+--- PASS: TestLiveKeepAdvertisedStaysCallableAcrossTicks (2.81s)
+=== RUN   TestLiveRunSubscriberAndRunPublisher
+    live_test.go:591: OBSERVED: RunPublisher onDone fired with a clean outcome
+    live_test.go:604: OBSERVED: RunSubscriber's handler received the real EVENT
+    live_test.go:628: OBSERVED: a real pubsub.publish_completed_v1 fact landed with outcome=completed
+    live_test.go:636: OBSERVED: RunSubscriber returned promptly after cancel()
+--- PASS: TestLiveRunSubscriberAndRunPublisher (3.39s)
+=== RUN   TestLiveRPCTelemetryFacts
+    live_test.go:849: OBSERVED: RPC telemetry facts correlate correctly through an independent watcher -- caller request_id=782530c023abc48ae5984080ae233350 (sent+completed, outcome=completed), provider request_id=54ce63949785623408825bee5c33e88a (received+replied, outcome=replied)
+--- PASS: TestLiveRPCTelemetryFacts (8.07s)
+=== RUN   TestConcurrentCallsOnOneSessionEachGetTheirOwnReply
+--- PASS: TestConcurrentCallsOnOneSessionEachGetTheirOwnReply (0.01s)
+=== RUN   TestAnEventArrivingDuringACallReachesItsSubscriber
+--- PASS: TestAnEventArrivingDuringACallReachesItsSubscriber (0.01s)
+=== RUN   TestServingACallWhileCallingOnTheSameSession
+--- PASS: TestServingACallWhileCallingOnTheSameSession (0.01s)
+=== RUN   TestTwoSubscribersWithDifferentTopicsEachGetOnlyTheirEvents
+--- PASS: TestTwoSubscribersWithDifferentTopicsEachGetOnlyTheirEvents (0.10s)
+=== RUN   TestAWildcardSubscriptionMatchesExactlyOneSegment
+--- PASS: TestAWildcardSubscriptionMatchesExactlyOneSegment (0.10s)
+=== RUN   TestAStalledEventConsumerDoesNotStallCallReplies
+--- PASS: TestAStalledEventConsumerDoesNotStallCallReplies (0.01s)
+=== RUN   TestAnOverflowingEventConsumerEndsWithAnOverflowErrorAndTheSessionStaysUp
+--- PASS: TestAnOverflowingEventConsumerEndsWithAnOverflowErrorAndTheSessionStaysUp (0.01s)
+=== RUN   TestAnOverflowingCallQueueAnswersTheExtraCallAndKeepsServing
+--- PASS: TestAnOverflowingCallQueueAnswersTheExtraCallAndKeepsServing (0.01s)
+=== RUN   TestAGoodbyeFromTheStationFailsPendingCallsAndEndsTheSession
+--- PASS: TestAGoodbyeFromTheStationFailsPendingCallsAndEndsTheSession (0.00s)
+=== RUN   TestAnOverflowedSubscriptionKeepsTheStationSubscribedUntilItIsClosed
+--- PASS: TestAnOverflowedSubscriptionKeepsTheStationSubscribedUntilItIsClosed (0.01s)
+=== RUN   TestAFrameThatCannotBeDecodedEndsTheSession
+--- PASS: TestAFrameThatCannotBeDecodedEndsTheSession (0.00s)
+=== RUN   TestACallOnASessionThatHasEndedReportsItWasNotSent
+--- PASS: TestACallOnASessionThatHasEndedReportsItWasNotSent (0.00s)
+=== RUN   TestACallWaitingForTheWriteLockWhenTheSessionEndsReportsItWasNotSent
+--- PASS: TestACallWaitingForTheWriteLockWhenTheSessionEndsReportsItWasNotSent (0.05s)
+=== RUN   TestALinkCallPublishesNoRPCFacts
+--- PASS: TestALinkCallPublishesNoRPCFacts (0.01s)
+=== RUN   TestAnUnroutedFrameIsCountedByType
+--- PASS: TestAnUnroutedFrameIsCountedByType (0.00s)
+=== RUN   TestAHelloAfterTheHandshakeEndsTheSession
+--- PASS: TestAHelloAfterTheHandshakeEndsTheSession (0.01s)
+=== RUN   TestClosingTheLastSubscriptionForATopicUnsubscribes
+--- PASS: TestClosingTheLastSubscriptionForATopicUnsubscribes (0.00s)
+=== RUN   TestACallThatCannotGetTheWriteLockInTimeTimesOutAndTheSessionStaysUp
+--- PASS: TestACallThatCannotGetTheWriteLockInTimeTimesOutAndTheSessionStaysUp (0.11s)
+=== RUN   TestAWriteStalledPastTheSendTimeoutEndsTheSession
+--- PASS: TestAWriteStalledPastTheSendTimeoutEndsTheSession (0.11s)
+=== RUN   TestTheReaderKeepsDeliveringWhileAWriteIsStalled
+--- PASS: TestTheReaderKeepsDeliveringWhileAWriteIsStalled (0.02s)
+=== RUN   TestACallTimingOutWhileItsFrameIsBeingWrittenReportsItMayHaveBeenSent
+--- PASS: TestACallTimingOutWhileItsFrameIsBeingWrittenReportsItMayHaveBeenSent (0.12s)
+=== RUN   TestAnInboundCallNotSignedByItsCallerIsDropped
+--- PASS: TestAnInboundCallNotSignedByItsCallerIsDropped (0.22s)
+=== RUN   TestAnUnsignedInboundCallIsDropped
+--- PASS: TestAnUnsignedInboundCallIsDropped (0.21s)
+=== RUN   TestAQueuedCallPastItsDeadlineIsStillServed
+--- PASS: TestAQueuedCallPastItsDeadlineIsStillServed (0.01s)
+=== RUN   TestASessionEndIsLoggedOnceWithItsReason
+--- PASS: TestASessionEndIsLoggedOnceWithItsReason (0.52s)
+=== RUN   TestASessionIsFoundByItsIdentityAndStation
+--- PASS: TestASessionIsFoundByItsIdentityAndStation (0.00s)
+=== RUN   TestTheNewestSessionPerIdentityAndStationWins
+--- PASS: TestTheNewestSessionPerIdentityAndStationWins (0.00s)
+=== RUN   TestClosingAnOlderSessionLeavesTheNewerOneRegistered
+--- PASS: TestClosingAnOlderSessionLeavesTheNewerOneRegistered (0.01s)
+=== RUN   TestAClosedSessionIsNoLongerFound
+--- PASS: TestAClosedSessionIsNoLongerFound (0.00s)
+=== RUN   TestASessionWhoseConnectionEndsIsNoLongerFoundForReuse
+--- PASS: TestASessionWhoseConnectionEndsIsNoLongerFoundForReuse (0.01s)
+=== RUN   TestLiveConnectSeedsFallsThroughDeadSeed
+    seeds_live_test.go:52: fell through dead seed to: [2a01:7e01::f03c:94ff:fe22:719e]:4433
+--- PASS: TestLiveConnectSeedsFallsThroughDeadSeed (5.30s)
+=== RUN   TestLiveConnectSeedsAllDeadNamesEverySeed
+--- PASS: TestLiveConnectSeedsAllDeadNamesEverySeed (10.00s)
+=== RUN   TestLiveSessionDoneFiresOnClose
+--- PASS: TestLiveSessionDoneFiresOnClose (0.28s)
+=== RUN   TestReplyToFrameAnswersACallSignedByItsCaller
+--- PASS: TestReplyToFrameAnswersACallSignedByItsCaller (0.01s)
+=== RUN   TestReplyToFrameIgnoresACallNotSignedByItsCaller
+--- PASS: TestReplyToFrameIgnoresACallNotSignedByItsCaller (0.01s)
+=== RUN   TestReplyToFrameIgnoresAnUnsignedCall
+--- PASS: TestReplyToFrameIgnoresAnUnsignedCall (0.01s)
+=== RUN   TestLiveServeOneCallGatedTimeoutReturnsSentinel
+--- PASS: TestLiveServeOneCallGatedTimeoutReturnsSentinel (3.29s)
+=== RUN   TestLiveServeForeverAnswersMultipleCallsAcrossDynamicRegistration
+--- PASS: TestLiveServeForeverAnswersMultipleCallsAcrossDynamicRegistration (3.62s)
+=== RUN   TestBuildCallReplyOpenPolicyInvokesHandlerWithoutToken
+--- PASS: TestBuildCallReplyOpenPolicyInvokesHandlerWithoutToken (0.00s)
+=== RUN   TestBuildCallReplyGatedPolicyRejectsMissingTokenWithoutInvokingHandler
+--- PASS: TestBuildCallReplyGatedPolicyRejectsMissingTokenWithoutInvokingHandler (0.01s)
+=== RUN   TestBuildCallReplyGatedPolicyRejectsInvalidTokenWithoutInvokingHandler
+--- PASS: TestBuildCallReplyGatedPolicyRejectsInvalidTokenWithoutInvokingHandler (0.01s)
+=== RUN   TestBuildCallReplyGatedPolicyAcceptsValidTokenAndInvokesHandler
+--- PASS: TestBuildCallReplyGatedPolicyAcceptsValidTokenAndInvokesHandler (0.00s)
+=== RUN   TestServeOneCallStillOpenByDefault
+--- PASS: TestServeOneCallStillOpenByDefault (0.00s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesATokenPresentedByAnotherCaller
+--- PASS: TestBuildCallReplyGatedPolicyRefusesATokenPresentedByAnotherCaller (0.01s)
+=== RUN   TestBuildCallReplyGatedPolicyAcceptsATokenFromItsAudience
+--- PASS: TestBuildCallReplyGatedPolicyAcceptsATokenFromItsAudience (0.01s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesATokenWithoutAudience
+--- PASS: TestBuildCallReplyGatedPolicyRefusesATokenWithoutAudience (0.01s)
+=== RUN   TestBuildCallReplyGatedPolicyRefusesACallWithoutCaller
+--- PASS: TestBuildCallReplyGatedPolicyRefusesACallWithoutCaller (0.01s)
+PASS
+ok  	github.com/macula-io/macula-go/connection	43.844s

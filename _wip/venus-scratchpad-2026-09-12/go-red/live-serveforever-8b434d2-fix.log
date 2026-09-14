@@ -1,0 +1,4 @@
+=== RUN   TestLiveServeForeverAnswersMultipleCallsAcrossDynamicRegistration
+--- PASS: TestLiveServeForeverAnswersMultipleCallsAcrossDynamicRegistration (3.67s)
+PASS
+ok  	github.com/macula-io/macula-go/connection	3.678s

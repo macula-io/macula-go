@@ -1,0 +1,705 @@
+=== RUN   TestDepthProbe
+runtime: goroutine stack exceeds 1000000000-byte limit
+runtime: sp=0x2b06dcf60970 stack=[0x2b06dcf60000, 0x2b06fcf60000]
+fatal error: stack overflow
+
+runtime stack:
+runtime.throw({0x575b38?, 0xd7d80?})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/panic.go:1243 +0x48 fp=0x7fde1f7fdc60 sp=0x7fde1f7fdc30 pc=0x488308
+runtime.newstack()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/stack.go:1207 +0x5dd fp=0x7fde1f7fdd90 sp=0x7fde1f7fdc60 pc=0x468e7d
+runtime.morestack()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:650 +0x7b fp=0x7fde1f7fdd98 sp=0x7fde1f7fdd90 pc=0x48d15b
+
+goroutine 21 gp=0x2b06bc984d20 m=10 mp=0x2b06bcd62008 [running]:
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e649?, 0xa5bfc, 0xa5bfc})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:18 +0x1a34 fp=0x2b06dcf60980 sp=0x2b06dcf60978 pc=0x54a2b4
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e648?, 0xa5bfd, 0xa5bfd})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf61008 sp=0x2b06dcf60980 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e647?, 0xa5bfe, 0xa5bfe})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf61690 sp=0x2b06dcf61008 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e646?, 0xa5bff, 0xa5bff})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf61d18 sp=0x2b06dcf61690 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e645?, 0xa5c00, 0xa5c00})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf623a0 sp=0x2b06dcf61d18 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e644?, 0xa5c01, 0xa5c01})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf62a28 sp=0x2b06dcf623a0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e643?, 0xa5c02, 0xa5c02})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf630b0 sp=0x2b06dcf62a28 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e642?, 0xa5c03, 0xa5c03})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf63738 sp=0x2b06dcf630b0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e641?, 0xa5c04, 0xa5c04})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf63dc0 sp=0x2b06dcf63738 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e640?, 0xa5c05, 0xa5c05})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf64448 sp=0x2b06dcf63dc0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e63f?, 0xa5c06, 0xa5c06})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf64ad0 sp=0x2b06dcf64448 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e63e?, 0xa5c07, 0xa5c07})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf65158 sp=0x2b06dcf64ad0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e63d?, 0xa5c08, 0xa5c08})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf657e0 sp=0x2b06dcf65158 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e63c?, 0xa5c09, 0xa5c09})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf65e68 sp=0x2b06dcf657e0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e63b?, 0xa5c0a, 0xa5c0a})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf664f0 sp=0x2b06dcf65e68 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e63a?, 0xa5c0b, 0xa5c0b})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf66b78 sp=0x2b06dcf664f0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e639?, 0xa5c0c, 0xa5c0c})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf67200 sp=0x2b06dcf66b78 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e638?, 0xa5c0d, 0xa5c0d})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf67888 sp=0x2b06dcf67200 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e637?, 0xa5c0e, 0xa5c0e})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf67f10 sp=0x2b06dcf67888 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e636?, 0xa5c0f, 0xa5c0f})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf68598 sp=0x2b06dcf67f10 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e635?, 0xa5c10, 0xa5c10})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf68c20 sp=0x2b06dcf68598 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e634?, 0xa5c11, 0xa5c11})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf692a8 sp=0x2b06dcf68c20 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e633?, 0xa5c12, 0xa5c12})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf69930 sp=0x2b06dcf692a8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e632?, 0xa5c13, 0xa5c13})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf69fb8 sp=0x2b06dcf69930 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e631?, 0xa5c14, 0xa5c14})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6a640 sp=0x2b06dcf69fb8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e630?, 0xa5c15, 0xa5c15})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6acc8 sp=0x2b06dcf6a640 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e62f?, 0xa5c16, 0xa5c16})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6b350 sp=0x2b06dcf6acc8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e62e?, 0xa5c17, 0xa5c17})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6b9d8 sp=0x2b06dcf6b350 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e62d?, 0xa5c18, 0xa5c18})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6c060 sp=0x2b06dcf6b9d8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e62c?, 0xa5c19, 0xa5c19})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6c6e8 sp=0x2b06dcf6c060 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e62b?, 0xa5c1a, 0xa5c1a})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6cd70 sp=0x2b06dcf6c6e8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e62a?, 0xa5c1b, 0xa5c1b})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6d3f8 sp=0x2b06dcf6cd70 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e629?, 0xa5c1c, 0xa5c1c})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6da80 sp=0x2b06dcf6d3f8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e628?, 0xa5c1d, 0xa5c1d})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6e108 sp=0x2b06dcf6da80 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e627?, 0xa5c1e, 0xa5c1e})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6e790 sp=0x2b06dcf6e108 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e626?, 0xa5c1f, 0xa5c1f})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6ee18 sp=0x2b06dcf6e790 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e625?, 0xa5c20, 0xa5c20})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6f4a0 sp=0x2b06dcf6ee18 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e624?, 0xa5c21, 0xa5c21})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf6fb28 sp=0x2b06dcf6f4a0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e623?, 0xa5c22, 0xa5c22})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf701b0 sp=0x2b06dcf6fb28 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e622?, 0xa5c23, 0xa5c23})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf70838 sp=0x2b06dcf701b0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e621?, 0xa5c24, 0xa5c24})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf70ec0 sp=0x2b06dcf70838 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e620?, 0xa5c25, 0xa5c25})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf71548 sp=0x2b06dcf70ec0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e61f?, 0xa5c26, 0xa5c26})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf71bd0 sp=0x2b06dcf71548 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e61e?, 0xa5c27, 0xa5c27})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf72258 sp=0x2b06dcf71bd0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e61d?, 0xa5c28, 0xa5c28})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf728e0 sp=0x2b06dcf72258 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e61c?, 0xa5c29, 0xa5c29})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf72f68 sp=0x2b06dcf728e0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e61b?, 0xa5c2a, 0xa5c2a})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf735f0 sp=0x2b06dcf72f68 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e61a?, 0xa5c2b, 0xa5c2b})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf73c78 sp=0x2b06dcf735f0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e619?, 0xa5c2c, 0xa5c2c})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf74300 sp=0x2b06dcf73c78 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc8e618?, 0xa5c2d, 0xa5c2d})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06dcf74988 sp=0x2b06dcf74300 pc=0x549f8e
+...321000 frames elided...
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4002f?, 0xf4216, 0xf4216})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf4e350 sp=0x2b06fcf4dcc8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4002e?, 0xf4217, 0xf4217})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf4e9d8 sp=0x2b06fcf4e350 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4002d?, 0xf4218, 0xf4218})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf4f060 sp=0x2b06fcf4e9d8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4002c?, 0xf4219, 0xf4219})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf4f6e8 sp=0x2b06fcf4f060 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4002b?, 0xf421a, 0xf421a})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf4fd70 sp=0x2b06fcf4f6e8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4002a?, 0xf421b, 0xf421b})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf503f8 sp=0x2b06fcf4fd70 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40029?, 0xf421c, 0xf421c})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf50a80 sp=0x2b06fcf503f8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40028?, 0xf421d, 0xf421d})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf51108 sp=0x2b06fcf50a80 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40027?, 0xf421e, 0xf421e})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf51790 sp=0x2b06fcf51108 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40026?, 0xf421f, 0xf421f})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf51e18 sp=0x2b06fcf51790 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40025?, 0xf4220, 0xf4220})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf524a0 sp=0x2b06fcf51e18 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40024?, 0xf4221, 0xf4221})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf52b28 sp=0x2b06fcf524a0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40023?, 0xf4222, 0xf4222})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf531b0 sp=0x2b06fcf52b28 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40022?, 0xf4223, 0xf4223})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf53838 sp=0x2b06fcf531b0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40021?, 0xf4224, 0xf4224})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf53ec0 sp=0x2b06fcf53838 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40020?, 0xf4225, 0xf4225})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf54548 sp=0x2b06fcf53ec0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4001f?, 0xf4226, 0xf4226})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf54bd0 sp=0x2b06fcf54548 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4001e?, 0xf4227, 0xf4227})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf55258 sp=0x2b06fcf54bd0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4001d?, 0xf4228, 0xf4228})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf558e0 sp=0x2b06fcf55258 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4001c?, 0xf4229, 0xf4229})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf55f68 sp=0x2b06fcf558e0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4001b?, 0xf422a, 0xf422a})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf565f0 sp=0x2b06fcf55f68 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4001a?, 0xf422b, 0xf422b})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf56c78 sp=0x2b06fcf565f0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40019?, 0xf422c, 0xf422c})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf57300 sp=0x2b06fcf56c78 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40018?, 0xf422d, 0xf422d})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf57988 sp=0x2b06fcf57300 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40017?, 0xf422e, 0xf422e})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf58010 sp=0x2b06fcf57988 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40016?, 0xf422f, 0xf422f})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf58698 sp=0x2b06fcf58010 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40015?, 0xf4230, 0xf4230})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf58d20 sp=0x2b06fcf58698 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40014?, 0xf4231, 0xf4231})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf593a8 sp=0x2b06fcf58d20 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40013?, 0xf4232, 0xf4232})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf59a30 sp=0x2b06fcf593a8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40012?, 0xf4233, 0xf4233})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5a0b8 sp=0x2b06fcf59a30 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40011?, 0xf4234, 0xf4234})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5a740 sp=0x2b06fcf5a0b8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40010?, 0xf4235, 0xf4235})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5adc8 sp=0x2b06fcf5a740 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4000f?, 0xf4236, 0xf4236})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5b450 sp=0x2b06fcf5adc8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4000e?, 0xf4237, 0xf4237})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5bad8 sp=0x2b06fcf5b450 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4000d?, 0xf4238, 0xf4238})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5c160 sp=0x2b06fcf5bad8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4000c?, 0xf4239, 0xf4239})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5c7e8 sp=0x2b06fcf5c160 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4000b?, 0xf423a, 0xf423a})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5ce70 sp=0x2b06fcf5c7e8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc4000a?, 0xf423b, 0xf423b})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5d4f8 sp=0x2b06fcf5ce70 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40009?, 0xf423c, 0xf423c})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5db80 sp=0x2b06fcf5d4f8 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40008?, 0xf423d, 0xf423d})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5e208 sp=0x2b06fcf5db80 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40007?, 0xf423e, 0xf423e})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5e890 sp=0x2b06fcf5e208 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40006?, 0xf423f, 0xf423f})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5ef18 sp=0x2b06fcf5e890 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40005?, 0xf4240, 0xf4240})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5f5a0 sp=0x2b06fcf5ef18 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.decodeOne({0x2b06bcc40004?, 0xf4241, 0xf4241})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:76 +0x170e fp=0x2b06fcf5fc28 sp=0x2b06fcf5f5a0 pc=0x549f8e
+github.com/macula-io/macula-go/cbor.Decode(...)
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/decode.go:15
+github.com/macula-io/macula-go/frame.Decode({0x2b06bcc40000?, 0xf4245?, 0xf4245?})
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/frame/codec.go:50 +0xdf fp=0x2b06fcf5fe00 sp=0x2b06fcf5fc28 pc=0x558b5f
+github.com/macula-io/macula-go/cbor_test.TestDepthProbe(0x2b06bc9ee248)
+	/tmp/claude-1000/-home-rl-work-github-com/5e1dc09d-0b3b-458b-8750-1e1bbaef9ee8/scratchpad/wt-macula-go-directdial/cbor/zz_depth_probe_test.go:19 +0x1a5 fp=0x2b06fcf5ff70 sp=0x2b06fcf5fe00 pc=0x559165
+testing.tRunner(0x2b06bc9ee248, 0x71d970)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/testing/testing.go:2193 +0xea fp=0x2b06fcf5ffc0 sp=0x2b06fcf5ff70 pc=0x4f1aca
+testing.(*T).Run.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/testing/testing.go:2258 +0x1b fp=0x2b06fcf5ffe0 sp=0x2b06fcf5ffc0 pc=0x4f743b
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06fcf5ffe8 sp=0x2b06fcf5ffe0 pc=0x48eb21
+created by testing.(*T).Run in goroutine 1
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/testing/testing.go:2258 +0x4d4
+
+goroutine 1 gp=0x2b06bc8761e0 m=nil [chan receive]:
+runtime.gopark(0x71c740?, 0x7fde277632a8?, 0x17?, 0x54?, 0x6f90f8?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc9e7908 sp=0x2b06bc9e78e8 pc=0x48842a
+runtime.chanrecv(0x2b06bc9de100, 0x2b06bc9e79ef, 0x1)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/chan.go:667 +0x4ae fp=0x2b06bc9e7980 sp=0x2b06bc9e7908 pc=0x41734e
+runtime.chanrecv1(0x18?, 0x708548?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/chan.go:509 +0x12 fp=0x2b06bc9e79a8 sp=0x2b06bc9e7980 pc=0x416e92
+testing.(*T).Run(0x2b06bc9ee008, {0x5758d0?, 0x2b06bc9e7aa0?}, 0x71d970)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/testing/testing.go:2266 +0x4f2 fp=0x2b06bc9e7a80 sp=0x2b06bc9e79a8 pc=0x4f2032
+testing.runTests.func1(0x2b06bc9ee008)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/testing/testing.go:2742 +0x37 fp=0x2b06bc9e7ac0 sp=0x2b06bc9e7a80 pc=0x4f76b7
+testing.tRunner(0x2b06bc9ee008, 0x2b06bc9e7bc8)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/testing/testing.go:2193 +0xea fp=0x2b06bc9e7b10 sp=0x2b06bc9e7ac0 pc=0x4f1aca
+testing.runTests({0x57ac29, 0x1e}, {0x57c7fa, 0x23}, 0x2b06bc9a0120, {0x73db40, 0xb, 0xb}, {0xc2a13c039ba243f9, 0x8bb2cbe7bd, ...})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/testing/testing.go:2740 +0x510 fp=0x2b06bc9e7bf8 sp=0x2b06bc9e7b10 pc=0x4f4010
+testing.(*M).Run(0x2b06bc99e280)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/testing/testing.go:2600 +0x6af fp=0x2b06bc9e7e38 sp=0x2b06bc9e7bf8 pc=0x4f2bcf
+main.main()
+	_testmain.go:68 +0x9b fp=0x2b06bc9e7eb8 sp=0x2b06bc9e7e38 pc=0x55937b
+runtime.main()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:302 +0x427 fp=0x2b06bc9e7fe0 sp=0x2b06bc9e7eb8 pc=0x4501c7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc9e7fe8 sp=0x2b06bc9e7fe0 pc=0x48eb21
+
+goroutine 2 gp=0x2b06bc876d20 m=nil [force gc (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc942fa8 sp=0x2b06bc942f88 pc=0x48842a
+runtime.goparkunlock(...)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:480
+runtime.forcegchelper()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:387 +0xb3 fp=0x2b06bc942fe0 sp=0x2b06bc942fa8 pc=0x450493
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc942fe8 sp=0x2b06bc942fe0 pc=0x48eb21
+created by runtime.init.7 in goroutine 1
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:375 +0x1a
+
+goroutine 3 gp=0x2b06bc8772c0 m=nil [GC sweep wait]:
+runtime.gopark(0x1?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc943788 sp=0x2b06bc943768 pc=0x48842a
+runtime.goparkunlock(...)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:480
+runtime.bgsweep(0x2b06bc89c480)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgcsweep.go:324 +0x151 fp=0x2b06bc9437c8 sp=0x2b06bc943788 pc=0x439491
+runtime.gcenable.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:214 +0x17 fp=0x2b06bc9437e0 sp=0x2b06bc9437c8 pc=0x47ebf7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc9437e8 sp=0x2b06bc9437e0 pc=0x48eb21
+created by runtime.gcenable in goroutine 1
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:214 +0x66
+
+goroutine 4 gp=0x2b06bc8774a0 m=nil [GC scavenge wait]:
+runtime.gopark(0x10000?, 0x582978?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc943f78 sp=0x2b06bc943f58 pc=0x48842a
+runtime.goparkunlock(...)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:480
+runtime.(*scavengerState).park(0x743c40)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgcscavenge.go:425 +0x49 fp=0x2b06bc943fa8 sp=0x2b06bc943f78 pc=0x436f89
+runtime.bgscavenge(0x2b06bc89c480)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgcscavenge.go:658 +0x59 fp=0x2b06bc943fc8 sp=0x2b06bc943fa8 pc=0x4374f9
+runtime.gcenable.gowrap2()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:215 +0x17 fp=0x2b06bc943fe0 sp=0x2b06bc943fc8 pc=0x47ebb7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc943fe8 sp=0x2b06bc943fe0 pc=0x48eb21
+created by runtime.gcenable in goroutine 1
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:215 +0xa5
+
+goroutine 18 gp=0x2b06bc9843c0 m=nil [GOMAXPROCS updater (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc93e788 sp=0x2b06bc93e768 pc=0x48842a
+runtime.goparkunlock(...)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:480
+runtime.updateMaxProcsGoroutine()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:7146 +0xe7 fp=0x2b06bc93e7e0 sp=0x2b06bc93e788 pc=0x45d9a7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc93e7e8 sp=0x2b06bc93e7e0 pc=0x48eb21
+created by runtime.defaultGOMAXPROCSUpdateEnable in goroutine 1
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:7134 +0x37
+
+goroutine 19 gp=0x2b06bc984960 m=nil [finalizer wait]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc93ee20 sp=0x2b06bc93ee00 pc=0x48842a
+runtime.runFinalizers()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mfinal.go:210 +0x107 fp=0x2b06bc93efe0 sp=0x2b06bc93ee20 pc=0x42a4e7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc93efe8 sp=0x2b06bc93efe0 pc=0x48eb21
+created by runtime.createfing in goroutine 1
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mfinal.go:172 +0x3d
+
+goroutine 20 gp=0x2b06bc984b40 m=nil [cleanup wait]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc93f768 sp=0x2b06bc93f748 pc=0x48842a
+runtime.goparkunlock(...)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:480
+runtime.(*cleanupQueue).dequeue(0x743e60)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mcleanup.go:522 +0xd3 fp=0x2b06bc93f7a0 sp=0x2b06bc93f768 pc=0x427213
+runtime.runCleanups()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mcleanup.go:718 +0x45 fp=0x2b06bc93f7e0 sp=0x2b06bc93f7a0 pc=0x427885
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc93f7e8 sp=0x2b06bc93f7e0 pc=0x48eb21
+created by runtime.(*cleanupQueue).createGs in goroutine 1
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mcleanup.go:672 +0xa5
+
+goroutine 22 gp=0x2b06bc984f00 m=nil [GC worker (idle)]:
+runtime.gopark(0x2b06bc93ff50?, 0x2b06bc93ff60?, 0x13?, 0x17?, 0x4a5853?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc93ff40 sp=0x2b06bc93ff20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bc93ffc8 sp=0x2b06bc93ff40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bc93ffe0 sp=0x2b06bc93ffc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc93ffe8 sp=0x2b06bc93ffe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 23 gp=0x2b06bc9850e0 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc940740 sp=0x2b06bc940720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bc9407c8 sp=0x2b06bc940740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bc9407e0 sp=0x2b06bc9407c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc9407e8 sp=0x2b06bc9407e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 24 gp=0x2b06bc9852c0 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc940f40 sp=0x2b06bc940f20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bc940fc8 sp=0x2b06bc940f40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bc940fe0 sp=0x2b06bc940fc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc940fe8 sp=0x2b06bc940fe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 25 gp=0x2b06bc9854a0 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc941740 sp=0x2b06bc941720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bc9417c8 sp=0x2b06bc941740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bc9417e0 sp=0x2b06bc9417c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc9417e8 sp=0x2b06bc9417e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 26 gp=0x2b06bc985680 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bc941f40 sp=0x2b06bc941f20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bc941fc8 sp=0x2b06bc941f40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bc941fe0 sp=0x2b06bc941fc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bc941fe8 sp=0x2b06bc941fe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 27 gp=0x2b06bc985860 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd3a740 sp=0x2b06bcd3a720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd3a7c8 sp=0x2b06bcd3a740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd3a7e0 sp=0x2b06bcd3a7c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd3a7e8 sp=0x2b06bcd3a7e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 28 gp=0x2b06bc985a40 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd3af40 sp=0x2b06bcd3af20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd3afc8 sp=0x2b06bcd3af40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd3afe0 sp=0x2b06bcd3afc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd3afe8 sp=0x2b06bcd3afe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 29 gp=0x2b06bc985c20 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd3b740 sp=0x2b06bcd3b720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd3b7c8 sp=0x2b06bcd3b740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd3b7e0 sp=0x2b06bcd3b7c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd3b7e8 sp=0x2b06bcd3b7e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 30 gp=0x2b06bcd3e000 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd3bf40 sp=0x2b06bcd3bf20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd3bfc8 sp=0x2b06bcd3bf40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd3bfe0 sp=0x2b06bcd3bfc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd3bfe8 sp=0x2b06bcd3bfe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 31 gp=0x2b06bcd3e1e0 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd3c740 sp=0x2b06bcd3c720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd3c7c8 sp=0x2b06bcd3c740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd3c7e0 sp=0x2b06bcd3c7c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd3c7e8 sp=0x2b06bcd3c7e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 32 gp=0x2b06bcd3e3c0 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd3cf40 sp=0x2b06bcd3cf20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd3cfc8 sp=0x2b06bcd3cf40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd3cfe0 sp=0x2b06bcd3cfc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd3cfe8 sp=0x2b06bcd3cfe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 33 gp=0x2b06bcd3e5a0 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd3d740 sp=0x2b06bcd3d720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd3d7c8 sp=0x2b06bcd3d740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd3d7e0 sp=0x2b06bcd3d7c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd3d7e8 sp=0x2b06bcd3d7e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 34 gp=0x2b06bcd3e780 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd3df40 sp=0x2b06bcd3df20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd3dfc8 sp=0x2b06bcd3df40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd3dfe0 sp=0x2b06bcd3dfc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd3dfe8 sp=0x2b06bcd3dfe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 35 gp=0x2b06bcd3e960 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd36740 sp=0x2b06bcd36720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd367c8 sp=0x2b06bcd36740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd367e0 sp=0x2b06bcd367c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd367e8 sp=0x2b06bcd367e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 36 gp=0x2b06bcd3eb40 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd36f40 sp=0x2b06bcd36f20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd36fc8 sp=0x2b06bcd36f40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd36fe0 sp=0x2b06bcd36fc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd36fe8 sp=0x2b06bcd36fe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 37 gp=0x2b06bcd3ed20 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd37740 sp=0x2b06bcd37720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd377c8 sp=0x2b06bcd37740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd377e0 sp=0x2b06bcd377c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd377e8 sp=0x2b06bcd377e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 38 gp=0x2b06bcd3ef00 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd37f40 sp=0x2b06bcd37f20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd37fc8 sp=0x2b06bcd37f40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd37fe0 sp=0x2b06bcd37fc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd37fe8 sp=0x2b06bcd37fe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 39 gp=0x2b06bcd3f0e0 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd38740 sp=0x2b06bcd38720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd387c8 sp=0x2b06bcd38740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd387e0 sp=0x2b06bcd387c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd387e8 sp=0x2b06bcd387e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 40 gp=0x2b06bcd3f2c0 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd38f40 sp=0x2b06bcd38f20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd38fc8 sp=0x2b06bcd38f40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd38fe0 sp=0x2b06bcd38fc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd38fe8 sp=0x2b06bcd38fe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 41 gp=0x2b06bcd3f4a0 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd39740 sp=0x2b06bcd39720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd397c8 sp=0x2b06bcd39740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd397e0 sp=0x2b06bcd397c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd397e8 sp=0x2b06bcd397e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 42 gp=0x2b06bcd3f680 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd39f40 sp=0x2b06bcd39f20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd39fc8 sp=0x2b06bcd39f40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd39fe0 sp=0x2b06bcd39fc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd39fe8 sp=0x2b06bcd39fe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 43 gp=0x2b06bcd3f860 m=nil [GC worker (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd46740 sp=0x2b06bcd46720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd467c8 sp=0x2b06bcd46740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd467e0 sp=0x2b06bcd467c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd467e8 sp=0x2b06bcd467e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 44 gp=0x2b06bcd3fa40 m=nil [GC worker (idle)]:
+runtime.gopark(0x195f12d5d8203?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd46f40 sp=0x2b06bcd46f20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd46fc8 sp=0x2b06bcd46f40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd46fe0 sp=0x2b06bcd46fc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd46fe8 sp=0x2b06bcd46fe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 45 gp=0x2b06bcd3fc20 m=nil [GC worker (idle)]:
+runtime.gopark(0x195f12d5c6128?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd47740 sp=0x2b06bcd47720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd477c8 sp=0x2b06bcd47740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd477e0 sp=0x2b06bcd477c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd477e8 sp=0x2b06bcd477e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 46 gp=0x2b06bcd4c000 m=nil [GC worker (idle)]:
+runtime.gopark(0x195f12c55c282?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd47f40 sp=0x2b06bcd47f20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd47fc8 sp=0x2b06bcd47f40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd47fe0 sp=0x2b06bcd47fc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd47fe8 sp=0x2b06bcd47fe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 47 gp=0x2b06bcd4c1e0 m=nil [GC worker (idle)]:
+runtime.gopark(0x195f12c55f5d5?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd48740 sp=0x2b06bcd48720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd487c8 sp=0x2b06bcd48740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd487e0 sp=0x2b06bcd487c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd487e8 sp=0x2b06bcd487e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 48 gp=0x2b06bcd4c3c0 m=nil [GC worker (idle)]:
+runtime.gopark(0x195f12c55e3ac?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd48f40 sp=0x2b06bcd48f20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd48fc8 sp=0x2b06bcd48f40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd48fe0 sp=0x2b06bcd48fc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd48fe8 sp=0x2b06bcd48fe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 49 gp=0x2b06bcd4c5a0 m=nil [GC worker (idle)]:
+runtime.gopark(0x195f12d5c7c30?, 0x1?, 0x16?, 0xe4?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd49740 sp=0x2b06bcd49720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd497c8 sp=0x2b06bcd49740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd497e0 sp=0x2b06bcd497c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd497e8 sp=0x2b06bcd497e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 50 gp=0x2b06bcd4c780 m=nil [GC worker (idle)]:
+runtime.gopark(0x195f12c55e0c8?, 0x1?, 0x36?, 0x3d?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd49f40 sp=0x2b06bcd49f20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd49fc8 sp=0x2b06bcd49f40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd49fe0 sp=0x2b06bcd49fc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd49fe8 sp=0x2b06bcd49fe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 51 gp=0x2b06bcd4c960 m=nil [GC worker (idle)]:
+runtime.gopark(0x764fa0?, 0x1?, 0xa3?, 0x66?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd42740 sp=0x2b06bcd42720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd427c8 sp=0x2b06bcd42740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd427e0 sp=0x2b06bcd427c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd427e8 sp=0x2b06bcd427e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 52 gp=0x2b06bcd4cb40 m=nil [GC worker (idle)]:
+runtime.gopark(0x195f12d5c5976?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd42f40 sp=0x2b06bcd42f20 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd42fc8 sp=0x2b06bcd42f40 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd42fe0 sp=0x2b06bcd42fc8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd42fe8 sp=0x2b06bcd42fe0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+
+goroutine 53 gp=0x2b06bcd4cd20 m=nil [GC worker (idle)]:
+runtime.gopark(0x195f12c55e398?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/proc.go:474 +0xca fp=0x2b06bcd43740 sp=0x2b06bcd43720 pc=0x48842a
+runtime.gcBgMarkWorker(0x2b06bc992230)
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1807 +0xeb fp=0x2b06bcd437c8 sp=0x2b06bcd43740 pc=0x42d92b
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0x17 fp=0x2b06bcd437e0 sp=0x2b06bcd437c8 pc=0x47f0f7
+runtime.goexit({})
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2b06bcd437e8 sp=0x2b06bcd437e0 pc=0x48eb21
+created by runtime.gcBgMarkStartWorkers in goroutine 21
+	/home/rl/.local/share/mise/installs/go/1.27.0/src/runtime/mgc.go:1711 +0xfc
+FAIL	github.com/macula-io/macula-go/cbor	0.474s
+FAIL
