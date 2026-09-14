@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An inbound CALL whose payload is a map, and a STREAM_OPEN whose args are a
   map, carry the caller the session verified under `"caller"`, as the 32-byte
-  node id, replacing a `"caller"` the sender put there. A payload or args that
-  aren't a map are handed over unchanged.
+  node id, replacing a `"caller"` the sender put there under a text or a
+  byte-string key. A payload or args that aren't a map are handed over
+  unchanged.
 - `manifest.CreateOptions.HashAlgorithm` and `manifest.Sha256` are removed, and
   `manifest.AlgorithmFromName` returns `Blake3` for every name. Blake3 is the
   one hash algorithm a manifest can name, and every macula stack refuses a
@@ -53,7 +54,9 @@ This release fixes these defects in v0.9.0 and earlier releases.
   are well formed and it doesn't verify. The first drop of a kind is logged at
   once and opens an interval; the rest during it are logged in one closing
   line when it ends. `Session.SetDropWarningInterval` sets the interval, a
-  minute by default.
+  minute by default. The procedure and frame_type a warning carries are cut to
+  256 bytes and have their control characters escaped by the SDK, so the
+  line never breaks whatever handler prints it.
 - `connection.StreamRefusedCode` (2) and `connection.StreamProtocolErrorCode`
   (3), the QUIC application error codes every macula stack uses for a refused
   dedicated stream and for one carrying a frame that doesn't decode, with
@@ -61,7 +64,9 @@ This release fixes these defects in v0.9.0 and earlier releases.
 - `manifest.McidFor`, `manifest.VerifyMcid` and `manifest.CheckWhole`, with
   `manifest.ErrManifestMcidMismatch` and `manifest.ErrManifestNotWhole`.
 - `connection.FrameStream.StreamReplyVerifies`, `connection.ErrMalformedFrame`,
-  `cbor.MaxNestingDepth` and `cbor.ErrNestingTooDeep`.
+  `cbor.MaxNestingDepth`, `cbor.ErrNestingTooDeep`, `cbor.MaxElements` and
+  `cbor.ErrTooManyElements`.
+- `manifest.CheckChunkHashes` and `manifest.ErrManifestChunkHashes`.
 
 ### Changed
 
@@ -84,23 +89,30 @@ This release fixes these defects in v0.9.0 and earlier releases.
   wrapping `ErrMalformedFrame`.
 - A frame of a type the control stream doesn't carry, and an EVENT that
   doesn't parse or that no subscription matches, is a `dropped_frame` drop
-  warning. These replace the per-type unrouted log line; `Session.Unrouted`
-  still counts per type.
+  warning. These replace the per-type unrouted log line. `Session.Unrouted`
+  counts a frame under its frame type when that is one macula defines, and
+  under `"unknown"` otherwise.
 - CBOR decoding refuses a list or map nested more than `MaxNestingDepth` (128)
   levels below the top-level value with `ErrNestingTooDeep`, the same cap as
   macula's decoder. Duplicate map keys are matched by a digest of each key's
   canonical encoding, built as the key decodes, and still merge exactly when
-  their canonical encodings are equal.
+  their canonical encodings are equal. Decoding refuses a value that would
+  decode to more than `MaxElements` (1<<20) values in all, counting every list
+  item, map key and map value, with `ErrTooManyElements`.
 - `content.Get` uses a fetched manifest only once it describes the requested
-  MCID (`manifest.VerifyMcid`) and its chunks are cut the way `manifest.Create`
-  cuts content (`manifest.CheckWhole`). Each fetched chunk must be the size its
-  entry says, and the receive buffer is no longer sized from the manifest.
-  `manifest.Verify` refuses a chunk size that isn't positive.
+  MCID (`manifest.VerifyMcid`), its chunks are cut the way `manifest.Create`
+  cuts content (`manifest.CheckWhole`), and its chunk hashes make its root hash
+  (`manifest.CheckChunkHashes`), so no chunk is fetched before all three hold.
+  Each fetched chunk must be the size its entry says, and the receive buffer is
+  no longer sized from the manifest. `manifest.Verify` refuses a chunk size that
+  isn't positive.
 - `manifest.FromWire` reads a missing `hash_algorithm` as blake3 and refuses
   any other name, sha256 included. It also refuses a manifest whose chunks
   don't describe its content whole, so empty content has one form: size 0,
   chunk_count 0, no chunks and a positive chunk_size. `manifest.VerifyMcid`
   refuses any hash algorithm but blake3.
+- The session-end log line carries its reason cut to 256 bytes, with control
+  characters escaped as in drop warnings.
 
 ### Fixed
 
