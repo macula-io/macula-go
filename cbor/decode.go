@@ -21,13 +21,25 @@ const MaxNestingDepth = 128
 // levels below the top-level value.
 var ErrNestingTooDeep = errors.New("cbor: decode: list or map nesting exceeds 128 levels")
 
+// MaxElements is how many values one Decode may produce in all: the top-level
+// value and every list item, map key and map value inside it. Each decoded
+// value takes memory of its own however few bytes it took in the input, so
+// this bounds what decoding allocates by the number of values, not by the
+// input's size.
+const MaxElements = 1 << 20
+
+// ErrTooManyElements is a value that would decode to more than MaxElements
+// values.
+var ErrTooManyElements = errors.New("cbor: decode: more than 1048576 values")
+
 // Decode parses one complete CBOR value from the start of data, returning
 // the value and how many bytes it consumed. Panics are not used for
 // malformed input by construction — every path returns an error, since
 // this parses untrusted network data (mirrors deterministic.rs's own
 // panic-free-by-construction guarantee).
 func Decode(data []byte) (Value, int, error) {
-	v, _, n, err := decodeOne(data, 0, false)
+	budget := MaxElements
+	v, _, n, err := decodeOne(data, 0, false, &budget)
 	return v, n, err
 }
 
@@ -43,7 +55,11 @@ type keyIdentity [sha256.Size]byte
 // decodeOne decodes the value at the start of data, which sits depth list or
 // map levels below the top-level value, and with withIdentity set also
 // returns its key identity.
-func decodeOne(data []byte, depth int, withIdentity bool) (Value, keyIdentity, int, error) {
+func decodeOne(data []byte, depth int, withIdentity bool, budget *int) (Value, keyIdentity, int, error) {
+	if *budget <= 0 {
+		return Value{}, keyIdentity{}, 0, ErrTooManyElements
+	}
+	*budget--
 	if depth > MaxNestingDepth {
 		return Value{}, keyIdentity{}, 0, ErrNestingTooDeep
 	}
@@ -97,10 +113,10 @@ func decodeOne(data []byte, depth int, withIdentity bool) (Value, keyIdentity, i
 		return scalar(Text(string(body[:length])), 1+used+int(length), withIdentity)
 
 	case majorList:
-		return decodeList(rest, ai, depth, withIdentity)
+		return decodeList(rest, ai, depth, withIdentity, budget)
 
 	case majorMap:
-		return decodeMap(rest, ai, depth, withIdentity)
+		return decodeMap(rest, ai, depth, withIdentity, budget)
 
 	case majorFloat:
 		v, n, err := decodeMajor7(rest, ai)
@@ -123,7 +139,7 @@ func scalar(v Value, consumed int, withIdentity bool) (Value, keyIdentity, int, 
 	return v, sha256.Sum256(Encode(v)), consumed, nil
 }
 
-func decodeList(rest []byte, ai byte, depth int, withIdentity bool) (Value, keyIdentity, int, error) {
+func decodeList(rest []byte, ai byte, depth int, withIdentity bool, budget *int) (Value, keyIdentity, int, error) {
 	count, used, err := readAIValue(rest, ai)
 	if err != nil {
 		return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode list length: %w", err)
@@ -133,6 +149,7 @@ func decodeList(rest []byte, ai byte, depth int, withIdentity bool) (Value, keyI
 		pos:          used,
 		depth:        depth,
 		withIdentity: withIdentity,
+		budget:       budget,
 		items:        make([]Value, 0, preallocCap(count)),
 		digest:       listDigest(count, withIdentity),
 	}
@@ -154,6 +171,7 @@ type listDecoder struct {
 	withIdentity bool
 	items        []Value
 	digest       hash.Hash
+	budget       *int
 }
 
 // listDigest starts the identity digest of a list of count items, or is nil
@@ -169,7 +187,7 @@ func listDigest(count uint64, withIdentity bool) hash.Hash {
 
 // next decodes item i.
 func (l *listDecoder) next(i uint64) error {
-	item, itemIdentity, n, err := decodeOne(l.rest[l.pos:], l.depth+1, l.withIdentity)
+	item, itemIdentity, n, err := decodeOne(l.rest[l.pos:], l.depth+1, l.withIdentity, l.budget)
 	if err != nil {
 		return fmt.Errorf("cbor: decode list item %d: %w", i, err)
 	}
@@ -189,7 +207,7 @@ func writeIdentity(digest hash.Hash, id keyIdentity) {
 // entryIdentities is a decoded map entry's key and value identities.
 type entryIdentities struct{ key, val keyIdentity }
 
-func decodeMap(rest []byte, ai byte, depth int, withIdentity bool) (Value, keyIdentity, int, error) {
+func decodeMap(rest []byte, ai byte, depth int, withIdentity bool, budget *int) (Value, keyIdentity, int, error) {
 	count, used, err := readAIValue(rest, ai)
 	if err != nil {
 		return Value{}, keyIdentity{}, 0, fmt.Errorf("cbor: decode map length: %w", err)
@@ -208,6 +226,7 @@ func decodeMap(rest []byte, ai byte, depth int, withIdentity bool) (Value, keyId
 		pos:          pos,
 		depth:        depth,
 		withIdentity: withIdentity,
+		budget:       budget,
 		entries:      make([]MapEntry, 0, preallocCap(count)),
 		indexOfKey:   make(map[keyIdentity]int, preallocCap(count)),
 		identities:   entryIdentitiesFor(count, withIdentity),
@@ -232,6 +251,7 @@ type mapDecoder struct {
 	entries      []MapEntry
 	indexOfKey   map[keyIdentity]int
 	identities   []entryIdentities
+	budget       *int
 }
 
 // entryIdentitiesFor is room for count entries' identities, or nil when no
@@ -245,12 +265,12 @@ func entryIdentitiesFor(count uint64, withIdentity bool) []entryIdentities {
 
 // next decodes entry i's key and value and records the entry.
 func (m *mapDecoder) next(i uint64) error {
-	key, keyID, kn, err := decodeOne(m.rest[m.pos:], m.depth+1, true)
+	key, keyID, kn, err := decodeOne(m.rest[m.pos:], m.depth+1, true, m.budget)
 	if err != nil {
 		return fmt.Errorf("cbor: decode map key %d: %w", i, err)
 	}
 	m.pos += kn
-	val, valID, vn, err := decodeOne(m.rest[m.pos:], m.depth+1, m.withIdentity)
+	val, valID, vn, err := decodeOne(m.rest[m.pos:], m.depth+1, m.withIdentity, m.budget)
 	if err != nil {
 		return fmt.Errorf("cbor: decode map value %d: %w", i, err)
 	}
