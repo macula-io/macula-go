@@ -339,8 +339,7 @@ var errClosedLocally = errors.New("closed")
 
 // logEnd writes the one line a session's end gets when a logger is set: a
 // warning when the station or the connection ended it, information when
-// Close did. The reason, which can carry a station's GOODBYE reason and
-// detail, is cut and escaped like the text a drop warning carries.
+// Close did, with the reason endReason gives.
 func (s *Session) logEnd(logger *slog.Logger, err error) {
 	if logger == nil {
 		return
@@ -349,8 +348,21 @@ func (s *Session) logEnd(logger *slog.Logger, err error) {
 	if errors.Is(err, errClosedLocally) {
 		level = slog.LevelInfo
 	}
-	logger.Log(context.Background(), level, "macula: session ended", "reason", loggable(err.Error()),
+	logger.Log(context.Background(), level, "macula: session ended", "reason", endReason(err),
 		"node", hex.EncodeToString(s.identity), "station", hex.EncodeToString(s.Station.NodeID))
+}
+
+// endReason is err as the session-end line carries it. A station's GOODBYE
+// reason and detail are its own text, so each is cut and escaped the way the
+// text a drop warning carries is, and the SDK's words around them stay whole.
+// Any other reason is cut and escaped as a whole.
+func endReason(err error) string {
+	var goodbye *GoodbyeError
+	if !errors.As(err, &goodbye) {
+		return loggable(err.Error())
+	}
+	logged := &GoodbyeError{Reason: loggable(goodbye.Reason), Detail: loggable(goodbye.Detail)}
+	return strings.Replace(err.Error(), goodbye.Error(), logged.Error(), 1)
 }
 
 func (s *Session) endedErr() error {

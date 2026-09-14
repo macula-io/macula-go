@@ -58,9 +58,10 @@ func (h *recordingHandler) withMessage(msg string) []map[string]string {
 	return out
 }
 
-// A GOODBYE's reason and detail reach the session-end line cut to 256 bytes
-// and with their control characters escaped, however long the station made
-// them and whatever they hold.
+// A GOODBYE's reason and detail reach the session-end line each cut to 256
+// bytes and with their control characters escaped, however long the station
+// made them and whatever they hold, and the SDK's own words around them stay
+// whole.
 func TestASessionEndLineCutsAndEscapesTheGoodbyeReason(t *testing.T) {
 	s, fc, _ := readingSession(t)
 	recorded := &recordingHandler{}
@@ -80,7 +81,12 @@ func TestASessionEndLineCutsAndEscapesTheGoodbyeReason(t *testing.T) {
 		t.Fatalf("session-end records = %d, want 1", len(lines))
 	}
 	got := lines[0]["reason"]
-	if strings.ContainsAny(got, "\n\r\x1b") || !strings.Contains(got, `shutdown\nforged=1`) || len(got) > 257 {
-		t.Fatalf("session-end reason is %d bytes, starting %q; want it cut to 256 bytes and escaped", len(got), got[:min(len(got), 80)])
+	// The reason is cut to 256 bytes, 17 of them "shutdown\nforged=1", before
+	// it is escaped.
+	wantReason := `shutdown\nforged=1` + strings.Repeat("r", 256-len("shutdown\nforged=1"))
+	want := "connection: session ended: connection: the station said goodbye: " + wantReason + ` (detail\u{1b})`
+	if got != want {
+		t.Fatalf("session-end reason is %d bytes, ending %q; want %d bytes, ending %q",
+			len(got), got[max(0, len(got)-40):], len(want), want[len(want)-40:])
 	}
 }
