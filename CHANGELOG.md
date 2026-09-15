@@ -106,6 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A frame over the frame cap sent on a control stream ended the session. It
   returns `frame.ErrFrameTooLarge` and leaves the session up.
+- Drop warnings escaped control characters but printed Unicode format
+  characters as they were. They escape those too, the bidirectional overrides
+  and isolates among them.
 
 - `cbor.Value.AsInt64` reports -2^63-1 as not fitting an int64, where it
   returned 2^63-1.

@@ -290,3 +290,13 @@ func TestAFrameTypeIsCutToItsLimitBeforeItIsEscaped(t *testing.T) {
 		t.Fatalf("frame_type field %q, want %q", got, want)
 	}
 }
+
+// Unicode format characters, the bidirectional overrides and isolates among
+// them, are escaped as \u{..} too, so a logged name shows every character it
+// holds, in the order it holds them.
+func TestAFrameTypeWithFormatCharactersIsEscaped(t *testing.T) {
+	name := "event\u202ekind=forged\u2066\u200b\ufeff\u00ad"
+	if got, want := frameTypeDetail(name).Value.String(), `event\u{202e}kind=forged\u{2066}\u{200b}\u{feff}\u{ad}`; got != want {
+		t.Fatalf("frame_type field %q, want %q", got, want)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/macula-io/macula-go/cbor"
@@ -167,14 +168,15 @@ func frameTypeDetail(frameType string) slog.Attr {
 
 // loggable is text from a frame as a warning carries it: cut to
 // maxDropProcedure bytes without splitting a character, then with its control
-// characters escaped, so the line never breaks whatever handler prints it.
-// Every macula stack cuts and escapes the same way.
+// and format characters escaped, so the line never breaks and shows every
+// character it holds, whatever handler prints it. Every macula stack cuts and
+// escapes the same way.
 func loggable(text string) string {
 	return printable(cutAtRuneStart(text, maxDropProcedure))
 }
 
-// printable is text with its control characters escaped: \n, \r and \t by
-// name and any other as \u{..}, in lowercase hex.
+// printable is text with its control and format characters escaped: \n, \r
+// and \t by name and any other as \u{..}, in lowercase hex.
 func printable(text string) string {
 	out := make([]byte, 0, len(text))
 	for _, r := range text {
@@ -184,7 +186,10 @@ func printable(text string) string {
 }
 
 // escapedRune is r as printable writes it. The control characters are the
-// Unicode Cc range, U+0000 to U+001F and U+007F to U+009F.
+// Unicode Cc range, U+0000 to U+001F and U+007F to U+009F. The format
+// characters are the Unicode Cf category, which holds the bidirectional
+// overrides and isolates and the invisible characters that change how the
+// text around them reads.
 func escapedRune(r rune) string {
 	switch {
 	case r == '\n':
@@ -193,7 +198,7 @@ func escapedRune(r rune) string {
 		return `\r`
 	case r == '\t':
 		return `\t`
-	case r < 0x20 || (r >= 0x7f && r <= 0x9f):
+	case r < 0x20 || (r >= 0x7f && r <= 0x9f) || unicode.Is(unicode.Cf, r):
 		return fmt.Sprintf(`\u{%x}`, r)
 	}
 	return string(r)
