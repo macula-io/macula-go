@@ -149,7 +149,7 @@ func knownStreamMode(mode StreamMode) bool {
 // and a provider before its own checks, which stay with the caller: its node_id
 // as target, the deadline window, replays and tokens.
 func VerifyRequest(v cbor.Value, p profile.Profile) (VerifiedRequest, error) {
-	frameType, object, ok := receivedFrame(v, "request", requestRoutes, frameTypeCall, frameTypeStreamOpen)
+	frameType, object, ok := receivedFrame(v, "request", carriedObject, requestRoutes, frameTypeCall, frameTypeStreamOpen)
 	if !ok {
 		return VerifiedRequest{}, ErrMalformedFrame
 	}

@@ -11,12 +11,14 @@ import (
 	"github.com/macula-io/macula-go/identity"
 )
 
-// The labels of the signed objects that requests, replies and relay errors
-// carry (D25).
+// The labels of the signed objects that requests, replies, relay errors and
+// stream frames carry (D25).
 const (
-	requestLabel    = "MACULA-PQ-REQUEST-V1"
-	replyLabel      = "MACULA-PQ-REPLY-V1"
-	relayErrorLabel = "MACULA-PQ-RELAY-ERROR-V1"
+	requestLabel      = "MACULA-PQ-REQUEST-V1"
+	replyLabel        = "MACULA-PQ-REPLY-V1"
+	relayErrorLabel   = "MACULA-PQ-RELAY-ERROR-V1"
+	streamLabel       = "MACULA-PQ-STREAM-V1"
+	callerStreamLabel = "MACULA-PQ-CALLER-STREAM-V1"
 )
 
 // The bounds of a signed frame's fields: a protocol integer stays below 2^53,
@@ -36,33 +38,47 @@ var (
 	// ErrMalformedFrame is a frame, or the signed object it carries, without
 	// exactly the shape and fields of its type.
 	ErrMalformedFrame = errors.New("frame: malformed frame")
-	// ErrKeyIDMismatch is a signed object whose caller, responded_by or
-	// reported_by is not the key id of the key it verified with.
+	// ErrKeyIDMismatch is a signed object whose caller, responded_by,
+	// reported_by or signer is not the key id of the key it verified with, or a
+	// provider's later stream frame that carries a key other than its first
+	// frame's.
 	ErrKeyIDMismatch = errors.New("frame: the signer the frame names is not the key it verified with")
-	// ErrRequestMismatch is a reply or relay error whose request_id or
-	// request_hash names another request.
+	// ErrRequestMismatch is a reply, relay error or stream frame whose
+	// request_id or request_hash names another request.
 	ErrRequestMismatch = errors.New("frame: the frame names another request")
-	// ErrNotTheTarget is a reply from a node other than its request's target.
-	ErrNotTheTarget = errors.New("frame: the reply is not from the request's target")
+	// ErrNotTheTarget is a reply, or a provider's first stream frame, from a
+	// node other than its request's target.
+	ErrNotTheTarget = errors.New("frame: the frame is not from the request's target")
 	// ErrNotTheConnection is a relay error reported by a station other than
 	// the one the connection authenticated.
 	ErrNotTheConnection = errors.New("frame: the relay error is not from the connection's station")
 	// ErrUnsignable is a build whose key is not an identity key, or not the
-	// sender the receiver verifies.
+	// sender the receiver verifies, or a stream frame build without its
+	// verified STREAM_OPEN.
 	ErrUnsignable = errors.New("frame: the key cannot sign this frame")
-	// ErrTextTooLong is a build whose procedure, code or detail is longer than
-	// its bound.
+	// ErrTextTooLong is a build whose procedure, code, detail or message is
+	// longer than its bound.
 	ErrTextTooLong = errors.New("frame: text longer than its bound")
-	// ErrInvalidText is a build whose procedure, code or detail is not valid
-	// UTF-8.
+	// ErrInvalidText is a build whose procedure, code, detail or message is not
+	// valid UTF-8.
 	ErrInvalidText = errors.New("frame: text that is not valid UTF-8")
 	// ErrRelayCodeOutsideItsSet is a relay error build whose code is not in
 	// the closed set of relay codes.
 	ErrRelayCodeOutsideItsSet = errors.New("frame: a relay error code outside its closed set")
-	// ErrOutOfRange is a build whose frame type, stream mode, deadline or
-	// retry budget is outside its set or range, or whose realm or subscriber
-	// is not 32 bytes.
+	// ErrOutOfRange is a build whose frame type, stream mode, deadline, retry
+	// budget, seq, stream encoding or stream role is outside its set or range,
+	// whose raw stream body is not a byte string, or whose realm or subscriber
+	// is not 32 bytes, and a stream opened on a request that is not a
+	// STREAM_OPEN.
 	ErrOutOfRange = errors.New("frame: a field outside its range")
+	// ErrNotAllowed is a stream frame build its side does not send: a caller's
+	// STREAM_REPLY, or a caller's STREAM_DATA in a server_stream.
+	ErrNotAllowed = errors.New("frame: a stream frame its side does not send")
+	// ErrSeqMismatch is a stream frame whose seq is not the one after its
+	// side's last, or a provider's frame without its key before its first.
+	ErrSeqMismatch = errors.New("frame: a stream frame out of its side's order")
+	// ErrStreamEnded is a stream frame after its side's STREAM_END.
+	ErrStreamEnded = errors.New("frame: a stream frame after its side's STREAM_END")
 )
 
 // relayCodes is the closed set of relay error codes, disjoint from every
@@ -110,9 +126,24 @@ func protocolVersion(v cbor.Value) bool {
 	return isInt && n == ProtocolVersion
 }
 
+// carriedObject accepts a signed object that carries its key: exactly key, tbs
+// and signature, each a byte string.
 func carriedObject(v cbor.Value) bool {
 	_, err := identity.ParseObject(v)
 	return err == nil
+}
+
+// heldObject accepts a signed object whose key its verifier holds: exactly tbs
+// and signature, each a byte string.
+func heldObject(v cbor.Value) bool {
+	_, err := identity.ParseHeldObject(v)
+	return err == nil
+}
+
+// streamObject accepts a provider's stream object in either shape, since it
+// carries its key on the first frame and not after.
+func streamObject(v cbor.Value) bool {
+	return carriedObject(v) || heldObject(v)
 }
 
 // readFields reads a map through its table, as macula_frame's read_fields does:
@@ -150,10 +181,10 @@ func hasFields(fields map[string]cbor.Value, names ...string) bool {
 // object, with the checks a received frame passes before its object is
 // verified: exactly version, frame_type, the object under objectName and the
 // routing fields routes names; the protocol's version; a frame type of types;
-// the object a map of exactly key, tbs and signature byte strings; and each
-// routing field of its rule. It returns the frame type and the object.
-func receivedFrame(v cbor.Value, objectName string, routes map[string]fieldRule, types ...string) (string, cbor.Value, bool) {
-	table := map[string]fieldRule{"version": protocolVersion, "frame_type": textIn(types...), objectName: carriedObject}
+// the object in a shape objectRule accepts; and each routing field of its rule.
+// It returns the frame type and the object.
+func receivedFrame(v cbor.Value, objectName string, objectRule fieldRule, routes map[string]fieldRule, types ...string) (string, cbor.Value, bool) {
+	table := map[string]fieldRule{"version": protocolVersion, "frame_type": textIn(types...), objectName: objectRule}
 	maps.Copy(table, routes)
 	fields, ok := readFields(v, table)
 	if !ok || !hasFields(fields, "version", "frame_type", objectName) {

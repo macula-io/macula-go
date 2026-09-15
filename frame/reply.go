@@ -125,7 +125,7 @@ func signReply(frameType string, request VerifiedRequest, fields []cbor.MapEntry
 // ErrKeyIDMismatch, ErrRequestMismatch or ErrNotTheTarget, and in a binary
 // without ML-DSA with identity.ErrPostQuantumUnavailable.
 func VerifyReply(v cbor.Value, request VerifiedRequest, p profile.Profile) (VerifiedReply, error) {
-	frameType, object, ok := receivedFrame(v, "reply", replyRoutes, frameTypeResult, frameTypeError)
+	frameType, object, ok := receivedFrame(v, "reply", carriedObject, replyRoutes, frameTypeResult, frameTypeError)
 	if !ok {
 		return VerifiedReply{}, ErrMalformedFrame
 	}
@@ -219,7 +219,7 @@ func SignRelayError(spec RelayErrorSpec, key *identity.NodeKey) (cbor.Value, err
 // ErrKeyIDMismatch, ErrRequestMismatch or ErrNotTheConnection, and in a binary
 // without ML-DSA with identity.ErrPostQuantumUnavailable.
 func VerifyRelayError(v cbor.Value, request VerifiedRequest, p profile.Profile, expectedReporter [32]byte) (VerifiedRelayError, error) {
-	frameType, object, ok := receivedFrame(v, "relay_error", relayErrorRoutes, frameTypeError, frameTypeStreamError)
+	frameType, object, ok := receivedFrame(v, "relay_error", carriedObject, relayErrorRoutes, frameTypeError, frameTypeStreamError)
 	if !ok {
 		return VerifiedRelayError{}, ErrMalformedFrame
 	}
@@ -285,7 +285,7 @@ func ClaimedReplyIDs(v cbor.Value) ([16]byte, [48]byte, error) {
 }
 
 func claimedIDs(v cbor.Value, frameType, objectName string, routes, table map[string]fieldRule) ([16]byte, [48]byte, error) {
-	_, object, ok := receivedFrame(v, objectName, routes, frameType)
+	_, object, ok := receivedFrame(v, objectName, carriedObject, routes, frameType)
 	if !ok {
 		return [16]byte{}, [48]byte{}, ErrMalformedFrame
 	}

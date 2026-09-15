@@ -146,7 +146,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GenerateIdentityKey`, `LoadKey` (before reading the file),
   `VerifyTLSBinding`, `VerifyConnectBinding`, `VerifyStatus`, `VerifyObject`
   and `VerifyHeldObject` (and so from the handshake's checks and from
-  `frame.VerifyRequest`, `VerifyReply` and `VerifyRelayError`), and
+  `frame.VerifyRequest`, `VerifyReply`, `VerifyRelayError`,
+  `VerifyProviderStream` and `VerifyCallerStream`), and
   `transport.DialTarget` (before dialing), instead of an error that blames a
   signature or a TLS handshake. Build without `GOFIPS140`, or with
   `GOFIPS140=v1.26.0` or later. CI runs the tests for it under
@@ -183,6 +184,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `identity.ErrPostQuantumUnavailable`. `ClaimedReplyIDs` reads the ids a
   reply names without verifying it, as the key for finding its pending
   request.
+- `frame.SignProviderStream` and `SignCallerStream`, with `OpenStream`,
+  `VerifyProviderStream` and `VerifyCallerStream`: macula 11.0.0's stream
+  frames for a verified STREAM_OPEN (D25). A provider's STREAM_DATA,
+  STREAM_END, STREAM_ERROR and STREAM_REPLY carry a signed object under
+  `MACULA-PQ-STREAM-V1` with the provider's key on its first frame only, and a
+  caller's STREAM_DATA, STREAM_END and STREAM_ERROR one under
+  `MACULA-PQ-CALLER-STREAM-V1` that verifies with the STREAM_OPEN's key. Each
+  frame names its stream by request_id and request_hash, and each side numbers
+  its own frames from 0. A builder takes `StreamDataFields`,
+  `StreamEndFields`, `StreamErrorFields` or `StreamReplyFields` and refuses
+  what its receiver would, in macula's order: a key that is not the expected
+  sender, or an open that is not a verified STREAM_OPEN (`ErrUnsignable`); a
+  frame its side does not send, a caller's STREAM_REPLY or its STREAM_DATA in
+  a server_stream (`ErrNotAllowed`); a STREAM_ERROR's code over 64 bytes or
+  message over 256, or either not UTF-8; a body or payload the wire cannot
+  carry; and a field out of its range or set (`ErrOutOfRange`). A verifier
+  holds a `StreamState` and returns the next one with each frame. It refuses
+  with `ErrMalformedFrame`, `ErrStreamEnded`,
+  `identity.ErrObjectSignatureInvalid`, `ErrKeyIDMismatch`,
+  `ErrRequestMismatch`, `ErrNotTheTarget` or `ErrSeqMismatch`, and in a
+  binary without ML-DSA with `identity.ErrPostQuantumUnavailable`.
 
 ### Fixed
 
