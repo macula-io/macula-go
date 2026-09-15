@@ -416,6 +416,10 @@ func TestAStationRefusesAConnectItCannotTrustWithOneCoarseCode(t *testing.T) {
 		withConnectKey := func(key []byte) []byte {
 			return rebuilt(t, connect, map[string]cbor.Value{"connect_key": cbor.Bytes(key)})
 		}
+		aheadOfStation, err := identity.StatusStatement(w.client, w.connectBinding, now+7*minute, now+67*minute)
+		if err != nil {
+			t.Fatalf("StatusStatement: %v", err)
+		}
 		type refusal struct {
 			name   string
 			frame  []byte
@@ -439,6 +443,7 @@ func TestAStationRefusesAConnectItCannotTrustWithOneCoarseCode(t *testing.T) {
 			{"a CONNECT key one byte short", withConnectKey(connectKey[:len(connectKey)-1]), nil, ErrMalformedFrame, RefusalNotAccepted},
 			{"capabilities at 2^53", rebuilt(t, connect, map[string]cbor.Value{"capabilities": cbor.Int(1 << 53)}), nil, ErrMalformedFrame, RefusalNotAccepted},
 			{"a proof of the right length that does not verify", rebuilt(t, connect, map[string]cbor.Value{"proof": cbor.Bytes(make([]byte, identity.SignatureSize(w.profile)))}), nil, ErrProofInvalid, RefusalNotAccepted},
+			{"a CONNECT status issued 6 minutes ahead of the station", rebuilt(t, connect, map[string]cbor.Value{"connect_status": aheadOfStation.Value()}), nil, identity.ErrStatusFutureDated, RefusalNotAccepted},
 		}
 		if w.profile == profile.PQHybrid {
 			cases = append(cases,

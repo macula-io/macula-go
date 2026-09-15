@@ -147,6 +147,8 @@ func TestAStatusStatementKeepsItsBindingInForceForAtMostAnHour(t *testing.T) {
 		}{
 			{"4 minutes after expiry", status, binding, bindingNow + hourMs + 4*minuteMs, nil},
 			{"6 minutes after expiry", status, binding, bindingNow + hourMs + 6*minuteMs, ErrStatusExpired},
+			{"issued 4 minutes ahead", later, binding, bindingNow + 6*minuteMs, nil},
+			{"issued 6 minutes ahead", later, binding, bindingNow + 4*minuteMs, ErrStatusFutureDated},
 			{"issued 10 minutes ahead", later, binding, bindingNow, ErrStatusFutureDated},
 			{"for another binding", status, other, bindingNow, ErrStatusBindingMismatch},
 			{"an altered signature", withFlippedSignature(status), binding, bindingNow, ErrStatusSignatureInvalid},
