@@ -9,6 +9,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -20,10 +22,23 @@ import (
 // open with "macula-node-key-v1", so one is never taken for the other.
 const keyFileMagic = "macula-node-key-seed-v1\x00"
 
+// maxKeyFileBytes is the most LoadKey reads. The key files this package
+// writes are a few KiB.
+const maxKeyFileBytes = 64 << 10
+
 // The refusals of LoadKey.
 var (
+	// ErrKeyFileNotRegular is a key file path that names something other than
+	// a regular file, directly or through a symlink.
+	ErrKeyFileNotRegular = errors.New("identity: the key file is not a regular file")
+	// ErrKeyFileOwner is a key file that a user other than the effective user
+	// owns.
+	ErrKeyFileOwner = errors.New("identity: the key file is owned by another user")
 	// ErrKeyFilePermissions is a key file its group or others can read.
 	ErrKeyFilePermissions = errors.New("identity: the key file can be read by its group or others")
+	// ErrKeyFileTooLarge is a key file longer than 64 KiB, which no key file
+	// is.
+	ErrKeyFileTooLarge = errors.New("identity: the key file is longer than 64 KiB")
 	// ErrBadKeyFile is a file that is not a key file in the seed form.
 	ErrBadKeyFile = errors.New("identity: not a key file in the seed form")
 	// ErrWrongPurpose is a key file that holds a key for another purpose.
@@ -45,6 +60,16 @@ var (
 	ErrRoundTripFailed = errors.New("identity: the key does not sign and verify")
 )
 
+// openKeyFile opens the key file LoadKey reads. Tests replace it to act
+// between LoadKey's checks.
+var openKeyFile = func(name string) (*os.File, error) {
+	return os.OpenFile(name, keyFileOpenFlags, 0)
+}
+
+// effectiveUID is the user id a key file's owner must have, negative where the
+// platform has none. Tests replace it.
+var effectiveUID = os.Geteuid
+
 // The tags a key file names a purpose, a profile and a half's algorithm by.
 const (
 	tagMLDSASeed = 1
@@ -61,27 +86,41 @@ var (
 // Save writes k to path in the seed form: the magic, the purpose, profile and
 // half count, then each half as its algorithm tag and its public and private
 // keys, each length-prefixed in four big-endian bytes. An ML-DSA-87 half keeps
-// its 32-byte seed, and an RSA-PSS half its PKCS #1 key. The file is readable
-// by its owner only before the key is written into it, and replaces any file
-// at path in one rename.
+// its 32-byte seed, and an RSA-PSS half its PKCS #1 key.
+//
+// The file is created, readable by its owner only, inside a new owner-only
+// directory beside path, and written, synced and renamed over any file at path.
+// Save then syncs path's directory and removes the new one. It reads, writes
+// and removes nothing else, whatever path's directory already holds.
 func (k *NodeKey) Save(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("identity: save key: %w", err)
-	}
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("identity: save key: %w", err)
-	}
-	if err := writeRestricted(f, k.fileBytes()); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("identity: save key: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := k.save(path); err != nil {
 		return fmt.Errorf("identity: save key: %w", err)
 	}
 	return nil
+}
+
+func (k *NodeKey) save(path string) (err error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	staging, err := os.MkdirTemp(dir, "."+filepath.Base(path)+".saving-")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, os.RemoveAll(staging)) }()
+	staged := filepath.Join(staging, "key")
+	f, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := writeRestricted(f, k.fileBytes()); err != nil {
+		return err
+	}
+	if err := os.Rename(staged, path); err != nil {
+		return err
+	}
+	return syncDir(dir)
 }
 
 // writeRestricted makes f readable by its owner only, then writes contents,
@@ -123,12 +162,18 @@ func appendHalf(out []byte, tag byte, public, private []byte) []byte {
 }
 
 // LoadKey reads the key saved at path for purpose in profile p, and checks it
-// before returning it. It refuses a file its group or others can read, a key
-// for another purpose or profile, halves that do not fit the profile, a stored
-// public key that differs from the one its private key derives, and a key that
-// fails a sign-and-verify round trip.
+// before returning it.
+//
+// It follows a symlink at path, as macula does, and checks the file it
+// reaches. It refuses a path that names anything but a regular file before
+// opening it, and checks the opened file again: a regular file, owned by the
+// effective user where the platform has user ids, that its group and others
+// cannot read, of at most 64 KiB. It then refuses a key for another purpose or
+// profile, halves that do not fit the profile, a stored public key that differs
+// from the one its private key derives, and a key that fails a sign-and-verify
+// round trip.
 func LoadKey(path string, purpose Purpose, p profile.Profile) (*NodeKey, error) {
-	contents, err := readOwnerOnly(path)
+	contents, err := readKeyFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -143,26 +188,52 @@ func LoadKey(path string, purpose Purpose, p profile.Profile) (*NodeKey, error) 
 	return key, roundTrip(key)
 }
 
-// readOwnerOnly is the contents of the file at path, refused when its group or
-// others can read it. The mode is checked on the open file it reads.
-func readOwnerOnly(path string) ([]byte, error) {
-	f, err := os.Open(path)
+// readKeyFile is the contents of the key file at path, read only once the path
+// names a regular file and the opened file passes ownerOnly.
+func readKeyFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("identity: load key: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, ErrKeyFileNotRegular
+	}
+	f, err := openKeyFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("identity: load key: %w", err)
 	}
 	defer f.Close()
-	info, err := f.Stat()
+	opened, err := f.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("identity: load key: %w", err)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return nil, ErrKeyFilePermissions
+	if err := ownerOnly(opened); err != nil {
+		return nil, err
 	}
-	var contents bytes.Buffer
-	if _, err := contents.ReadFrom(f); err != nil {
+	contents, err := io.ReadAll(io.LimitReader(f, maxKeyFileBytes+1))
+	if err != nil {
 		return nil, fmt.Errorf("identity: load key: %w", err)
 	}
-	return contents.Bytes(), nil
+	if len(contents) > maxKeyFileBytes {
+		return nil, ErrKeyFileTooLarge
+	}
+	return contents, nil
+}
+
+// ownerOnly refuses an opened key file that is not a regular file, that a user
+// other than the effective user owns, or that its group or others can read.
+func ownerOnly(info fs.FileInfo) error {
+	if !info.Mode().IsRegular() {
+		return ErrKeyFileNotRegular
+	}
+	euid := effectiveUID()
+	if owner, known := fileOwner(info); known && euid >= 0 && owner != euid {
+		return ErrKeyFileOwner
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return ErrKeyFilePermissions
+	}
+	return nil
 }
 
 // keyFile is a key file as read, before its halves are checked.
@@ -227,16 +298,17 @@ func parseHalf(b []byte) (storedHalf, []byte, error) {
 }
 
 // lengthPrefixed is the field b starts with, after its four-byte big-endian
-// length, and what follows it.
+// length, and what follows it. The length is compared and added as a uint64,
+// which a four-byte length cannot overflow.
 func lengthPrefixed(b []byte) (field, rest []byte, ok bool) {
 	if len(b) < 4 {
 		return nil, nil, false
 	}
-	n := binary.BigEndian.Uint32(b)
-	if uint64(n) > uint64(len(b)-4) {
+	end := 4 + uint64(binary.BigEndian.Uint32(b))
+	if end > uint64(len(b)) {
 		return nil, nil, false
 	}
-	return b[4 : 4+n], b[4+n:], true
+	return b[4:end], b[end:], true
 }
 
 // checkedKey is the key a file holds, when it is for purpose in profile p and

@@ -228,3 +228,18 @@ func TestLoadRefusesAKeyItCannotTrust(t *testing.T) {
 		})
 	}
 }
+
+// LoadKey reads at most maxKeyFileBytes: a file one byte longer is refused as
+// too large, and a file of exactly that length is read and judged by what it
+// holds.
+func TestLoadRefusesAKeyFileLongerThanTheCap(t *testing.T) {
+	valid := keyFileBytes(1, 1, mldsaComponent(sharedKey(t, pureIdentityKey)))
+	atCap := append(bytes.Clone(valid), make([]byte, maxKeyFileBytes-len(valid))...)
+	if _, err := LoadKey(writtenKeyFile(t, atCap), PurposeIdentity, profile.PQPure); !errors.Is(err, ErrBadKeyFile) {
+		t.Errorf("a file of %d bytes: LoadKey = %v, want ErrBadKeyFile", len(atCap), err)
+	}
+	overCap := append(atCap, 0)
+	if _, err := LoadKey(writtenKeyFile(t, overCap), PurposeIdentity, profile.PQPure); !errors.Is(err, ErrKeyFileTooLarge) {
+		t.Errorf("a file of %d bytes: LoadKey = %v, want ErrKeyFileTooLarge", len(overCap), err)
+	}
+}

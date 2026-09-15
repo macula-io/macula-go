@@ -44,9 +44,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ML-DSA-87-PS384, valid only if both halves verify. A node key never shows a
   private half when printed or logged.
 - `NodeKey.Save` and `identity.LoadKey`: key files in the seed form, readable
-  by their owner only. Loading refuses a file its group or others can read, a
-  key for another purpose or profile, a stored public key its private key does
-  not derive, and a key that fails a sign-and-verify round trip.
+  by their owner only. `Save` creates the file exclusively in a new owner-only
+  directory beside the path, syncs it, renames it over the path, syncs the
+  path's directory and removes the new one, leaving anything else beside the
+  path as it was. `LoadKey` follows a symlink, as macula does, and checks the
+  file it reaches. It refuses a path that names anything but a regular file
+  (`ErrKeyFileNotRegular`) before opening it and again on the opened file,
+  which it opens without waiting on a FIFO; a file another user owns
+  (`ErrKeyFileOwner`), where the platform has user ids; a file its group or
+  others can read (`ErrKeyFilePermissions`); a file longer than 64 KiB
+  (`ErrKeyFileTooLarge`); a key for another purpose or profile; a stored public
+  key its private key does not derive; and a key that fails a sign-and-verify
+  round trip.
 - `identity.TLSBinding`, `ConnectBinding` and `StatusStatement` issue the
   signed structures that bind a TLS or CONNECT key to an identity key, and
   that keep a binding in force, as a `SignedTBS` of `tbs` and `signature`.
