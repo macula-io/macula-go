@@ -45,8 +45,11 @@ jobs:
       - run: GOARCH=386 CGO_ENABLED=0 go test ./cbor ./frame ./manifest
       # A binary built with GOFIPS140=v1.0.0 has no ML-DSA. These tests check
       # that its key operations, verifiers and dials say so. go test -run passes
-      # when no test matches, so each test must also report a PASS line.
-      - run: |
+      # when no test matches, so each test must also report a PASS line. shell:
+      # bash runs the step with pipefail, so go test's own exit status counts
+      # through tee.
+      - shell: bash
+        run: |
           GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport -run SaysWhetherTheBinaryHasMLDSA -count=1 -v | tee gofips140.log
           for name in TestAKeyOperationSaysWhetherTheBinaryHasMLDSA TestAVerifierSaysWhetherTheBinaryHasMLDSA TestReadStatusSaysWhetherTheBinaryHasMLDSA TestDialTargetSaysWhetherTheBinaryHasMLDSA; do
             grep -q -- "--- PASS: $name " gofips140.log || { echo "no PASS line for $name"; exit 1; }
