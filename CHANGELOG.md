@@ -158,7 +158,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `VerifyHeldObject` (and so from the handshake's checks and from
   `frame.VerifyRequest`, `VerifyReply`, `VerifyRelayError`,
   `VerifyProviderStream`, `VerifyCallerStream` and `VerifyPublication`, and
-  from `record.Verify`), and
+  from `record.Verify` and `record.VerifyAuthorization`), and
   `transport.DialTarget` (before dialing), instead of an error that blames a
   signature or a TLS handshake. Build without `GOFIPS140`, or with
   `GOFIPS140=v1.26.0` or later. CI runs the tests for it under
@@ -281,6 +281,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   derives a record's DHT storage key, and `ProcedureKey`, `ContentKey`,
   `StationEndpointKey`, `OrgDirectoryKey` and `ProcedureDelegationKey` derive
   the keys a lookup needs.
+  `VerifyAuthorization` checks a verified procedure advertisement's provider
+  authorization against a caller's `Trust`, the realm key, as `macula_record`'s
+  `verify_authorization` does. `ProcedureOrg` reads the procedure's org
+  namespace. The org directory, signed by the realm key, must name the
+  advertisement's realm and the procedure's org, and the procedure delegation,
+  signed by the org key the directory names, must name the advertiser
+  (`ReadOrgDirectory`, `ReadProcedureDelegation`); the advertisement expires
+  no later than either. An authorization in any other form is
+  `ErrAuthorizationFormUnsupported`, and each refusal has its own error, from
+  `ErrNoAuthorization` to `ErrAuthorizationOutlived`.
 
 ### Fixed
 
