@@ -242,7 +242,7 @@ func Verify(token []byte, publicKey []byte) (Payload, error) {
 		return Payload{}, ErrInvalidToken
 	}
 	signingInput := headerB64 + "." + payloadB64
-	if !identity.Verify(publicKey, []byte(signingInput), sig) {
+	if !identity.VerifyEd25519(publicKey, []byte(signingInput), sig) {
 		return Payload{}, ErrInvalidSignature
 	}
 	return payload, nil

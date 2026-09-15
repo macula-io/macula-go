@@ -21,6 +21,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `frame.CheckPayload` refuses what that rule refuses: byte-string map keys,
   integers outside -2^63 to 2^63-1, text that is not valid UTF-8, and payloads
   nested more than `frame.MaxPayloadNesting` (63) levels.
+- `identity.Verify` checks a signature by a node key (see Added). The Ed25519
+  check it replaces is `identity.VerifyEd25519` for now.
+- macula-go requires Go 1.27.
+
+### Added
+
+- `profile`: the crypto profiles `pq_pure` and `pq_hybrid`, parsed from
+  configuration with no default, and each profile's key exchange group, TLS
+  signature scheme, cipher suite and signature algorithm.
+- `identity.NodeKey`: a node's identity or CONNECT key in its profile, with
+  `GenerateKey`, `GenerateIdentityKey` for a node_id puzzle difficulty, `Sign`,
+  `PublicKey` in the carried form, `NodeID` and `KeyID`, and the functions
+  `Verify`, `NodeIDOf`, `KeyIDOf`, `CarriedKeyWellFormed`, `SignatureSize` and
+  `PuzzleSolved`. In `pq_hybrid` a key signs Macula's composite
+  ML-DSA-87-PS384, valid only if both halves verify. A node key never shows a
+  private half when printed or logged.
+- `NodeKey.Save` and `identity.LoadKey`: key files in the seed form, readable
+  by their owner only. Loading refuses a file its group or others can read, a
+  key for another purpose or profile, a stored public key its private key does
+  not derive, and a key that fails a sign-and-verify round trip.
 
 ### Fixed
 

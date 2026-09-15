@@ -66,7 +66,7 @@ func VerifyPublisher(frameVal cbor.Value) error {
 		return ErrBadPublisherSig
 	}
 	signable := publisherSigningBytes(frameVal)
-	if identity.Verify(pub, signable, sig) {
+	if identity.VerifyEd25519(pub, signable, sig) {
 		return nil
 	}
 	return ErrPublisherSigInvalid

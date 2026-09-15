@@ -45,7 +45,7 @@ func Verify(frameVal cbor.Value, pubkey []byte) error {
 		return ErrBadSignature
 	}
 	signable := signableBytes(frameVal)
-	if identity.Verify(pubkey, signable, sig) {
+	if identity.VerifyEd25519(pubkey, signable, sig) {
 		return nil
 	}
 	return ErrSignatureInvalid

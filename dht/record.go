@@ -153,7 +153,7 @@ func Verify(r Record) error {
 		return ErrInvalidSignature
 	}
 	msg := append([]byte(sigDomain), canonicalUnsigned(r)...)
-	if !identity.Verify(r.Key, msg, r.Signature) {
+	if !identity.VerifyEd25519(r.Key, msg, r.Signature) {
 		return ErrInvalidSignature
 	}
 	if r.ExpiresAt > 0 && time.Now().UnixMilli() >= r.ExpiresAt {

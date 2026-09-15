@@ -76,10 +76,10 @@ func TestSignVerify(t *testing.T) {
 	}
 	msg := []byte("macula-v2-frame\x00some canonical bytes")
 	sig := kp.Sign(msg)
-	if !Verify(kp.NodeID(), msg, sig) {
+	if !VerifyEd25519(kp.NodeID(), msg, sig) {
 		t.Error("Verify: valid signature rejected")
 	}
-	if Verify(kp.NodeID(), []byte("tampered"), sig) {
+	if VerifyEd25519(kp.NodeID(), []byte("tampered"), sig) {
 		t.Error("Verify: accepted a signature over the wrong message")
 	}
 }

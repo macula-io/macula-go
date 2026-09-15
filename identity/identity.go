@@ -160,9 +160,9 @@ func (k KeyPair) Sign(data []byte) []byte {
 	return ed25519.Sign(k.Private, data)
 }
 
-// Verify reports whether sig is a valid Ed25519 signature over data by
-// the identity whose public key is nodeID.
-func Verify(nodeID, data, sig []byte) bool {
+// VerifyEd25519 reports whether sig is a valid Ed25519 signature over data
+// by the identity whose public key is nodeID.
+func VerifyEd25519(nodeID, data, sig []byte) bool {
 	if len(nodeID) != ed25519.PublicKeySize {
 		return false
 	}
