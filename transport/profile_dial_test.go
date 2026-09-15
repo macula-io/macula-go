@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/mldsa"
 	"crypto/rand"
@@ -37,6 +38,9 @@ type stationSpec struct {
 	aes256 bool
 	// chain presents the leaf twice, as a two-certificate chain.
 	chain bool
+	// protocols are the ALPN protocols the station accepts, macula's alone
+	// when empty.
+	protocols []string
 }
 
 // testStation is a station in a test: a QUIC listener on loopback, and the
@@ -84,6 +88,9 @@ func startStation(t *testing.T, spec stationSpec) testStation {
 		CurvePreferences: spec.groups,
 		MinVersion:       tls.VersionTLS13,
 		NextProtos:       []string{ALPN},
+	}
+	if len(spec.protocols) > 0 {
+		config.NextProtos = spec.protocols
 	}
 	if spec.aes256 {
 		config.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
@@ -160,8 +167,8 @@ func TestDialTargetReachesAStationOfItsProfile(t *testing.T) {
 }
 
 // A profile dial refuses a station that does not follow the profile: another
-// group, a suite other than AES-256, a leaf that is not ML-DSA-87, or more than
-// one certificate.
+// group, a suite other than AES-256, a leaf that is not ML-DSA-87, more than
+// one certificate, or an ALPN protocol other than macula's.
 func TestDialTargetRefusesAStationThatDoesNotFollowTheProfile(t *testing.T) {
 	pure := []tls.CurveID{tls.MLKEM1024}
 	cases := []struct {
@@ -191,6 +198,16 @@ func TestDialTargetRefusesAStationThatDoesNotFollowTheProfile(t *testing.T) {
 		{"a station that presents two certificates", func(t *testing.T) stationSpec {
 			return stationSpec{groups: pure, key: mldsa87Key(t), aes256: true, chain: true}
 		}, ErrStationCertificate},
+		{"a station with an Ed25519 leaf", func(t *testing.T) stationSpec {
+			_, key, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatalf("Ed25519 key: %v", err)
+			}
+			return stationSpec{groups: pure, key: key, aes256: true}
+		}, ErrStationCertificate},
+		{"a station that speaks another ALPN protocol", func(t *testing.T) stationSpec {
+			return stationSpec{groups: pure, key: mldsa87Key(t), aes256: true, protocols: []string{"not-macula"}}
+		}, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

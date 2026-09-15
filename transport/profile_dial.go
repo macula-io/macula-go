@@ -98,18 +98,21 @@ func dialable(target Target) (profile.Definition, error) {
 	return p.Definition()
 }
 
-// profileTLSConfig is a profile's TLS 1.3 client configuration. Its
-// VerifyConnection refuses a handshake that does not follow the profile, and
-// hands the refusal to refused, so the dial can return it whatever error the
-// QUIC layer wraps it in.
+// profileTLSConfig is a profile's TLS 1.3 client configuration. It holds no
+// session cache and disables session tickets, so no connection resumes, and
+// offers only macula's ALPN protocol, which crypto/tls requires a QUIC server
+// to select. Its VerifyConnection refuses a handshake that does not follow the
+// profile, and hands the refusal to refused, so the dial can return it
+// whatever error the QUIC layer wraps it in.
 func profileTLSConfig(serverName string, definition profile.Definition, refused chan<- error) *tls.Config {
 	return &tls.Config{
-		ServerName:         serverName,
-		NextProtos:         []string{ALPN},
-		MinVersion:         tls.VersionTLS13,
-		MaxVersion:         tls.VersionTLS13,
-		CurvePreferences:   []tls.CurveID{definition.KeyExchangeGroup},
-		InsecureSkipVerify: true, // self-signed station certificates: VerifyConnection checks the profile instead
+		ServerName:             serverName,
+		NextProtos:             []string{ALPN},
+		MinVersion:             tls.VersionTLS13,
+		MaxVersion:             tls.VersionTLS13,
+		CurvePreferences:       []tls.CurveID{definition.KeyExchangeGroup},
+		SessionTicketsDisabled: true,
+		InsecureSkipVerify:     true, // self-signed station certificates: VerifyConnection checks the profile instead
 		VerifyConnection: func(state tls.ConnectionState) error {
 			err := checkProfileConnection(state, definition)
 			if err != nil {
