@@ -320,6 +320,9 @@ The live suite is gated behind the `live` build tag — excluded from
 this module doesn't control and a station blip must never block an
 unrelated PR. Same convention as `macula-rust`'s `tests/live_station.rs`.
 
+Checks against a compiled macula, in both directions, live in `scripts/interop/` (see its README). They need macula
+built with its NIFs and OTP 28, so they are not part of `go test ./...` or CI either.
+
 ## Known limitations
 
 - **`directdial.GetDirect` can only resolve a `content_announcement`
