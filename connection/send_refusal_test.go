@@ -2,8 +2,8 @@ package connection
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
@@ -48,21 +48,23 @@ func servedReply(t *testing.T, s *Session, fc *fakeControl, id identity.KeyPair,
 // A handler's reply that breaks the decoding rule, or the frame cap, is never
 // written. The caller gets an ERROR in its place, with the code
 // macula_station_link answers an unsendable result with, the provider logs
-// the refusal, and the session stays up.
+// the refusal as a drop warning naming the call, and the session stays up.
 func TestAHandlerReplyRefusedBeforeItIsWrittenIsAnsweredWithAnError(t *testing.T) {
 	cases := []struct {
-		name  string
-		reply cbor.Value
-		code  bolt4.Code
+		name   string
+		reply  cbor.Value
+		code   bolt4.Code
+		reason string
 	}{
-		{"a reply over the element budget", overTheBudget(), bolt4.UnknownError},
-		{"a reply over the frame cap", overTheCap(), bolt4.PayloadTooLarge},
+		{"a reply over the element budget", overTheBudget(), bolt4.UnknownError, "breaks_decoding_rule"},
+		{"a reply over the frame cap", overTheCap(), bolt4.PayloadTooLarge, "over_frame_cap"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s, fc, id := readingSession(t)
 			logged := &lockedBuffer{}
 			s.SetLogger(slog.New(slog.NewTextHandler(logged, nil)))
+			captureDropIntervals(s)
 			call, err := servedReply(t, s, fc, id, c.reply)
 			if err != nil {
 				t.Fatalf("ServeOneCallGated = %v, want the call answered", err)
@@ -74,13 +76,36 @@ func TestAHandlerReplyRefusedBeforeItIsWrittenIsAnsweredWithAnError(t *testing.T
 			if !resp.IsError || resp.Code != uint8(c.code) {
 				t.Errorf("the reply is (error %t, code %#x), want an ERROR with code %#x", resp.IsError, resp.Code, uint8(c.code))
 			}
-			if !strings.Contains(logged.String(), "refused before it was written") {
-				t.Errorf("the provider logged %q, want the refused reply logged", logged.String())
+			callID, _ := frame.FrameCallID(call)
+			callIDField := fmt.Sprintf("call_id=%X", callID[:4])
+			if lines := dropWarnings(logged); len(lines) != 1 || !hasFields(lines[0], "kind=refused_reply", "count=1", "reason="+c.reason, callIDField) {
+				t.Errorf("drop warnings = %q, want one refused_reply line for the call, for %s", lines, c.reason)
 			}
 			if err := s.Err(); err != nil {
 				t.Errorf("Session.Err() = %v, want the session up", err)
 			}
 		})
+	}
+}
+
+// Refused replies are warned about as drops are: the first in an interval at
+// once, and the rest in one closing line when the interval ends.
+func TestRefusedRepliesAreWarnedAboutOncePerInterval(t *testing.T) {
+	s, fc, id := readingSession(t)
+	logged := &lockedBuffer{}
+	s.SetLogger(slog.New(slog.NewTextHandler(logged, nil)))
+	intervals := captureDropIntervals(s)
+	for range 3 {
+		if _, err := servedReply(t, s, fc, id, overTheBudget()); err != nil {
+			t.Fatalf("ServeOneCallGated = %v, want the call answered", err)
+		}
+	}
+	if lines := dropWarnings(logged); len(lines) != 1 || !hasFields(lines[0], "kind=refused_reply", "count=1") {
+		t.Fatalf("drop warnings during the burst = %q, want one line, for the first refused reply", lines)
+	}
+	intervals.endAll()
+	if lines := dropWarnings(logged); len(lines) != 2 || !hasFields(lines[1], "kind=refused_reply", "count=2") {
+		t.Fatalf("drop warnings after the interval = %q, want a closing line counting the other two", lines)
 	}
 }
 

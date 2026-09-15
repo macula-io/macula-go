@@ -31,6 +31,14 @@ const (
 	dropCall              dropKind = "dropped_call"
 	dropReply             dropKind = "dropped_reply"
 	dropOtherFrame        dropKind = "dropped_frame"
+	dropRefusedReply      dropKind = "refused_reply"
+
+	// reasonOverFrameCap is a handler's reply whose frame is over the frame
+	// cap, so it is never written.
+	reasonOverFrameCap dropReason = "over_frame_cap"
+	// reasonBreaksDecodingRule is a handler's reply whose frame the decoding
+	// rule would refuse where it arrives, so it is never written.
+	reasonBreaksDecodingRule dropReason = "breaks_decoding_rule"
 
 	// reasonUnsigned is a frame whose signature is missing or isn't 64 bytes,
 	// or whose signer field is missing or isn't a 32-byte key.

@@ -98,9 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a frame over the cap with `frame.ErrFrameTooLarge`. Every frame a
   `connection.FrameStream` sends passes both before anything is written, so a
   call, publish or stream frame that fails either returns that error. A
-  handler reply that fails either is logged, and the call is answered with an
-  ERROR instead: `PayloadTooLarge` for a reply over the cap, `UnknownError`
-  otherwise.
+  handler reply that fails either is answered with an ERROR instead:
+  `PayloadTooLarge` for a reply over the cap, `UnknownError` otherwise. It is
+  warned about as a `refused_reply` drop, one line per interval as other drops
+  are, and the call is not announced on `rpc.replied_v1`, which a provider now
+  announces only once the handler's reply is written.
 
 ### Fixed
 

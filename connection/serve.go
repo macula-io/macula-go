@@ -88,22 +88,18 @@ func (s *Session) ServeOneCall(lookup CallLookup, id identity.KeyPair, timeout t
 // (0x10) WITHOUT ever invoking lookup or a handler if it doesn't — a
 // CallHandler never sees the raw token either way, matching the
 // reference's own handler contract (payload only).
+//
+// A handler's reply that is refused before it is written, over the frame cap
+// or breaking the decoding rule, is replaced by an ERROR, as
+// macula_station_link's sent_or_faulted/4 answers one, and warned about as a
+// refused_reply drop. The call is announced as replied only once the
+// handler's reply is written.
 func (s *Session) ServeOneCallGated(lookup CallLookup, policy PolicyLookup, id identity.KeyPair, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case callInfo := <-s.rt.calls:
-		reply := buildCallReply(s, callInfo, lookup, policy, id)
-		err := s.send(frame.Sign(reply, id), time.Now().Add(s.sendTimeoutOrDefault()), nil)
-		if code, refused := refusalCode(err); refused {
-			s.warnRefusedReply(err)
-			fault := frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, code, id.NodeID()))
-			err = s.send(frame.Sign(fault, id), time.Now().Add(s.sendTimeoutOrDefault()), nil)
-		}
-		if err != nil {
-			return fmt.Errorf("connection: serve_one_call: %w", err)
-		}
-		return nil
+		return s.answerCall(callInfo, lookup, policy, id)
 	case <-s.rt.endedCh:
 		return fmt.Errorf("connection: serve_one_call: %w", s.endedErr())
 	case <-timer.C:
@@ -111,48 +107,67 @@ func (s *Session) ServeOneCallGated(lookup CallLookup, policy PolicyLookup, id i
 	}
 }
 
-// refusalCode is the BOLT#4 code a call is answered with when its reply was
-// refused before it was written, as macula_station_link's sent_or_faulted/4
-// answers one: PayloadTooLarge for a reply over the frame cap, UnknownError for
-// one the decoding rule would refuse. It reports false for any other error.
-func refusalCode(err error) (bolt4.Code, bool) {
-	switch {
-	case errors.Is(err, frame.ErrFrameTooLarge):
-		return bolt4.PayloadTooLarge, true
-	case errors.Is(err, frame.ErrFrameBreaksDecodingRule):
-		return bolt4.UnknownError, true
-	default:
-		return 0, false
+// answerCall dispatches callInfo and writes its reply. A reply refused before
+// it is written is warned about and replaced by an ERROR with the refusal's
+// code. The rpc.replied_v1 fact is announced only after the handler's own
+// reply is written.
+func (s *Session) answerCall(callInfo frame.CallInfo, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) error {
+	reply, replied := buildCallReply(s, callInfo, lookup, policy, id)
+	err := s.send(frame.Sign(reply, id), time.Now().Add(s.sendTimeoutOrDefault()), nil)
+	refusal, refused := refusedReply(err)
+	if refused {
+		s.warnDrop(dropRefusedReply, refusal.reason, callIDDetail(callInfo.CallID))
+		fault := frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, refusal.code, id.NodeID()))
+		err = s.send(frame.Sign(fault, id), time.Now().Add(s.sendTimeoutOrDefault()), nil)
 	}
+	if err != nil {
+		return fmt.Errorf("connection: serve_one_call: %w", err)
+	}
+	if replied != nil && !refused {
+		replied()
+	}
+	return nil
 }
 
-// warnRefusedReply logs, when the session has a logger, that a call's reply
-// was refused before it was written and the call is answered with an error.
-func (s *Session) warnRefusedReply(err error) {
-	s.rt.mu.Lock()
-	logger := s.rt.logger
-	s.rt.mu.Unlock()
-	if logger != nil {
-		logger.Warn("macula: a call's reply was refused before it was written; answering the call with an error",
-			"reason", loggable(err.Error()))
+// replyRefusal is how a call is answered, and the refusal warned about, when
+// its reply was refused before it was written.
+type replyRefusal struct {
+	code   bolt4.Code
+	reason dropReason
+}
+
+// refusedReply is the refusal of a reply that err refused before it was
+// written, with the code macula_station_link's sent_or_faulted/4 answers such
+// a call with: PayloadTooLarge for a reply over the frame cap, UnknownError for
+// one the decoding rule would refuse. It reports false for any other error.
+func refusedReply(err error) (replyRefusal, bool) {
+	switch {
+	case errors.Is(err, frame.ErrFrameTooLarge):
+		return replyRefusal{code: bolt4.PayloadTooLarge, reason: reasonOverFrameCap}, true
+	case errors.Is(err, frame.ErrFrameBreaksDecodingRule):
+		return replyRefusal{code: bolt4.UnknownError, reason: reasonBreaksDecodingRule}, true
+	default:
+		return replyRefusal{}, false
 	}
 }
 
 // replyToFrame builds the reply to an inbound frame and reports whether it
-// was a CALL to answer. A frame of another type, a malformed "call"-typed
-// frame, or a CALL whose signature doesn't verify against the caller it
-// names gets no reply. The last matches macula_station_link.erl's
-// on_inbound_call/3: such a CALL never reaches a policy or a handler, so the
-// caller a policy checks is the one that signed.
-func replyToFrame(s *Session, value cbor.Value, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) (cbor.Value, bool) {
+// was a CALL to answer, with the call's rpc.replied_v1 announcement for the
+// sender to make once the reply is written. A frame of another type, a
+// malformed "call"-typed frame, or a CALL whose signature doesn't verify
+// against the caller it names gets no reply. The last matches
+// macula_station_link.erl's on_inbound_call/3: such a CALL never reaches a
+// policy or a handler, so the caller a policy checks is the one that signed.
+func replyToFrame(s *Session, value cbor.Value, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) (cbor.Value, func(), bool) {
 	if frameType(value) != "call" {
-		return cbor.Value{}, false
+		return cbor.Value{}, nil, false
 	}
 	callInfo, reason := verifiedCall(value)
 	if reason != "" {
-		return cbor.Value{}, false
+		return cbor.Value{}, nil, false
 	}
-	return buildCallReply(s, callInfo, lookup, policy, id), true
+	reply, replied := buildCallReply(s, callInfo, lookup, policy, id)
+	return reply, replied, true
 }
 
 // verifiedCall parses value, a "call" frame, as a CALL whose signature
@@ -224,42 +239,46 @@ func isCallerKey(key cbor.Value) bool {
 	return isText && text == "caller"
 }
 
-// buildCallReply fires rpc.received_v1/rpc.replied_v1 around dispatch,
-// matching macula_response.erl's own per-request child exactly: RECEIVED
-// only after policy and lookup both pass (mirroring the child only
-// starting once the raw advertise mechanism already decided to dispatch
-// to a real handler), REPLIED for the success/handler-error outcomes but
-// NOT for a handler panic -- the reference's own handle_request/2 crash
-// takes down the whole per-request child before its publish_replied/2
-// call is ever reached, so a crash is never announced there either, and
-// this matches that omission rather than "improving" on it.
-func buildCallReply(s *Session, callInfo frame.CallInfo, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) cbor.Value {
+// buildCallReply dispatches an inbound CALL and builds its reply, firing
+// rpc.received_v1 as macula_response.erl's own per-request child does: only
+// after policy and lookup both pass (mirroring the child only starting once
+// the raw advertise mechanism already decided to dispatch to a real handler).
+//
+// It returns the reply with the call's rpc.replied_v1 announcement for the
+// success and handler-error outcomes, which the sender makes once the reply is
+// written, so a reply refused before it is written is never announced as
+// replied. A handler panic gets no announcement -- the reference's own
+// handle_request/2 crash takes down the whole per-request child before its
+// publish_replied/2 call is ever reached, so a crash is never announced there
+// either, and this matches that omission rather than "improving" on it.
+func buildCallReply(s *Session, callInfo frame.CallInfo, lookup CallLookup, policy PolicyLookup, id identity.KeyPair) (cbor.Value, func()) {
 	selfPub := id.NodeID()
 	if err := policy(callInfo.Realm, callInfo.Procedure).Check(callInfo.UcanToken, callInfo.Caller); err != nil {
-		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.Unauthorized, selfPub))
+		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.Unauthorized, selfPub)), nil
 	}
 
 	handler, found := lookup(callInfo.Realm, callInfo.Procedure)
 	if !found {
-		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.UnknownNextPeer, selfPub))
+		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.UnknownNextPeer, selfPub)), nil
 	}
 
 	requestID := randomID()
 	announceRPCReceived(s, callInfo.Realm, id, requestID)
+	repliedWith := func(handlerErr error) func() {
+		return func() { announceRPCReplied(s, callInfo.Realm, id, requestID, handlerErr) }
+	}
 
 	payload, err, crashed := invokeCallHandler(handler, withCaller(callInfo.Payload, callInfo.Caller))
 	switch {
 	case crashed:
-		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.TemporaryRelayFailure, selfPub))
+		return frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, bolt4.TemporaryRelayFailure, selfPub)), nil
 	case err != nil:
-		announceRPCReplied(s, callInfo.Realm, id, requestID, err)
 		spec := frame.NewCallErrorSpec(callInfo.CallID, bolt4.UnknownError, selfPub)
 		detail := err.Error()
 		spec.Detail = &detail
-		return frame.CallErrorFrame(spec)
+		return frame.CallErrorFrame(spec), repliedWith(err)
 	default:
-		announceRPCReplied(s, callInfo.Realm, id, requestID, nil)
-		return frame.Result(frame.NewResultSpec(callInfo.CallID, payload, selfPub))
+		return frame.Result(frame.NewResultSpec(callInfo.CallID, payload, selfPub)), repliedWith(nil)
 	}
 }
 
