@@ -327,7 +327,7 @@ A binary built with `GOFIPS140=v1.0.0` has no ML-DSA (see Known limitations). CI
 says so, and requires a PASS line from each. They run locally the same way:
 
 ```bash
-GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame -run SaysWhetherTheBinaryHasMLDSA -v
+GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record -run SaysWhetherTheBinaryHasMLDSA -v
 ```
 
 ## Known limitations

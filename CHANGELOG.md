@@ -157,7 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `VerifyTLSBinding`, `VerifyConnectBinding`, `VerifyStatus`, `VerifyObject`
   and `VerifyHeldObject` (and so from the handshake's checks and from
   `frame.VerifyRequest`, `VerifyReply`, `VerifyRelayError`,
-  `VerifyProviderStream`, `VerifyCallerStream` and `VerifyPublication`), and
+  `VerifyProviderStream`, `VerifyCallerStream` and `VerifyPublication`, and
+  from `record.Verify`), and
   `transport.DialTarget` (before dialing), instead of an error that blames a
   signature or a TLS handshake. Build without `GOFIPS140`, or with
   `GOFIPS140=v1.26.0` or later. CI runs the tests for it under
@@ -236,6 +237,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (published more than 5 minutes ahead) or `ErrExpired` (past its ttl_ms, or
   10 minutes without one, plus 5 minutes), and in a binary without ML-DSA with
   `identity.ErrPostQuantumUnavailable`.
+- `record`: macula 11.0.0's records, the signed object under
+  `MACULA-PQ-RECORD-V1`, as `macula_record` has them at merge-11.0.0
+  0d8abf3d. `record.Sign` refuses, in macula's order, a key whose purpose does
+  not fit the type (`ErrKeyPurposeMismatch`; a Go key signs the types an
+  identity key signs), a lifetime that runs backwards or past its type's
+  maximum (`ErrLifetimeReversed`, `ErrLifetimeTooLong`), a payload that names
+  another signer (`ErrKeyIDMismatch`) and a record over 256 KiB
+  (`ErrRecordTooLarge`). `record.Verify` reads a record's wire form in macula's
+  order: its size, its shape, its signature, a tbs of exactly its fields,
+  created_at and expires_at within 5 minutes of the verifier's clock
+  (`ErrNotYetValid`, `ErrExpired`), the lifetime of its type, its type's
+  payload rules (`ErrMalformed`) and its named signer. A type lives at most 48
+  hours for a node record or content announcement, 5 minutes for a procedure
+  advertisement or station endpoint, 6 hours for realm stations, an org
+  directory or a procedure delegation, 30 days for a realm member endorsement,
+  7 days for a domain record and 30 days otherwise; a tombstone lives its
+  withdrawn type's maximum plus 10 minutes. A record is named by its signer's
+  node_id on the node-signed types and by its key id on every other type.
+  `NewNodeRecord` and `ReadNodeRecord` build and read node records,
+  `Envelope` builds domain records, `Refresh` signs a record again with a new
+  version, and `PayloadBounded` checks a payload before signing.
 
 ### Fixed
 
