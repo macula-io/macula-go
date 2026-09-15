@@ -11,10 +11,10 @@ import (
 // 81b90d7c. A domain record's subject is a non-empty binary: Envelope, Sign and
 // every verifier refuse an empty one, since it would name a slot apart from no
 // subject, and so does a tombstone's slot. A tombstone names a withdrawn type
-// from 1 to 255. macula's domain_record_checked/1 is a pool's check before it
-// signs a domain record as its node, and Go has no such pool. The domain
-// tombstone's lifetime and slot come with the tombstone builder and storage
-// keys.
+// from 1 to 255, and a domain record's tombstone signs within the domain
+// maximum plus twice the clock tolerance, on the record's slot. macula's
+// domain_record_checked/1 is a pool's check before it signs a domain record as
+// its node, and Go has no such pool.
 
 func TestAnEmptySubjectIsRefusedByEnvelope(t *testing.T) {
 	_, err := Envelope(DomainTypeMin, cbor.Map(nil), []byte{}, 0)
@@ -73,6 +73,26 @@ func TestAnEmptySubjectIsRefusedInATombstonesSlot(t *testing.T) {
 		}
 		wantRefusal(t, c.name, err, c.want)
 	}
+}
+
+// A domain record's tombstone signs within the domain maximum plus twice the
+// clock tolerance, on the record's slot, and a millisecond past that bound is
+// refused.
+func TestADomainRecordTombstoneSignsWithinTheMaximumAndTwiceTheToleranceOnItsSlot(t *testing.T) {
+	keys := keysFor(t)
+	withdrawn := must[Record](t)(Sign(must[Record](t)(Envelope(DomainTypeMin, cbor.Map(nil), []byte("s1"), uint64(7*testDay))), keys.node))
+	tombstone := must[Record](t)(NewTombstone(withdrawn, ReasonShutdown, TombstoneOptions{}))
+	tombstone.ExpiresAt = tombstone.CreatedAt + uint64(7*testDay+10*testMinute)
+	atBound := must[Record](t)(Sign(tombstone, keys.node))
+	if _, err := Verify(wireOf(t, atBound), profile.PQPure, nowMs()); err != nil {
+		t.Errorf("verify the tombstone at its bound: %v", err)
+	}
+	if must[[32]byte](t)(StorageKey(atBound)) != must[[32]byte](t)(StorageKey(withdrawn)) {
+		t.Error("the domain record's tombstone does not take its slot")
+	}
+	tombstone.ExpiresAt++
+	_, err := Sign(tombstone, keys.node)
+	wantRefusal(t, "sign the domain record's tombstone 1 ms past its bound", err, ErrLifetimeTooLong)
 }
 
 // A tombstone names a withdrawn type from 1 to 255, since every record type is

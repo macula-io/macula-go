@@ -264,6 +264,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an empty subject (`ErrInvalidSubject`), which a verifier refuses as
   malformed. `Refresh` signs a record again with a new version, and
   `PayloadBounded` checks a payload before signing.
+  `NewProcedureAdvertisement` and `ReadProcedureAdvertisement` build and read
+  procedure advertisements, whose provider authorization travels in the
+  payload in its delegation or certificate chain form and is never parsed by a
+  storing verifier. `NewContentAnnouncement` and `ReadContentAnnouncement`,
+  `NewStationEndpoint` and `ReadStationEndpoint`, and `NewTombstone` and
+  `ReadTombstone` build and read those records; a tombstone takes the slot of
+  the record it withdraws and outlives it by the clock tolerance. `StorageKey`
+  derives a record's DHT storage key, and `ProcedureKey`, `ContentKey`,
+  `StationEndpointKey`, `OrgDirectoryKey` and `ProcedureDelegationKey` derive
+  the keys a lookup needs.
 
 ### Fixed
 
