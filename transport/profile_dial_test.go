@@ -383,7 +383,9 @@ func TestDialTargetRefusesATargetItCannotCheck(t *testing.T) {
 // A profile dial's TLS configuration, per profile: TLS 1.3 alone, the profile's
 // group alone, macula's ALPN protocol alone, no session tickets and no session
 // cache, and the station's leaf checked in VerifyConnection, which crypto/tls
-// runs on every handshake, not in VerifyPeerCertificate.
+// runs on every handshake, not in VerifyPeerCertificate. No chain is checked
+// and no roots are set, so VerifyConnection is the only way a station is
+// accepted.
 func TestProfileTLSConfigFollowsTheProfile(t *testing.T) {
 	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
 		t.Run(string(p), func(t *testing.T) {
@@ -411,6 +413,10 @@ func TestProfileTLSConfigFollowsTheProfile(t *testing.T) {
 			if config.VerifyPeerCertificate != nil || config.VerifyConnection == nil {
 				t.Errorf("VerifyPeerCertificate set %t, VerifyConnection set %t, want VerifyConnection alone",
 					config.VerifyPeerCertificate != nil, config.VerifyConnection != nil)
+			}
+			if !config.InsecureSkipVerify || config.RootCAs != nil {
+				t.Errorf("InsecureSkipVerify %t, RootCAs set %t, want no chain check and no roots",
+					config.InsecureSkipVerify, config.RootCAs != nil)
 			}
 		})
 	}
@@ -462,5 +468,29 @@ func TestCheckProfileConnection(t *testing.T) {
 				t.Fatalf("checkProfileConnection = %v, want %v", err, c.want)
 			}
 		})
+	}
+}
+
+// keyOfScheme accepts a key only for a TLS signature scheme it maps to ML-DSA
+// parameters, and only a key of those parameters. For any other scheme it
+// refuses every key.
+func TestKeyOfSchemeAcceptsOnlyAKeyOfAMappedScheme(t *testing.T) {
+	key := mldsa87Key(t).Public()
+	cases := []struct {
+		name   string
+		key    any
+		scheme tls.SignatureScheme
+		want   bool
+	}{
+		{"an ML-DSA-87 key for ML-DSA-87", key, tls.MLDSA87, true},
+		{"an ML-DSA-87 key for ML-DSA-65", key, tls.MLDSA65, false},
+		{"an ML-DSA-87 key for Ed25519, a scheme with no ML-DSA parameters", key, tls.Ed25519, false},
+		{"an ML-DSA-87 key for a scheme TLS does not define", key, tls.SignatureScheme(0xfefe), false},
+		{"no key for ML-DSA-87", nil, tls.MLDSA87, false},
+	}
+	for _, c := range cases {
+		if got := keyOfScheme(c.key, c.scheme); got != c.want {
+			t.Errorf("%s: %t, want %t", c.name, got, c.want)
+		}
 	}
 }
