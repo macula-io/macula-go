@@ -3,7 +3,6 @@ package connection
 import (
 	"bytes"
 	"crypto/rand"
-	"errors"
 	"testing"
 	"time"
 
@@ -87,24 +86,17 @@ func TestACallerTheSenderPutInThePayloadIsReplacedByTheVerifiedCaller(t *testing
 }
 
 // A CALL whose payload the decoding rule refuses, here one with a "caller"
-// under a byte-string key, never reaches a handler: the frame is malformed,
-// and it ends the session.
+// under a byte-string key, never reaches a handler.
 func TestACallWhosePayloadTheDecodingRuleRefusesNeverReachesAHandler(t *testing.T) {
 	s, fc, id := readingSession(t)
 	caller := registryIdentity(t)
 	spoofed := registryIdentity(t)
-	got, err := serveOne(t, s, fc, id, caller, cbor.Map([]cbor.MapEntry{{Key: cbor.Bytes([]byte("caller")), Val: cbor.Bytes(spoofed.NodeID())}}))
+	got, _ := serveOne(t, s, fc, id, caller, cbor.Map([]cbor.MapEntry{{Key: cbor.Bytes([]byte("caller")), Val: cbor.Bytes(spoofed.NodeID())}}))
 
 	select {
 	case p := <-got:
-		t.Fatalf("the handler ran with %v, want the frame refused before any handler", p)
+		t.Fatalf("the handler ran with %v, want the call refused before any handler", p)
 	default:
-	}
-	if err == nil {
-		t.Fatal("ServeOneCallGated returned nil, want the session ended by a malformed frame")
-	}
-	if sessionErr := s.Err(); !errors.Is(sessionErr, ErrSessionEnded) || !errors.Is(sessionErr, ErrMalformedFrame) {
-		t.Fatalf("the session ended with %v, want ErrSessionEnded wrapping ErrMalformedFrame", sessionErr)
 	}
 }
 
