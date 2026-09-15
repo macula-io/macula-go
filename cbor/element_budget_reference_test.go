@@ -33,8 +33,8 @@ func pastBudget(item ...byte) []byte {
 // argument are read and before its own checks. The verdicts are those of
 // macula_record_cbor:decode_strict/2 at 0cbcf64 (merge-11.0.0) with its budget of
 // 131,072. A refusal of "refused" holds only the verdict: past the budget,
-// macula's reason for a float that is NaN or infinite depends on the float's
-// width.
+// macula's reason for a half-width float that is NaN or infinite is malformed,
+// where macula-go's is too_many_elements.
 func TestDecodeCountsItemsAsTheReferenceDecoderDoes(t *testing.T) {
 	if MaxElements != 131072 {
 		t.Errorf("MaxElements is %d, want macula's element budget of 131,072", MaxElements)
@@ -48,6 +48,8 @@ func TestDecodeCountsItemsAsTheReferenceDecoderDoes(t *testing.T) {
 		{"an array of 131,072 zeros, 131,073 items", zerosArray(131072, 131072), "too_many_elements"},
 		{"a map of 65,535 entries, 131,071 items", mapOfEntries(65535), ""},
 		{"a map of 65,536 entries, 131,073 items", mapOfEntries(65536), "too_many_elements"},
+		{"a one-item array holding a map of 65,535 entries, 131,072 items", append([]byte{0x81}, mapOfEntries(65535)...), ""},
+		{"a one-item array holding a map of 65,536 entries, the item past the budget a key", append([]byte{0x81}, mapOfEntries(65536)...), "too_many_elements"},
 		{"the item past the budget is truncated", pastBudget(0x18), "malformed"},
 		{"the item past the budget is a truncated half float", pastBudget(0xf9, 0x00), "malformed"},
 		{"the item past the budget is a truncated single float", pastBudget(0xfa, 0x00, 0x00), "malformed"},
@@ -56,8 +58,8 @@ func TestDecodeCountsItemsAsTheReferenceDecoderDoes(t *testing.T) {
 		{"the item past the budget is a finite half float", pastBudget(0xf9, 0x3e, 0x00), "too_many_elements"},
 		{"the item past the budget is a half-width NaN", pastBudget(0xf9, 0x7e, 0x00), "refused"},
 		{"the item past the budget is a half-width infinity", pastBudget(0xf9, 0x7c, 0x00), "refused"},
-		{"the item past the budget is a single-width NaN", pastBudget(0xfa, 0x7f, 0xc0, 0x00, 0x00), "refused"},
-		{"the item past the budget is a double-width infinity", pastBudget(0xfb, 0x7f, 0xf0, 0, 0, 0, 0, 0, 0), "refused"},
+		{"the item past the budget is a single-width NaN", pastBudget(0xfa, 0x7f, 0xc0, 0x00, 0x00), "too_many_elements"},
+		{"the item past the budget is a double-width infinity", pastBudget(0xfb, 0x7f, 0xf0, 0, 0, 0, 0, 0, 0), "too_many_elements"},
 		{"the item past the budget is invalid text", pastBudget(0x61, 0xff), "too_many_elements"},
 		{"the item past the budget is an integer above 2^63-1", pastBudget(0x1b, 0x80, 0, 0, 0, 0, 0, 0, 0), "too_many_elements"},
 		{"the item past the budget is a tag", pastBudget(0xc1, 0x00), "too_many_elements"},
