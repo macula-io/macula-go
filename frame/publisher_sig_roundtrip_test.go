@@ -21,7 +21,10 @@ func TestPublishFrameWithBothSignaturesRoundTrips(t *testing.T) {
 	spec := NewPublishSpec("acme/svc.do", realm, id.NodeID(), 1,
 		cbor.Bytes([]byte("hello")), 1_700_000_000_000)
 
-	unsigned := Publish(spec)
+	unsigned, err := Publish(spec)
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
 	withPubSig := SignPublisher(unsigned, id)
 	fullySigned := Sign(withPubSig, id)
 

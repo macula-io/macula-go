@@ -2,6 +2,8 @@ package connection
 
 import (
 	"crypto/rand"
+	"fmt"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -44,7 +46,17 @@ type PublishOutcome struct {
 //
 // onDone is called from a different goroutine than the caller's — do not
 // assume it runs synchronously with RunPublisher's return.
+//
+// A publication a station refuses, to a realm that is not 32 bytes or a topic
+// over 512 bytes or not UTF-8, is refused before anything is announced or
+// sent: onDone receives the refusal as its outcome's Err, and no fact is
+// published for a publish that never started.
 func (s *Session) RunPublisher(spec frame.PublishSpec, id identity.KeyPair, announce bool, onDone func(PublishOutcome)) (cancel func()) {
+	if err := frame.CheckPublication(spec.Realm, spec.Topic); err != nil {
+		refusal := PublishOutcome{Err: fmt.Errorf("connection: publish: %w", err)}
+		go onDone(refusal)
+		return func() {}
+	}
 	var cancelled atomic.Bool
 	publishID := randomID()
 
@@ -79,7 +91,14 @@ func randomID() []byte {
 	return b
 }
 
-// announceFact is a no-op if s is nil -- real callers always pass a live
+// announceFact publishes one of this session's own facts, fire-and-forget.
+// Its topic is one of this package's fact topics, each a topic a station
+// reads (TestTheFactTopicsAreTopicsAStationReads pins them), and its realm is
+// its caller's. A fact whose PUBLISH the builder refuses, for a realm that is
+// not 32 bytes, is never written and is warned about as a refused_fact drop
+// naming its topic, so it never disappears unseen.
+//
+// It is a no-op if s is nil -- real callers always pass a live
 // Session; a nil Session only occurs in network-free unit tests exercising
 // pure dispatch logic (e.g. connection/serve_ucan_test.go's
 // buildCallReply tests), which intentionally have nothing to publish to.
@@ -88,7 +107,12 @@ func announceFact(s *Session, announce bool, realm []byte, id identity.KeyPair, 
 		return
 	}
 	spec := frame.NewPublishSpec(topic, realm, id.NodeID(), factSeq(), payload, time.Now().UnixMilli())
-	s.handOff(frame.Sign(frame.SignPublisher(frame.Publish(spec), id), id))
+	unsigned, err := frame.Publish(spec)
+	if err != nil {
+		s.warnDrop(dropRefusedFact, publicationRefusalReason(err), slog.String("topic", loggable(topic)))
+		return
+	}
+	s.handOff(frame.Sign(frame.SignPublisher(unsigned, id), id))
 }
 
 func announceCompleted(s *Session, announce bool, realm []byte, id identity.KeyPair, publishID []byte, outcome PublishOutcome) {

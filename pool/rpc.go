@@ -30,12 +30,18 @@ const connectPollInterval = 50 * time.Millisecond
 // when every selected link is stalled, and then no longer than the session
 // send timeout, after which that session ends.
 //
-// payload is checked for wire admissibility HERE, in the caller's own
-// goroutine, before any link is touched -- matches macula_client.erl's
-// own publish/5, which does the identical check before ever calling
-// into the pool, and rejects a bad payload once rather than once per
-// selected link.
+// realm and topic are checked with frame.CheckPublication, and then payload
+// for wire admissibility, HERE, in the caller's own goroutine, before any
+// link is touched. A realm that is not 32 bytes or a topic over 512 bytes or
+// not UTF-8 is a publication a station drops without a reply, as macula's
+// publish/2 guards, so it is returned here instead. The payload check
+// matches macula_client.erl's own publish/5, which does the identical check
+// before ever calling into the pool. Either refusal comes back once rather
+// than once per selected link.
 func (p *Pool) Publish(realm []byte, topic string, payload cbor.Value) error {
+	if err := frame.CheckPublication(realm, topic); err != nil {
+		return err
+	}
 	if err := frame.CheckPayload(payload); err != nil {
 		return err
 	}

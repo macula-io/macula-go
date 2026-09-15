@@ -35,7 +35,10 @@ func TestPublisherSigMatchesTheErlangReference(t *testing.T) {
 
 	spec := NewPublishSpec(pubSigVectorTopic, realm, pubBytes, pubSigVectorSeq,
 		cbor.Bytes([]byte(pubSigVectorPayload)), vectorSentAtMs)
-	unsigned := Publish(spec)
+	unsigned, err := Publish(spec)
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
 	signed := SignPublisher(unsigned, id)
 
 	sigVal, ok := signed.Get("publisher_sig")

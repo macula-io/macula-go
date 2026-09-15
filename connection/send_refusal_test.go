@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,20 +111,28 @@ func TestRefusedRepliesAreWarnedAboutOncePerInterval(t *testing.T) {
 }
 
 // A frame refused before it is written on the control stream returns the named
-// error, writes nothing, and leaves the session up and sending.
+// error, writes nothing, and leaves the session up and sending. A PUBLISH the
+// builder refuses for its realm or topic, which a station would drop without a
+// reply, is refused the same way.
 func TestAPublishRefusedBeforeItIsWrittenWritesNothing(t *testing.T) {
 	s, fc, id := readingSession(t)
 	refusals := []struct {
+		name    string
+		realm   []byte
+		topic   string
 		payload cbor.Value
 		want    error
 	}{
-		{overTheBudget(), frame.ErrFrameBreaksDecodingRule},
-		{overTheCap(), frame.ErrFrameTooLarge},
+		{"a payload over the element budget", testRealm(), "a.topic", overTheBudget(), frame.ErrFrameBreaksDecodingRule},
+		{"a payload over the frame cap", testRealm(), "a.topic", overTheCap(), frame.ErrFrameTooLarge},
+		{"a 31-byte realm", testRealm()[:31], "a.topic", cbor.Null(), frame.ErrOutOfRange},
+		{"a 513-byte topic", testRealm(), strings.Repeat("t", 513), cbor.Null(), frame.ErrTextTooLong},
+		{"a topic that is not UTF-8", testRealm(), "\xff", cbor.Null(), frame.ErrInvalidText},
 	}
 	for _, r := range refusals {
-		spec := frame.NewPublishSpec("a.topic", testRealm(), id.NodeID(), 1, r.payload, time.Now().UnixMilli())
+		spec := frame.NewPublishSpec(r.topic, r.realm, id.NodeID(), 1, r.payload, time.Now().UnixMilli())
 		if err := s.Publish(spec, id); !errors.Is(err, r.want) {
-			t.Errorf("Publish = %v, want %v", err, r.want)
+			t.Errorf("Publish with %s = %v, want %v", r.name, err, r.want)
 		}
 	}
 	if sent := fc.sent(t); len(sent) != 0 {

@@ -77,3 +77,22 @@ func TestASubscribeNamesARealmAndASubscriberOf32Bytes(t *testing.T) {
 		wantRefusal(t, name+" with a 31-byte realm and a 513-byte topic", build(short, key, strings.Repeat("t", 513)), ErrOutOfRange)
 	}
 }
+
+// A PUBLISH names a realm of 32 bytes and a topic a station reads, as a
+// publication's field table reads them: Publish refuses a realm of another size,
+// before it reads the topic, and a topic over 512 bytes or not UTF-8.
+func TestAPublishNamesARealmOf32BytesAndATopicAStationReads(t *testing.T) {
+	realm, publisher := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
+	build := func(realm []byte, topic string) error {
+		_, err := Publish(NewPublishSpec(topic, realm, publisher, 1, cbor.Uint64(1), 0))
+		return err
+	}
+	if err := build(realm, strings.Repeat("t", 512)); err != nil {
+		t.Errorf("a PUBLISH with a 32-byte realm and a 512-byte topic: %v, want it built", err)
+	}
+	wantRefusal(t, "a PUBLISH with a 31-byte realm", build(realm[:31], "news"), ErrOutOfRange)
+	wantRefusal(t, "a PUBLISH with no realm", build(nil, "news"), ErrOutOfRange)
+	wantRefusal(t, "a PUBLISH with a 513-byte topic", build(realm, strings.Repeat("t", 513)), ErrTextTooLong)
+	wantRefusal(t, "a PUBLISH with a topic that is not UTF-8", build(realm, "\xff"), ErrInvalidText)
+	wantRefusal(t, "a PUBLISH with a 31-byte realm and a 513-byte topic", build(realm[:31], strings.Repeat("t", 513)), ErrOutOfRange)
+}

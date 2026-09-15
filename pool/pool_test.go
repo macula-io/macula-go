@@ -54,9 +54,12 @@ type fakeSession struct {
 	subs           []*fakeSubscription
 	err            error
 	callsAttempted int
-	publishWaiting bool
-	logger         *slog.Logger
-	dropInterval   time.Duration
+	// publishesAttempted counts Publish calls, a publish the fake then
+	// refuses included, so a test can see whether a link was touched at all.
+	publishesAttempted int
+	publishWaiting     bool
+	logger             *slog.Logger
+	dropInterval       time.Duration
 }
 
 func newFakeSession() *fakeSession {
@@ -166,7 +169,17 @@ func (f *fakeSession) LinkCall(spec frame.CallSpec, _ identity.KeyPair, timeout 
 	}
 }
 
+// publishAttempts is how many times Publish was called on the fake.
+func (f *fakeSession) publishAttempts() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.publishesAttempted
+}
+
 func (f *fakeSession) Publish(spec frame.PublishSpec, _ identity.KeyPair) error {
+	f.mu.Lock()
+	f.publishesAttempted++
+	f.mu.Unlock()
 	if err := f.Err(); err != nil {
 		return fmt.Errorf("%w: %w", err, connection.ErrNotSent)
 	}
@@ -183,9 +196,13 @@ func (f *fakeSession) Publish(spec frame.PublishSpec, _ identity.KeyPair) error 
 			return f.Err()
 		}
 	}
+	publish, err := frame.Publish(spec)
+	if err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.sent = append(f.sent, frame.Publish(spec))
+	f.sent = append(f.sent, publish)
 	return nil
 }
 

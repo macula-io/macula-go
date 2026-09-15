@@ -42,6 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `frame.CheckSubscription`, the check `frame.Subscribe` and
   `frame.Unsubscribe` make, and returns a refusal with SubID 0, so no link
   subscribes to what a station refuses.
+- `frame.Publish` returns `(cbor.Value, error)`. It refuses, with the new
+  `frame.CheckPublication`, what a station's publication table refuses and
+  drops without a reply: a realm that is not 32 bytes (`frame.ErrOutOfRange`),
+  checked first, and a topic over 512 bytes (`frame.ErrTextTooLong`) or not
+  UTF-8 (`frame.ErrInvalidText`). `connection.Session.Publish` and
+  `pool.Pool.Publish` return that refusal before anything is sent,
+  `Pool.Publish` before its payload check. `connection.Session.RunPublisher`
+  delivers it as the outcome's `Err` and announces nothing for it, and one of
+  a session's own facts that the builder refuses is warned about as a
+  `refused_fact` drop.
 
 ### Added
 

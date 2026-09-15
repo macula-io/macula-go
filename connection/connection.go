@@ -361,8 +361,14 @@ func (s *Session) forgetCall(key string) {
 // macula 4.6.0). Fire-and-forget — no reply is expected on the wire; a
 // subscriber (this session included, if subscribed to the same
 // topic/realm) receives an EVENT asynchronously, read through its Subscription.
+// A publication a station refuses, to a realm that is not 32 bytes or a topic
+// over 512 bytes or not UTF-8, is refused with frame.Publish's error before
+// anything is sent, since a station drops it without a reply.
 func (s *Session) Publish(spec frame.PublishSpec, id identity.KeyPair) error {
-	unsigned := frame.Publish(spec)
+	unsigned, err := frame.Publish(spec)
+	if err != nil {
+		return fmt.Errorf("connection: publish: %w", err)
+	}
 	withPublisherSig := frame.SignPublisher(unsigned, id)
 	return s.send(frame.Sign(withPublisherSig, id), time.Now().Add(s.sendTimeoutOrDefault()), nil)
 }

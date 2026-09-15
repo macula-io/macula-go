@@ -2,6 +2,7 @@ package connection
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
 )
 
 // defaultDropWarningInterval is how long a drop warning interval lasts until
@@ -32,6 +34,10 @@ const (
 	dropReply             dropKind = "dropped_reply"
 	dropOtherFrame        dropKind = "dropped_frame"
 	dropRefusedReply      dropKind = "refused_reply"
+	// dropRefusedFact is one of this session's own facts, such as
+	// rpc.sent_v1, whose PUBLISH the builder refuses, so it is never written.
+	// This kind is Go's own.
+	dropRefusedFact dropKind = "refused_fact"
 
 	// reasonOverFrameCap is a handler's reply whose frame is over the frame
 	// cap, so it is never written.
@@ -39,6 +45,12 @@ const (
 	// reasonBreaksDecodingRule is a handler's reply whose frame the decoding
 	// rule would refuse where it arrives, so it is never written.
 	reasonBreaksDecodingRule dropReason = "breaks_decoding_rule"
+	// reasonOutOfRange is a fact whose realm is not 32 bytes.
+	reasonOutOfRange dropReason = "out_of_range"
+	// reasonTextTooLong is a fact whose topic is over its bound.
+	reasonTextTooLong dropReason = "text_too_long"
+	// reasonInvalidText is a fact whose topic is not UTF-8.
+	reasonInvalidText dropReason = "invalid_text"
 
 	// reasonUnsigned is a frame whose signature is missing or isn't 64 bytes,
 	// or whose signer field is missing or isn't a 32-byte key.
@@ -152,6 +164,20 @@ func (s *Session) logDrop(logger *slog.Logger, kind dropKind, count uint64, reas
 	}
 	args = append(args, "station", hex.EncodeToString(s.Station.NodeID))
 	logger.Warn("macula: drop warning", args...)
+}
+
+// publicationRefusalReason is the drop reason for a PUBLISH the builder
+// refused, by frame.CheckPublication's refusal.
+func publicationRefusalReason(err error) dropReason {
+	switch {
+	case errors.Is(err, frame.ErrOutOfRange):
+		return reasonOutOfRange
+	case errors.Is(err, frame.ErrTextTooLong):
+		return reasonTextTooLong
+	case errors.Is(err, frame.ErrInvalidText):
+		return reasonInvalidText
+	}
+	return reasonMalformed
 }
 
 // procedureDetail is a drop warning's procedure: v's procedure field cut to

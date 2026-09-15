@@ -6,8 +6,9 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 )
 
-// maxTopicBytes is the bound of a SUBSCRIBE's and an UNSUBSCRIBE's topic, UTF-8
-// bytes on the wire, as a station's receive rule reads it.
+// maxTopicBytes is the bound of a topic, UTF-8 bytes on the wire, as a
+// station's receive rule reads a SUBSCRIBE's and an UNSUBSCRIBE's and its
+// publication table reads a publication's.
 const maxTopicBytes = 512
 
 // PublishSpec holds the fields for a PUBLISH frame.
@@ -25,7 +26,10 @@ func NewPublishSpec(topic string, realm, publisher []byte, seq uint64, payload c
 	return PublishSpec{Topic: topic, Realm: realm, Publisher: publisher, Seq: seq, Payload: payload, PublishedAtMs: publishedAtMs}
 }
 
-func publishValue(spec PublishSpec, frameID []byte, sentAtMs int64) cbor.Value {
+func publishValue(spec PublishSpec, frameID []byte, sentAtMs int64) (cbor.Value, error) {
+	if err := CheckPublication(spec.Realm, spec.Topic); err != nil {
+		return cbor.Value{}, err
+	}
 	fields := base("publish", 0, frameID, sentAtMs)
 	fields = withField(fields, "realm", cbor.Bytes(spec.Realm))
 	// topic := binary() -- bytes, not text.
@@ -39,13 +43,31 @@ func publishValue(spec PublishSpec, frameID []byte, sentAtMs int64) cbor.Value {
 		ttl = cbor.Uint64(*spec.TTLMs)
 	}
 	fields = withField(fields, "ttl_ms", ttl)
-	return cbor.Map(fields)
+	return cbor.Map(fields), nil
 }
 
 // Publish builds a PUBLISH frame with a fresh frame_id/sent_at_ms. Does
 // not set publisher_sig (the separate end-to-end publisher signature,
-// §4/§6.8) -- not implemented yet.
-func Publish(spec PublishSpec) cbor.Value { return publishValue(spec, freshFrameID(), currentMillis()) }
+// §4/§6.8) -- not implemented yet. It refuses, with CheckPublication's check,
+// what a station's publication table refuses: a realm that is not 32 bytes
+// (ErrOutOfRange), checked first, and a topic over 512 bytes (ErrTextTooLong)
+// or not UTF-8 (ErrInvalidText).
+func Publish(spec PublishSpec) (cbor.Value, error) {
+	return publishValue(spec, freshFrameID(), currentMillis())
+}
+
+// CheckPublication reports whether a station reads a publication for realm and
+// topic, the check Publish makes before it builds one: a realm that is not 32
+// bytes is ErrOutOfRange, checked first, and a topic over 512 bytes is
+// ErrTextTooLong, judged before a topic that is not UTF-8, ErrInvalidText. A
+// station refuses such a publication and fans nothing out, and a PUBLISH has no
+// reply, so a caller that sends one checks here first to report the refusal.
+func CheckPublication(realm []byte, topic string) error {
+	if len(realm) != 32 {
+		return fmt.Errorf("%w: a realm of %d bytes, want 32", ErrOutOfRange, len(realm))
+	}
+	return topicChecked(topic)
+}
 
 // SubscribeSpec holds the fields for a SUBSCRIBE frame.
 type SubscribeSpec struct {

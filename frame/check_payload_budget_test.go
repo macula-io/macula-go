@@ -64,10 +64,14 @@ func TestEveryFrameWithAPayloadHoldsItsOwnItemsWithinTheReserve(t *testing.T) {
 	id16, id32 := make([]byte, 16), make([]byte, 32)
 	payload := cbor.Null()
 	const at = int64(1789000000000)
+	publish, err := Publish(NewPublishSpec("a.topic", id32, id.NodeID(), 1, payload, at))
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
 	frames := map[string]cbor.Value{
 		"CALL":         Sign(Call(NewCallSpec(id16, "a.procedure", id32, payload, at, id.NodeID())), id),
 		"RESULT":       Sign(Result(NewResultSpec(id16, payload, id.NodeID())), id),
-		"PUBLISH":      SignPublisher(Sign(Publish(NewPublishSpec("a.topic", id32, id.NodeID(), 1, payload, at)), id), id),
+		"PUBLISH":      SignPublisher(Sign(publish, id), id),
 		"STREAM_OPEN":  Sign(StreamOpen(NewStreamOpenSpec(id16, "a.procedure", id32, ServerStream, payload, at, id.NodeID())), id),
 		"STREAM_DATA":  Sign(StreamData(NewStreamDataSpec(id16, 1, Msgpack, payload, id.NodeID())), id),
 		"STREAM_REPLY": Sign(StreamReply(NewStreamReplySpec(id16, payload, id.NodeID())), id),
