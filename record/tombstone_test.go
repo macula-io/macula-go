@@ -201,6 +201,17 @@ func TestReadTombstoneReturnsTheTypedPayload(t *testing.T) {
 	}
 }
 
+// ReadTombstone refuses a withdrawn_type that names no record type without
+// echoing what a peer put there.
+func TestReadTombstoneRefusesAWithdrawnTypeWithoutEchoingIt(t *testing.T) {
+	echoed := bytes.Repeat([]byte("a peer's text "), 32)
+	_, err := ReadTombstone(Record{Type: TypeTombstone, Payload: cbor.Map([]cbor.MapEntry{textEntry("withdrawn_type", string(echoed))})})
+	wantRefusal(t, "read a tombstone whose withdrawn_type is text", err, ErrMalformed)
+	if err != nil && bytes.Contains([]byte(err.Error()), []byte("a peer's text")) {
+		t.Errorf("the refusal echoes the withdrawn_type: %v", err)
+	}
+}
+
 // NewTombstone needs the slot fields of the record it withdraws, which
 // macula's tombstone/3 raises on without.
 func TestNewTombstoneNeedsTheWithdrawnRecordsSlotFields(t *testing.T) {

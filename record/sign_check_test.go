@@ -43,6 +43,36 @@ func TestSignRefusesARecordAVerifierWouldRefuse(t *testing.T) {
 	}
 }
 
+// Sign decodes the tbs it would sign under the decoding rule, as a verifier
+// decodes the tbs it receives, before it reads that tbs and its payload, so it
+// signs no payload the rule refuses: one nested past cbor.MaxNestingDepth, a
+// nested map with a duplicate or byte-string key, or more items than
+// cbor.MaxElements within 256 KiB.
+func TestSignRefusesATBSTheDecodingRuleRefuses(t *testing.T) {
+	keys := keysFor(t)
+	deep := cbor.Int(1)
+	for range cbor.MaxNestingDepth {
+		deep = cbor.List([]cbor.Value{deep})
+	}
+	many := make([]cbor.Value, cbor.MaxElements)
+	for i := range many {
+		many[i] = cbor.Int(0)
+	}
+	for _, c := range []struct {
+		name  string
+		entry cbor.MapEntry
+	}{
+		{"a payload nested past the decoding rule's depth", valueEntry("deep", deep)},
+		{"a nested map with a duplicate key", valueEntry("inner", cbor.Map([]cbor.MapEntry{uintEntry("a", 1), uintEntry("a", 2)}))},
+		{"a nested map with a byte-string key", valueEntry("inner", cbor.Map([]cbor.MapEntry{{Key: cbor.Bytes([]byte("a")), Val: cbor.Int(1)}}))},
+		{"a payload of more items than the decoding rule reads", valueEntry("many", cbor.List(many))},
+	} {
+		r := must[Record](t)(Envelope(DomainTypeMin, cbor.Map([]cbor.MapEntry{c.entry}), nil, 0))
+		_, err := Sign(r, keys.node)
+		wantRefusal(t, "sign "+c.name, err, ErrMalformed)
+	}
+}
+
 // Every Go builder's record still signs and verifies with Sign's check, as
 // every_builder_record_signs_and_verifies_test has it at 24b1705a.
 func TestEveryBuilderSignsAndVerifies(t *testing.T) {
