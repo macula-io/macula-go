@@ -257,9 +257,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   node_id on the node-signed types and by its key id on every other type.
   `NewNodeRecord` and `ReadNodeRecord` build and read node records. A
   coordinate travels as text and reads back only from text of at most 32
-  bytes that spells a finite float or integer in full, as `macula_record`
-  reads it, so `NewNodeRecord` refuses a coordinate no reader reads back
-  (`ErrUnreadableCoordinate`). `Envelope` builds domain records and refuses
+  bytes, an optional minus, digits, then optionally a dot and digits, within
+  -90 to 90 for lat and -180 to 180 for lng, as `macula_record` reads it, and
+  `NewNodeRecord` refuses a coordinate outside its range
+  (`ErrInvalidCoordinate`). `Envelope` builds domain records and refuses
   an empty subject (`ErrInvalidSubject`), which a verifier refuses as
   malformed. `Refresh` signs a record again with a new version, and
   `PayloadBounded` checks a payload before signing.

@@ -13,12 +13,18 @@ import (
 )
 
 // maxGeoTextBytes is the longest coordinate text a node record's reader reads,
-// as macula_record has it: a finite coordinate needs far fewer bytes.
+// as macula_record has it: a coordinate needs far fewer bytes.
 const maxGeoTextBytes = 32
 
-// ErrUnreadableCoordinate is a node record's lat or lng that no reader reads
-// back: NaN, an infinity, or a number whose text is over 32 bytes.
-var ErrUnreadableCoordinate = errors.New("record: a coordinate no reader reads back")
+// How far from zero a latitude and a longitude reach, both inclusive.
+const (
+	latBound = 90
+	lngBound = 180
+)
+
+// ErrInvalidCoordinate is a node record's lat or lng that is not a number
+// within its range: -90 to 90 for lat, -180 to 180 for lng.
+var ErrInvalidCoordinate = errors.New("record: a coordinate that is not a number within its range")
 
 // NodeRecordOptions are a node record's optional fields, as macula_record's
 // node_record/4 takes them. StationID is nil for the node itself. Text fields
@@ -44,9 +50,9 @@ type NodeRecordOptions struct {
 // NewNodeRecord is an unsigned node record about nodeID, which signs it, with
 // the realms it serves and its capabilities. Coordinates travel as text, with
 // at most 6 decimals and no trailing zeros, since a fixed rendering is stable
-// across stacks where float encodings are not. A Lat or Lng that is not
-// finite, or whose text is over 32 bytes, is ErrUnreadableCoordinate, since no
-// reader reads it back.
+// across stacks where float encodings are not. A Lat outside -90 to 90, a Lng
+// outside -180 to 180, or either of them NaN, is ErrInvalidCoordinate, naming
+// the field, so the builder writes only text a reader takes.
 func NewNodeRecord(nodeID [32]byte, realms [][32]byte, capabilities uint64, opts NodeRecordOptions) (Record, error) {
 	stationID := nodeID
 	if opts.StationID != nil {
@@ -69,18 +75,15 @@ func NewNodeRecord(nodeID [32]byte, realms [][32]byte, capabilities uint64, opts
 	for _, geo := range []struct {
 		name  string
 		value *float64
-	}{{"lat", opts.Lat}, {"lng", opts.Lng}} {
+		bound float64
+	}{{"lat", opts.Lat, latBound}, {"lng", opts.Lng, lngBound}} {
 		if geo.value == nil {
 			continue
 		}
-		if math.IsNaN(*geo.value) || math.IsInf(*geo.value, 0) {
-			return Record{}, fmt.Errorf("%w: %s is %v", ErrUnreadableCoordinate, geo.name, *geo.value)
+		if !(math.Abs(*geo.value) <= geo.bound) {
+			return Record{}, fmt.Errorf("%w: %s %v", ErrInvalidCoordinate, geo.name, *geo.value)
 		}
-		text := geoText(*geo.value)
-		if len(text) > maxGeoTextBytes {
-			return Record{}, fmt.Errorf("%w: %s is %d bytes as text", ErrUnreadableCoordinate, geo.name, len(text))
-		}
-		entries = append(entries, textEntry(geo.name, text))
+		entries = append(entries, textEntry(geo.name, geoText(*geo.value)))
 	}
 	if peers := sortedIDs(opts.Peers); len(peers) > 0 {
 		entries = append(entries, valueEntry("peers", idList(peers)))
@@ -130,8 +133,8 @@ func ReadNodeRecord(r Record) (NodeRecord, error) {
 		Endpoint:     text("endpoint"),
 		City:         text("city"),
 		Country:      text("country"),
-		Lat:          parseGeo(text("lat")),
-		Lng:          parseGeo(text("lng")),
+		Lat:          parseGeo(text("lat"), latBound),
+		Lng:          parseGeo(text("lng"), lngBound),
 		DisplayName:  text("display_name"),
 		CapsHint:     text("caps_hint"),
 		Peers:        readIDs(payloadField(r.Payload, "peers")),
@@ -152,85 +155,45 @@ func geoText(v float64) string {
 	return s
 }
 
-// parseGeo reads a coordinate's text as macula_record's parse_geo/1 does at
-// merge-11.0.0 24c5e619: text of at most 32 bytes that string:to_float/1, or
-// else string:to_integer/1, reads in full. Any other text is nil.
-func parseGeo(s string) *float64 {
-	if len(s) > maxGeoTextBytes {
+// parseGeo reads a coordinate's text as macula_record's parse_geo/2 does at
+// merge-11.0.0 871986a3: text as both builders write it, of at most 32 bytes,
+// an optional leading minus, digits, then optionally a dot and digits, within
+// bound of zero either way. An integer zero reads as 0, since it has no sign.
+// Any other text is nil, and so is a value that is not text, which reads as
+// empty text.
+func parseGeo(s string, bound float64) *float64 {
+	if len(s) > maxGeoTextBytes || !geoShaped(s) {
 		return nil
 	}
-	if v, ok := geoFloat(s); ok {
-		return &v
+	// Text of this shape and length always parses to a finite float64.
+	v, _ := strconv.ParseFloat(s, 64)
+	if math.Abs(v) > bound {
+		return nil
 	}
-	if v, ok := geoInteger(s); ok {
-		return &v
+	if v == 0 && !strings.Contains(s, ".") {
+		v = 0
 	}
-	return nil
+	return &v
 }
 
-// geoFloat reads s as string:to_float/1 reads a whole text: an optional sign,
-// ASCII digits, a point or a comma, digits, and an optional exponent of e or E,
-// an optional sign and digits. It reads when the number is finite, so an
-// underflow reads as 0 and an overflow does not read.
-func geoFloat(s string) (float64, bool) {
-	mantissa := withoutSign(s)
-	whole := leadingDigits(mantissa)
-	if whole == 0 || whole == len(mantissa) || (mantissa[whole] != '.' && mantissa[whole] != ',') {
-		return 0, false
+// geoShaped reports whether s is an optional leading minus, one or more ASCII
+// digits, then optionally a dot and one or more digits.
+func geoShaped(s string) bool {
+	whole, fraction, hasDot := strings.Cut(strings.TrimPrefix(s, "-"), ".")
+	return allDigits(whole) && (!hasDot || allDigits(fraction))
+}
+
+// allDigits reports whether s is one or more ASCII digits.
+func allDigits(s string) bool {
+	if s == "" {
+		return false
 	}
-	rest := mantissa[whole+1:]
-	fraction := leadingDigits(rest)
-	if fraction == 0 {
-		return 0, false
-	}
-	if exponent := rest[fraction:]; exponent != "" {
-		if exponent[0] != 'e' && exponent[0] != 'E' {
-			return 0, false
-		}
-		if digits := withoutSign(exponent[1:]); digits == "" || leadingDigits(digits) != len(digits) {
-			return 0, false
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
 		}
 	}
-	v, err := strconv.ParseFloat(strings.Replace(s, ",", ".", 1), 64)
-	if math.IsInf(v, 0) || (err != nil && !errors.Is(err, strconv.ErrRange)) {
-		return 0, false
-	}
-	return v, true
-}
-
-// geoInteger reads s as string:to_integer/1 reads a whole text, an optional
-// sign and ASCII digits, as the nearest float64, with an integer zero as 0.
-// At most 32 digits never overflow a float64.
-func geoInteger(s string) (float64, bool) {
-	digits := withoutSign(s)
-	if digits == "" || leadingDigits(digits) != len(digits) {
-		return 0, false
-	}
-	v, err := strconv.ParseFloat(digits, 64)
-	if err != nil {
-		return 0, false
-	}
-	if s[0] == '-' && v != 0 {
-		v = -v
-	}
-	return v, true
-}
-
-// withoutSign is s without one leading + or -.
-func withoutSign(s string) string {
-	if s != "" && (s[0] == '+' || s[0] == '-') {
-		return s[1:]
-	}
-	return s
-}
-
-// leadingDigits is how many ASCII digits s starts with.
-func leadingDigits(s string) int {
-	n := 0
-	for n < len(s) && s[n] >= '0' && s[n] <= '9' {
-		n++
-	}
-	return n
+	return true
 }
 
 // sortedIDs is ids sorted, once each.
