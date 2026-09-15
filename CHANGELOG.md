@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by their owner only. Loading refuses a file its group or others can read, a
   key for another purpose or profile, a stored public key its private key does
   not derive, and a key that fails a sign-and-verify round trip.
+- `identity.TLSBinding`, `ConnectBinding` and `StatusStatement` issue the
+  signed structures that bind a TLS or CONNECT key to an identity key, and
+  that keep a binding in force, as a `SignedTBS` of `tbs` and `signature`.
+  `VerifyTLSBinding`, `VerifyConnectBinding` and `VerifyStatus` check the
+  signature over the `tbs` bytes as received before decoding them under the
+  decoding rule. They refuse an unknown or duplicate key, a field of the wrong
+  type or length, another node_id, use or subject, and a binding or statement
+  outside its validity with 5 minutes of tolerance, each with its own error.
+  `ParseSignedTBS` reads the `{tbs, signature}` map.
 
 ### Fixed
 
