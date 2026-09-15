@@ -34,14 +34,17 @@ type StreamDataFields struct {
 }
 
 // StreamEndFields is a STREAM_END, the last frame of its sender's side: Send
-// half-closes the stream, and Both closes it.
+// half-closes the stream, and Both closes it. A verifier refuses the frames its
+// side sends after it. Closing the whole stream on Both is the stream session's
+// to enforce: the verifiers still verify the other side's frames.
 type StreamEndFields struct {
 	Seq  uint64
 	Role StreamRole
 }
 
-// StreamErrorFields is a STREAM_ERROR, which aborts the stream: a code of at most
-// 64 bytes and a message of at most 256, both UTF-8.
+// StreamErrorFields is a STREAM_ERROR: a code of at most 64 bytes and a message
+// of at most 256, both UTF-8. Aborting the stream on it is the stream session's
+// to enforce: the verifiers verify the frames after it as they do any other.
 type StreamErrorFields struct {
 	Seq     uint64
 	Code    string
@@ -79,9 +82,15 @@ type VerifiedStreamFrame struct {
 // StreamState is what a verifier holds for one stream, as macula_frame's
 // stream_state() holds it: the verified STREAM_OPEN and, for each side, the next
 // seq and whether that side has ended, and for the provider the key and signer
-// its first frame carried. VerifyProviderStream and VerifyCallerStream return
-// the next state with each frame that verifies, and the state they were given
-// with a refusal.
+// its first frame carried.
+//
+// A StreamState value accepts at most one frame. VerifyProviderStream and
+// VerifyCallerStream return the next state with each frame that verifies, and
+// the state they were given with a refusal, and the caller replaces its state
+// with the one returned. A copy that is kept or shared and verified again
+// accepts the same seq again, as macula's value does. So a stream's state has
+// one owner, which threads each returned state forward and neither shares a
+// state between goroutines nor keeps an older one across a retry.
 type StreamState struct {
 	open     VerifiedRequest
 	provider sideState
@@ -99,11 +108,16 @@ type sideState struct {
 
 // OpenStream is the state a verifier starts a stream with, as macula_frame's
 // open_stream/1 gives it: nothing seen from either side yet. open must be a
-// verified STREAM_OPEN (ErrOutOfRange).
+// verified STREAM_OPEN (ErrOutOfRange). The state keeps its own copies of the
+// open's key and stream mode, so a later write through the caller's
+// VerifiedRequest changes neither the key a caller's frames verify with nor the
+// rules of the mode.
 func OpenStream(open VerifiedRequest) (StreamState, error) {
 	if !isStreamOpen(open) {
 		return StreamState{}, fmt.Errorf("%w: a stream opens on a STREAM_OPEN, not a %q", ErrOutOfRange, open.FrameType)
 	}
+	mode := *open.Mode
+	open.Key, open.Mode = bytes.Clone(open.Key), &mode
 	return StreamState{open: open}, nil
 }
 
@@ -299,17 +313,17 @@ func streamFrame(frameType, objectName string, object cbor.Value) cbor.Value {
 // VerifyProviderStream verifies a provider's received stream frame against its
 // stream's state under the connection's profile p, as macula_frame's
 // verify_provider_stream/3 does, and returns the frame's fields and the stream's
-// next state. The frame is exactly version, frame_type and stream, of the
-// protocol's version, and nothing follows the provider's STREAM_END. Before the
-// provider's first frame the state holds no provider key, so a frame without one
-// is out of order. The first frame's signer is the key id of the key it carries
-// and the STREAM_OPEN's target, with seq 0; later frames verify with that key,
-// name that signer and carry no key. Every frame names the STREAM_OPEN's
-// request_id and request_hash, and has the seq after the provider's last. It
-// refuses with ErrMalformedFrame, ErrStreamEnded,
-// identity.ErrObjectSignatureInvalid, ErrKeyIDMismatch, ErrRequestMismatch,
-// ErrNotTheTarget or ErrSeqMismatch, and in a binary without ML-DSA with
-// identity.ErrPostQuantumUnavailable.
+// next state, which replaces state (see StreamState). The frame is exactly
+// version, frame_type and stream, of the protocol's version, and nothing follows
+// the provider's STREAM_END. Before the provider's first frame the state holds
+// no provider key, so a frame without one is out of order. The first frame's
+// signer is the key id of the key it carries and the STREAM_OPEN's target, with
+// seq 0; later frames verify with that key, name that signer and carry no key.
+// Every frame names the STREAM_OPEN's request_id and request_hash, and has the
+// seq after the provider's last. It refuses with ErrMalformedFrame,
+// ErrStreamEnded, identity.ErrObjectSignatureInvalid, ErrKeyIDMismatch,
+// ErrRequestMismatch, ErrNotTheTarget or ErrSeqMismatch, and in a binary without
+// ML-DSA with identity.ErrPostQuantumUnavailable.
 func VerifyProviderStream(v cbor.Value, state StreamState, p profile.Profile) (VerifiedStreamFrame, StreamState, error) {
 	frameType, object, ok := receivedFrame(v, "stream", streamObject, nil,
 		frameTypeStreamData, frameTypeStreamEnd, frameTypeStreamError, frameTypeStreamReply)
@@ -396,14 +410,15 @@ func providerLater(frameType string, object cbor.Value, state StreamState, p pro
 // VerifyCallerStream verifies a caller's received stream frame against its
 // stream's state under the connection's profile p, as macula_frame's
 // verify_caller_stream/3 does, with the STREAM_OPEN's key, and returns the
-// frame's fields and the stream's next state. The frame is exactly version,
-// frame_type and caller_stream, of the protocol's version, a STREAM_DATA,
-// STREAM_END or STREAM_ERROR, and nothing follows the caller's STREAM_END. A
-// caller sends no STREAM_DATA in a server_stream. The signer is the
-// STREAM_OPEN's caller, the frame names its request_id and request_hash, and its
-// seq is the one after the caller's last. It refuses with ErrMalformedFrame,
-// ErrStreamEnded, identity.ErrObjectSignatureInvalid, ErrKeyIDMismatch,
-// ErrRequestMismatch or ErrSeqMismatch, and in a binary without ML-DSA with
+// frame's fields and the stream's next state, which replaces state (see
+// StreamState). The frame is exactly version, frame_type and caller_stream, of
+// the protocol's version, a STREAM_DATA, STREAM_END or STREAM_ERROR, and nothing
+// follows the caller's STREAM_END. A caller sends no STREAM_DATA in a
+// server_stream. The signer is the STREAM_OPEN's caller, the frame names its
+// request_id and request_hash, and its seq is the one after the caller's last.
+// It refuses with ErrMalformedFrame, ErrStreamEnded,
+// identity.ErrObjectSignatureInvalid, ErrKeyIDMismatch, ErrRequestMismatch or
+// ErrSeqMismatch, and in a binary without ML-DSA with
 // identity.ErrPostQuantumUnavailable.
 func VerifyCallerStream(v cbor.Value, state StreamState, p profile.Profile) (VerifiedStreamFrame, StreamState, error) {
 	frameType, object, ok := receivedFrame(v, "caller_stream", heldObject, nil,

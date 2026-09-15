@@ -210,7 +210,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a server_stream (`ErrNotAllowed`); a STREAM_ERROR's code over 64 bytes or
   message over 256, or either not UTF-8; a body or payload the wire cannot
   carry; and a field out of its range or set (`ErrOutOfRange`). A verifier
-  holds a `StreamState` and returns the next one with each frame. It refuses
+  holds a `StreamState` and returns the next one with each frame, which
+  replaces it: a `StreamState` value accepts at most one frame, and a copy
+  kept or shared accepts the same seq again, so a stream's state has one
+  owner. `OpenStream` keeps its own copies of the open's key and mode. Ending
+  the stream on a STREAM_ERROR, or on a STREAM_END with role both, is the
+  stream session's; the verifiers refuse only a side's frames after its own
+  STREAM_END. A verifier refuses
   with `ErrMalformedFrame`, `ErrStreamEnded`,
   `identity.ErrObjectSignatureInvalid`, `ErrKeyIDMismatch`,
   `ErrRequestMismatch`, `ErrNotTheTarget` or `ErrSeqMismatch`, and in a

@@ -568,3 +568,69 @@ func TestAStreamBuildOutsideItsRangesIsRefused(t *testing.T) {
 		wantRefusal(t, c.name, err, ErrOutOfRange)
 	}
 }
+
+//------------------------------------------------------------------
+// Branches beyond macula's cases: authentication after the first frame, the
+// request a frame names, and a state's own copies
+//------------------------------------------------------------------
+
+// A later provider frame without a key verifies with the key the first frame
+// carried, so one signed by another key is refused as a signature that does not
+// verify. That check is what authenticates a provider's frames after its first.
+func TestALaterProviderFrameWithoutAKeySignedByAnotherKeyIsRefused(t *testing.T) {
+	keys := requestKeysFor(t)
+	open := streamOpenOf(t, keys, Bidi, idOf(7))
+	state := providerVerified(t, keys, open, streamChunk(0))
+	later := crafted(frameTypeStreamData, "stream", heldSignedWith(t, streamLabel, chunkTBS(open, keys.provider.KeyID(), 1), keys.other))
+	_, _, err := verifyProvider(t, later, state)
+	wantStreamRefusal(t, "a keyless later frame signed by another key", err, identity.ErrObjectSignatureInvalid)
+}
+
+// A later provider frame names its stream's request: one built for another
+// STREAM_OPEN is refused.
+func TestALaterProviderFrameForAnotherStreamIsRefused(t *testing.T) {
+	keys := requestKeysFor(t)
+	open, another := streamOpenOf(t, keys, Bidi, idOf(7)), streamOpenOf(t, keys, Bidi, idOf(8))
+	state := providerVerified(t, keys, open, streamChunk(0))
+	later := must[cbor.Value](t)(SignProviderStream(streamChunk(1), another, keys.provider))
+	_, _, err := verifyProvider(t, later, state)
+	wantStreamRefusal(t, "a later frame for another STREAM_OPEN", err, ErrRequestMismatch)
+}
+
+// A provider's first frame, the one that carries its key, has seq 0: one that
+// carries its key at seq 1 is refused as out of order.
+func TestAFirstProviderFrameCarryingItsKeyAtAnotherSeqIsRefused(t *testing.T) {
+	keys := requestKeysFor(t)
+	open := streamOpenOf(t, keys, Bidi, idOf(7))
+	first := crafted(frameTypeStreamData, "stream", signedWith(t, streamLabel, chunkTBS(open, keys.provider.KeyID(), 1), keys.provider))
+	_, _, err := verifyProvider(t, first, streamStateOf(t, open))
+	wantStreamRefusal(t, "a first frame carrying its key at seq 1", err, ErrSeqMismatch)
+}
+
+// A caller's frame names its stream's request: one the same caller built for
+// another STREAM_OPEN is refused.
+func TestACallerFrameForAnotherStreamIsRefused(t *testing.T) {
+	keys := requestKeysFor(t)
+	open, another := streamOpenOf(t, keys, Bidi, idOf(7)), streamOpenOf(t, keys, Bidi, idOf(8))
+	data := must[cbor.Value](t)(SignCallerStream(streamChunk(0), another, keys.caller))
+	_, _, err := verifyCaller(t, data, streamStateOf(t, open))
+	wantStreamRefusal(t, "a caller's frame for another STREAM_OPEN", err, ErrRequestMismatch)
+}
+
+// A stream's state keeps its own copies of its STREAM_OPEN's key and mode:
+// writing through the caller's VerifiedRequest after OpenStream changes neither
+// the server_stream rule nor the key a caller's frames verify with.
+func TestAStreamStateKeepsItsOwnKeyAndMode(t *testing.T) {
+	keys := requestKeysFor(t)
+	open := streamOpenOf(t, keys, ServerStream, idOf(7))
+	state := streamStateOf(t, open)
+	data := crafted(frameTypeStreamData, "caller_stream", heldSignedWith(t, callerStreamLabel, chunkTBS(open, keys.caller.KeyID(), 0), keys.caller))
+	end := must[cbor.Value](t)(SignCallerStream(StreamEndFields{Role: Both}, open, keys.caller))
+	*open.Mode = Bidi
+	clear(open.Key)
+	_, _, err := verifyCaller(t, data, state)
+	wantStreamRefusal(t, "a caller's STREAM_DATA after the open's mode was written", err, ErrMalformedFrame)
+	if frame, _, err := verifyCaller(t, end, state); err != nil || frame.FrameType != frameTypeStreamEnd {
+		t.Errorf("a caller's STREAM_END after the open's key was cleared: (%+v, %v), want it verified", frame, err)
+	}
+}
