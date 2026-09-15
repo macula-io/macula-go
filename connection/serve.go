@@ -94,7 +94,13 @@ func (s *Session) ServeOneCallGated(lookup CallLookup, policy PolicyLookup, id i
 	select {
 	case callInfo := <-s.rt.calls:
 		reply := buildCallReply(s, callInfo, lookup, policy, id)
-		if err := s.send(frame.Sign(reply, id), time.Now().Add(s.sendTimeoutOrDefault()), nil); err != nil {
+		err := s.send(frame.Sign(reply, id), time.Now().Add(s.sendTimeoutOrDefault()), nil)
+		if code, refused := refusalCode(err); refused {
+			s.warnRefusedReply(err)
+			fault := frame.CallErrorFrame(frame.NewCallErrorSpec(callInfo.CallID, code, id.NodeID()))
+			err = s.send(frame.Sign(fault, id), time.Now().Add(s.sendTimeoutOrDefault()), nil)
+		}
+		if err != nil {
 			return fmt.Errorf("connection: serve_one_call: %w", err)
 		}
 		return nil
@@ -102,6 +108,33 @@ func (s *Session) ServeOneCallGated(lookup CallLookup, policy PolicyLookup, id i
 		return fmt.Errorf("connection: serve_one_call: %w", s.endedErr())
 	case <-timer.C:
 		return ErrServeOneCallTimeout
+	}
+}
+
+// refusalCode is the BOLT#4 code a call is answered with when its reply was
+// refused before it was written, as macula_station_link's sent_or_faulted/4
+// answers one: PayloadTooLarge for a reply over the frame cap, UnknownError for
+// one the decoding rule would refuse. It reports false for any other error.
+func refusalCode(err error) (bolt4.Code, bool) {
+	switch {
+	case errors.Is(err, frame.ErrFrameTooLarge):
+		return bolt4.PayloadTooLarge, true
+	case errors.Is(err, frame.ErrFrameBreaksDecodingRule):
+		return bolt4.UnknownError, true
+	default:
+		return 0, false
+	}
+}
+
+// warnRefusedReply logs, when the session has a logger, that a call's reply
+// was refused before it was written and the call is answered with an error.
+func (s *Session) warnRefusedReply(err error) {
+	s.rt.mu.Lock()
+	logger := s.rt.logger
+	s.rt.mu.Unlock()
+	if logger != nil {
+		logger.Warn("macula: a call's reply was refused before it was written; answering the call with an error",
+			"reason", loggable(err.Error()))
 	}
 }
 

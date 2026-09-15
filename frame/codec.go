@@ -2,16 +2,22 @@ package frame
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 
 	"github.com/macula-io/macula-go/cbor"
 )
 
-// Encode wraps frameVal as <Length:4 bytes big-endian><Cbor>.
+// ErrFrameTooLarge is a frame whose encoding is longer than MaxFrameBytes.
+// Encode refuses it with this error, and nothing of it is sent.
+var ErrFrameTooLarge = errors.New("frame too large")
+
+// Encode wraps frameVal as <Length:4 bytes big-endian><Cbor>, and refuses a
+// frame over the frame cap with an error wrapping ErrFrameTooLarge.
 func Encode(frameVal cbor.Value) ([]byte, error) {
 	payload := cbor.Encode(frameVal)
 	if len(payload) > MaxFrameBytes {
-		return nil, fmt.Errorf("frame: encode: frame is %d bytes, exceeding the %d-byte cap", len(payload), MaxFrameBytes)
+		return nil, fmt.Errorf("frame: encode: %w: %d bytes, exceeding the %d-byte cap", ErrFrameTooLarge, len(payload), MaxFrameBytes)
 	}
 	out := make([]byte, 4+len(payload))
 	binary.BigEndian.PutUint32(out, uint32(len(payload)))

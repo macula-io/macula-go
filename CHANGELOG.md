@@ -91,8 +91,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and statement, and the proof, and answers with a HELLO that refuses with one
   coarse code), `ReadHello`, `StatusFrame` and `ReadStatus`. Every frame
   decodes exactly its keys, each of its type and length.
+- `frame.CheckFrame` checks a whole frame under the decoding rule, as macula
+  checks every frame before it sends it: at most `cbor.MaxElements` items and
+  `cbor.MaxNestingDepth` levels, besides what `frame.CheckPayload` checks. Its
+  refusals wrap `frame.ErrFrameBreaksDecodingRule`, and `frame.Encode` refuses
+  a frame over the cap with `frame.ErrFrameTooLarge`. Every frame a
+  `connection.FrameStream` sends passes both before anything is written, so a
+  call, publish or stream frame that fails either returns that error. A
+  handler reply that fails either is logged, and the call is answered with an
+  ERROR instead: `PayloadTooLarge` for a reply over the cap, `UnknownError`
+  otherwise.
 
 ### Fixed
+
+- A frame over the frame cap sent on a control stream ended the session. It
+  returns `frame.ErrFrameTooLarge` and leaves the session up.
 
 - `cbor.Value.AsInt64` reports -2^63-1 as not fitting an int64, where it
   returned 2^63-1.

@@ -92,7 +92,15 @@ const StreamProtocolErrorCode = 3
 // waitUntil bounds that wait (zero waits as long as it takes) and stop ends it
 // early (nil never does). writeFor bounds the write itself (zero sets no
 // deadline). started, if not nil, is called once the write begins.
+//
+// Every frame a stream sends passes here, and v is refused before anything is
+// written when the decoding rule would refuse it where it arrives, with an
+// error wrapping frame.ErrFrameBreaksDecodingRule, or when it is over the frame
+// cap, with one wrapping frame.ErrFrameTooLarge.
 func (fs *FrameStream) sendFrame(v cbor.Value, waitUntil time.Time, writeFor time.Duration, stop <-chan struct{}, started func()) error {
+	if err := frame.CheckFrame(v); err != nil {
+		return fmt.Errorf("connection: send frame: %w", err)
+	}
 	encoded, err := frame.Encode(v)
 	if err != nil {
 		return fmt.Errorf("connection: encode frame: %w", err)

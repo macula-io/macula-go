@@ -271,9 +271,11 @@ func (s *Session) writeHandOffs() {
 
 // send writes v on the control stream. It waits for the write lock until
 // waitUntil, or until the session ends, and then returns an error wrapping
-// ErrNotSent. A write that takes longer than the session send timeout may have
-// left a frame half written, so it ends the session with ErrSendTimeout.
-// started, if not nil, is called once the write begins.
+// ErrNotSent. A frame refused before it is written, one the decoding rule would
+// refuse or one over the frame cap, returns that error and leaves the session
+// up. A write that takes longer than the session send timeout may have left a
+// frame half written, so it ends the session with ErrSendTimeout. started, if
+// not nil, is called once the write begins.
 func (s *Session) send(v cbor.Value, waitUntil time.Time, started func()) error {
 	if err := s.endedErr(); err != nil {
 		return fmt.Errorf("%w: %w", err, ErrNotSent)
@@ -282,6 +284,8 @@ func (s *Session) send(v cbor.Value, waitUntil time.Time, started func()) error 
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, frame.ErrFrameBreaksDecodingRule), errors.Is(err, frame.ErrFrameTooLarge):
+		return fmt.Errorf("connection: send: %w", err)
 	case errors.Is(err, errSendStopped):
 		return fmt.Errorf("%w: %w", s.endedErr(), ErrNotSent)
 	case errors.Is(err, errWriteLockWait):

@@ -1,6 +1,7 @@
 package frame
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -26,6 +27,10 @@ const FrameReservedElements = 64
 // decoding rule's element budget counts them.
 const MaxPayloadElements = cbor.MaxElements - FrameReservedElements
 
+// ErrFrameBreaksDecodingRule is a frame the decoding rule would refuse where
+// it arrives. CheckFrame refuses it with this error, and nothing of it is sent.
+var ErrFrameBreaksDecodingRule = errors.New("frame: the frame breaks the decoding rule")
+
 // CheckPayload reports whether v is admissible as a frame payload, the Go
 // counterpart to macula_frame.erl's check_payload/1. A producer calls it in
 // its own goroutine before a payload reaches a link, so a payload the
@@ -45,36 +50,54 @@ const MaxPayloadElements = cbor.MaxElements - FrameReservedElements
 // few hundred bytes of the cap can still make a frame that frame.Encode
 // refuses, as the reference's own check also allows.
 func CheckPayload(v cbor.Value) error {
-	var check payloadCheck
+	check := ruleCheck{subject: "payload", maxItems: MaxPayloadElements, maxNesting: MaxPayloadNesting}
 	if err := check.value(v, nil); err != nil {
 		return err
 	}
 	if n := len(cbor.Encode(v)); n > MaxFrameBytes {
 		return fmt.Errorf("frame: payload at %s exceeds the %d-byte frame cap (encoded %d bytes)",
-			pathString(nil), MaxFrameBytes, n)
+			check.at(nil), MaxFrameBytes, n)
 	}
 	return nil
 }
 
-// payloadCheck walks a payload and counts its items.
-type payloadCheck struct {
-	items int
+// CheckFrame reports whether the whole frame v is one the decoding rule
+// accepts where it arrives. It is the check macula_peering:send_frame/2 runs,
+// through macula_frame.erl's check_frame/1, on every frame before it is sent.
+// It refuses what CheckPayload refuses, under the limits of a whole frame:
+// lists and maps nested more than cbor.MaxNestingDepth levels, the frame's own
+// map counted, and more than cbor.MaxElements items. Every refusal wraps
+// ErrFrameBreaksDecodingRule. Encode checks the frame's size.
+func CheckFrame(v cbor.Value) error {
+	check := ruleCheck{subject: "frame", maxItems: cbor.MaxElements, maxNesting: cbor.MaxNestingDepth}
+	if err := check.value(v, nil); err != nil {
+		return fmt.Errorf("%w: %w", ErrFrameBreaksDecodingRule, err)
+	}
+	return nil
 }
 
-// value checks v, which sits at path below the payload root, and everything
-// inside it.
-func (c *payloadCheck) value(v cbor.Value, path []string) error {
+// ruleCheck walks a payload or a whole frame, its subject, under the decoding
+// rule's limits for it, and counts its items.
+type ruleCheck struct {
+	subject    string
+	maxItems   int
+	maxNesting int
+	items      int
+}
+
+// value checks v, which sits at path below the root, and everything inside it.
+func (c *ruleCheck) value(v cbor.Value, path []string) error {
 	c.items++
-	if c.items > MaxPayloadElements {
-		return fmt.Errorf("frame: payload holds more than %d items, at %s", MaxPayloadElements, pathString(path))
+	if c.items > c.maxItems {
+		return fmt.Errorf("frame: %s holds more than %d items, at %s", c.subject, c.maxItems, c.at(path))
 	}
 	switch v.Kind() {
 	case cbor.KindFloat:
-		return checkFloat(v, path)
+		return c.float(v, path)
 	case cbor.KindUInt, cbor.KindNegInt:
-		return checkInteger(v, path)
+		return c.integer(v, path)
 	case cbor.KindText:
-		return checkText(v, path)
+		return c.text(v, path)
 	case cbor.KindList:
 		return c.list(v, path)
 	case cbor.KindMap:
@@ -84,39 +107,39 @@ func (c *payloadCheck) value(v cbor.Value, path []string) error {
 	}
 }
 
-func checkFloat(v cbor.Value, path []string) error {
+func (c *ruleCheck) float(v cbor.Value, path []string) error {
 	f, _ := v.AsFloat()
 	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return fmt.Errorf("frame: non-finite float at %s cannot be encoded", pathString(path))
+		return fmt.Errorf("frame: non-finite float at %s cannot be encoded", c.at(path))
 	}
 	return nil
 }
 
-func checkInteger(v cbor.Value, path []string) error {
+func (c *ruleCheck) integer(v cbor.Value, path []string) error {
 	if _, fits := v.AsInt64(); !fits {
-		return fmt.Errorf("frame: integer at %s is outside -2^63 to 2^63-1", pathString(path))
+		return fmt.Errorf("frame: integer at %s is outside -2^63 to 2^63-1", c.at(path))
 	}
 	return nil
 }
 
-func checkText(v cbor.Value, path []string) error {
+func (c *ruleCheck) text(v cbor.Value, path []string) error {
 	if s, _ := v.AsText(); !utf8.ValidString(s) {
-		return fmt.Errorf("frame: text at %s is not valid UTF-8", pathString(path))
+		return fmt.Errorf("frame: text at %s is not valid UTF-8", c.at(path))
 	}
 	return nil
 }
 
-// checkNesting refuses a list or map at path when it would nest more than
-// MaxPayloadNesting levels.
-func checkNesting(path []string) error {
-	if len(path) >= MaxPayloadNesting {
-		return fmt.Errorf("frame: lists and maps at %s nest more than %d levels", pathString(path), MaxPayloadNesting)
+// nesting refuses a list or map at path when it would nest more than
+// maxNesting levels.
+func (c *ruleCheck) nesting(path []string) error {
+	if len(path) >= c.maxNesting {
+		return fmt.Errorf("frame: lists and maps at %s nest more than %d levels", c.at(path), c.maxNesting)
 	}
 	return nil
 }
 
-func (c *payloadCheck) list(v cbor.Value, path []string) error {
-	if err := checkNesting(path); err != nil {
+func (c *ruleCheck) list(v cbor.Value, path []string) error {
+	if err := c.nesting(path); err != nil {
 		return err
 	}
 	items, _ := v.AsList()
@@ -130,8 +153,8 @@ func (c *payloadCheck) list(v cbor.Value, path []string) error {
 
 // mapOf checks a map's keys, which must be admissible and distinct once
 // encoded, and its values.
-func (c *payloadCheck) mapOf(v cbor.Value, path []string) error {
-	if err := checkNesting(path); err != nil {
+func (c *ruleCheck) mapOf(v cbor.Value, path []string) error {
+	if err := c.nesting(path); err != nil {
 		return err
 	}
 	entries, _ := v.AsMap()
@@ -142,8 +165,7 @@ func (c *payloadCheck) mapOf(v cbor.Value, path []string) error {
 		}
 		keyBytes := string(cbor.Encode(e.Key))
 		if _, dup := seen[keyBytes]; dup {
-			return fmt.Errorf("frame: two keys in the map at %s collapse to the same wire key",
-				pathString(path))
+			return fmt.Errorf("frame: two keys in the map at %s collapse to the same wire key", c.at(path))
 		}
 		seen[keyBytes] = struct{}{}
 		if err := c.value(e.Val, append(path, keyLabel(e.Key))); err != nil {
@@ -155,18 +177,20 @@ func (c *payloadCheck) mapOf(v cbor.Value, path []string) error {
 
 // key refuses a map key the decoding rule refuses: one that is not text or an
 // integer, text that is not valid UTF-8, or an integer out of range.
-func (c *payloadCheck) key(k cbor.Value, path []string) error {
+func (c *ruleCheck) key(k cbor.Value, path []string) error {
 	switch k.Kind() {
 	case cbor.KindText, cbor.KindUInt, cbor.KindNegInt:
 		return c.value(k, path)
 	default:
-		return fmt.Errorf("frame: map key at %s is not text or an integer", pathString(path))
+		return fmt.Errorf("frame: map key at %s is not text or an integer", c.at(path))
 	}
 }
 
-func pathString(path []string) string {
+// at names path for an error: the subject's root, or the keys and indexes that
+// lead from it.
+func (c *ruleCheck) at(path []string) string {
 	if len(path) == 0 {
-		return "the payload root"
+		return "the " + c.subject + " root"
 	}
 	return strings.Join(path, ".")
 }
