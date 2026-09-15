@@ -54,7 +54,7 @@ func TestLivePoolReconnectsAndReplaysSubscriptionAfterLinkDrop(t *testing.T) {
 	topic := "pool.live_reconnect_test"
 
 	received := make(chan string, 4)
-	p.Subscribe(realm, topic, func(_ []byte, gotTopic string, payload cbor.Value) {
+	subscribed(t, p, realm, topic, func(_ []byte, gotTopic string, payload cbor.Value) {
 		txt, _ := payload.AsText()
 		if gotTopic == topic {
 			received <- txt

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
 )
 
 // Subscribe registers handler for every EVENT matching (realm, topic), where
@@ -13,7 +14,17 @@ import (
 // or reconnects afterward); an additional local subscriber to the same
 // (realm, topic) registers for delivery without any new wire traffic --
 // matches macula_client.erl's own issue_wire_subs/AlreadyTracked check.
-func (p *Pool) Subscribe(realm []byte, topic string, handler EventHandler) SubID {
+//
+// realm and topic, with the pool's node id as subscriber, are checked with
+// frame.CheckSubscription HERE, in the caller's own goroutine, before anything
+// is registered or any link is touched, as Publish and Call check a payload. A
+// subscription a station refuses, to a realm that is not 32 bytes or a topic
+// over 512 bytes or not UTF-8, returns that refusal with SubID 0, and no link
+// ever subscribes to it.
+func (p *Pool) Subscribe(realm []byte, topic string, handler EventHandler) (SubID, error) {
+	if err := frame.CheckSubscription(realm, p.opts.Identity.NodeID(), topic); err != nil {
+		return 0, err
+	}
 	key := topicKey{realm: string(realm), topic: topic}
 
 	p.subsMu.Lock()
@@ -30,7 +41,7 @@ func (p *Pool) Subscribe(realm []byte, topic string, handler EventHandler) SubID
 	if !alreadyTracked {
 		p.subscribeLinks(key)
 	}
-	return id
+	return id, nil
 }
 
 // Unsubscribe drops a subscription. Idempotent. Matches

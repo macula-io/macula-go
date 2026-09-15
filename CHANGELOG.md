@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checked first, and a topic over 512 bytes (`frame.ErrTextTooLong`) or not
   UTF-8 (`frame.ErrInvalidText`). `connection.Session.Subscribe` returns that
   refusal before it tracks or sends anything.
+- `pool.Pool.Subscribe` returns `(SubID, error)`. Before it registers anything
+  it checks the realm, the topic and the pool's node id as subscriber with
+  `frame.CheckSubscription`, the check `frame.Subscribe` and
+  `frame.Unsubscribe` make, and returns a refusal with SubID 0, so no link
+  subscribes to what a station refuses.
 
 ### Added
 

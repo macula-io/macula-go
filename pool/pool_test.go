@@ -567,7 +567,7 @@ func TestSubscribeReplaysOntoRespawnedLink(t *testing.T) {
 	realm := fill32(0xAA)
 	var mu sync.Mutex
 	var delivered []string
-	p.Subscribe(realm, "topic.one", func(_ []byte, topic string, _ cbor.Value) {
+	subscribed(t, p, realm, "topic.one", func(_ []byte, topic string, _ cbor.Value) {
 		mu.Lock()
 		delivered = append(delivered, topic)
 		mu.Unlock()
@@ -622,7 +622,7 @@ func TestEventDeliveredExactlyOnceDespiteDuplicateFrames(t *testing.T) {
 	publisher := fill32(0xDD)
 	var count int
 	var mu sync.Mutex
-	p.Subscribe(realm, "topic.dup", func(_ []byte, _ string, _ cbor.Value) {
+	subscribed(t, p, realm, "topic.dup", func(_ []byte, _ string, _ cbor.Value) {
 		mu.Lock()
 		count++
 		mu.Unlock()
@@ -664,8 +664,8 @@ func TestAWildcardSubscriptionThroughThePoolReceivesMatchingEvents(t *testing.T)
 			received[name] = append(received[name], topic)
 		}
 	}
-	p.Subscribe(realm, "sensors/*", recordAs("wildcard"))
-	p.Subscribe(realm, "sensors/kitchen", recordAs("concrete"))
+	subscribed(t, p, realm, "sensors/*", recordAs("wildcard"))
+	subscribed(t, p, realm, "sensors/kitchen", recordAs("concrete"))
 	waitFor(t, time.Second, func() bool { return len(subscribeFrames(s.Sent())) == 2 })
 
 	s.recv <- rawEventFrame(t, realm, fill32(0x52), "sensors/kitchen", 1, cbor.Text("warm"))
@@ -703,7 +703,7 @@ func TestAnOverflowedSubscriptionIsReplacedBeforeItIsClosed(t *testing.T) {
 
 	realm := fill32(0x61)
 	delivered := make(chan string, 4)
-	p.Subscribe(realm, "flood", func(_ []byte, _ string, payload cbor.Value) {
+	subscribed(t, p, realm, "flood", func(_ []byte, _ string, payload cbor.Value) {
 		txt, _ := payload.AsText()
 		delivered <- txt
 	})
@@ -743,13 +743,13 @@ func TestPanickingHandlerDoesNotStopOtherDelivery(t *testing.T) {
 	realm := fill32(0x99)
 	publisher := fill32(0x88)
 
-	p.Subscribe(realm, "topic.panics", func(_ []byte, _ string, _ cbor.Value) {
+	subscribed(t, p, realm, "topic.panics", func(_ []byte, _ string, _ cbor.Value) {
 		panic("boom")
 	})
 
 	var mu sync.Mutex
 	var gotSecond bool
-	p.Subscribe(realm, "topic.fine", func(_ []byte, _ string, _ cbor.Value) {
+	subscribed(t, p, realm, "topic.fine", func(_ []byte, _ string, _ cbor.Value) {
 		mu.Lock()
 		gotSecond = true
 		mu.Unlock()
@@ -869,7 +869,7 @@ func TestStalledWriterRespawnsInsteadOfWedging(t *testing.T) {
 
 	returned := make(chan struct{})
 	go func() {
-		p.Subscribe(realm, "still.works", func([]byte, string, cbor.Value) {})
+		subscribed(t, p, realm, "still.works", func([]byte, string, cbor.Value) {})
 		_ = p.Status()
 		close(returned)
 	}()
