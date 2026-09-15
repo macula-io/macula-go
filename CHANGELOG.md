@@ -149,6 +149,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ErrObjectMalformed`, `ErrObjectSignatureInvalid` or `ErrObjectAlgMismatch`.
   `ParseObject`, `ParseHeldObject`, `DecodeObject` and `DecodeHeldObject` read
   the wire form.
+- `frame.SignCall`, `SignStreamOpen`, `SignResult`, `SignProviderError` and
+  `SignRelayError`, with `VerifyRequest`, `VerifyReply`, `VerifyRelayError`
+  and `ClaimedReplyIDs`: macula 11.0.0's requests, replies and relay errors
+  (D25). A request is a signed object under `MACULA-PQ-REQUEST-V1` from the
+  caller's identity key, a reply one under `MACULA-PQ-REPLY-V1` from the
+  request's target, and a relay error one under `MACULA-PQ-RELAY-ERROR-V1`
+  from a station, with a code from the closed set and no detail. A builder
+  refuses what its receiver would: a key that is not an identity key or not
+  the expected sender (`ErrUnsignable`), a procedure over 512 bytes, a code
+  over 64 or a detail over 256 (`ErrTextTooLong`), text that is not UTF-8
+  (`ErrInvalidText`), a payload the wire cannot carry, a relay code outside
+  its set (`ErrRelayCodeOutsideItsSet`), and a field out of range
+  (`ErrOutOfRange`). A verifier reads a frame in macula's order and refuses
+  with `ErrMalformedFrame`, `identity.ErrObjectSignatureInvalid`,
+  `ErrKeyIDMismatch`, `ErrRequestMismatch`, `ErrNotTheTarget` or
+  `ErrNotTheConnection`. `ClaimedReplyIDs` reads the ids a reply names without
+  verifying it, as the key for finding its pending request.
 
 ### Fixed
 
