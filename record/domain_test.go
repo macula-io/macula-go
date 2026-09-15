@@ -8,7 +8,7 @@ import (
 )
 
 // These tests mirror macula's macula_record_domain_tests at merge-11.0.0
-// 81b90d7c. A domain record's subject is a non-empty binary: Envelope and
+// 81b90d7c. A domain record's subject is a non-empty binary: Envelope, Sign and
 // every verifier refuse an empty one, since it would name a slot apart from no
 // subject, and so does a tombstone's slot. A tombstone names a withdrawn type
 // from 1 to 255. macula's domain_record_checked/1 is a pool's check before it
@@ -25,12 +25,24 @@ func TestAnEmptySubjectIsRefusedByEnvelope(t *testing.T) {
 	}
 }
 
+// A verifier refuses a domain record with an empty subject. Sign builds none,
+// so this one is signed by hand, where macula's test signs it with sign/2.
 func TestAnEmptySubjectIsRefusedByAVerifier(t *testing.T) {
+	keys := keysFor(t)
+	fields := append(recordFields(t, DomainTypeMin, cbor.Map(nil), nowMs(), testHour), bytesEntry("subject", []byte{}))
+	_, err := Verify(signedByHand(t, label, fields, keys.node), profile.PQPure, nowMs())
+	wantRefusal(t, "a domain record with an empty subject", err, ErrMalformed)
+}
+
+// Sign refuses an empty subject before anything else it checks, since no reader
+// reads one: here before the purpose of a CONNECT key. macula's sign/2 signs
+// one, and its pool refuses it as invalid_subject before signing.
+func TestAnEmptySubjectIsRefusedBySign(t *testing.T) {
 	keys := keysFor(t)
 	r := must[Record](t)(Envelope(DomainTypeMin, cbor.Map(nil), nil, 0))
 	r.Subject = []byte{}
-	_, err := Verify(wireOf(t, must[Record](t)(Sign(r, keys.node))), profile.PQPure, nowMs())
-	wantRefusal(t, "a domain record with an empty subject", err, ErrMalformed)
+	_, err := Sign(r, keys.connect)
+	wantRefusal(t, "sign with a CONNECT key a domain record with an empty subject", err, ErrInvalidSubject)
 }
 
 // A tombstone of a domain record carries none of the record's slot fields, or

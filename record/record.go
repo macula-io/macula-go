@@ -172,15 +172,20 @@ func Envelope(t Type, payload cbor.Value, subject []byte, ttlMs uint64) (Record,
 }
 
 // Sign signs r with key, as macula_record's sign/2 does, and returns it with its
-// key, key id, alg, tbs and signature. It checks, in this order, and refuses a
-// key whose purpose does not fit r's type (ErrKeyPurposeMismatch); a lifetime
-// that runs backwards (ErrLifetimeReversed) or past its type's maximum
-// (ErrLifetimeTooLong); a payload that names a signer other than key
-// (ErrKeyIDMismatch); and a record over 256 KiB (ErrRecordTooLarge).
+// key, key id, alg, tbs and signature. It refuses an empty subject first
+// (ErrInvalidSubject), since every reader refuses one, and then checks, in
+// macula's order, and refuses a key whose purpose does not fit r's type
+// (ErrKeyPurposeMismatch); a lifetime that runs backwards (ErrLifetimeReversed)
+// or past its type's maximum (ErrLifetimeTooLong); a payload that names a
+// signer other than key (ErrKeyIDMismatch); and a record over 256 KiB
+// (ErrRecordTooLarge).
 func Sign(r Record, key *identity.NodeKey) (Record, error) {
 	carried := key.PublicKey()
 	if carried == nil {
 		return Record{}, identity.ErrEmptyNodeKey
+	}
+	if r.Subject != nil && len(r.Subject) == 0 {
+		return Record{}, ErrInvalidSubject
 	}
 	p := key.Profile()
 	if !slices.Contains(signerPurposes(int64(r.Type), r.Payload), key.Purpose()) {
