@@ -247,7 +247,9 @@ type statusTBS struct {
 
 // VerifyStatus checks a status statement for the binding it came with, against
 // the identity key as carried, under profile p, at nowMs with 5 minutes of
-// tolerance, and returns when the statement expires.
+// tolerance, and returns when the statement expires. It checks that the
+// statement names that binding, not the binding itself: a caller verifies the
+// binding too, with VerifyTLSBinding or VerifyConnectBinding.
 func VerifyStatus(statement, binding SignedTBS, identityKey []byte, p profile.Profile, nowMs int64) (int64, error) {
 	if !Verify(labelled(labelStatus, statement.TBS), statement.Signature, identityKey, p) {
 		return 0, ErrStatusSignatureInvalid

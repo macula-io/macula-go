@@ -36,6 +36,8 @@ var (
 	ErrNotAnIdentityKey = errors.New("identity: not an identity key")
 	// ErrUnknownPurpose is a purpose other than identity or connect.
 	ErrUnknownPurpose = errors.New("identity: not a known key purpose")
+	// ErrEmptyNodeKey is a NodeKey that holds no key, such as the zero value.
+	ErrEmptyNodeKey = errors.New("identity: the node key holds no key")
 )
 
 // PuzzleDifficulty is how many leading zero bits an identity key's node_id
@@ -123,8 +125,11 @@ func (k *NodeKey) Purpose() Purpose { return k.purpose }
 func (k *NodeKey) Profile() profile.Profile { return k.profile }
 
 // PublicKey is k as carried (D13): the 2,592-byte ML-DSA-87 key, followed in
-// pq_hybrid by the DER RSAPublicKey.
+// pq_hybrid by the DER RSAPublicKey. An empty key has none.
 func (k *NodeKey) PublicKey() []byte {
+	if k.mldsa == nil {
+		return nil
+	}
 	carried := bytes.Clone(k.mldsa.PublicKey().Bytes())
 	if k.rsa == nil {
 		return carried
@@ -152,8 +157,11 @@ func (k *NodeKey) KeyID() [32]byte {
 // Sign signs message: with ML-DSA-87 alone in pq_pure, and with Macula's
 // composite ML-DSA-87-PS384 in pq_hybrid, where both halves sign the message
 // representative and the signature is the ML-DSA-87 signature followed by the
-// RSA-PSS signature.
+// RSA-PSS signature. An empty key refuses with ErrEmptyNodeKey.
 func (k *NodeKey) Sign(message []byte) ([]byte, error) {
+	if k.mldsa == nil {
+		return nil, ErrEmptyNodeKey
+	}
 	if k.rsa == nil {
 		return k.mldsa.Sign(rand.Reader, message, crypto.Hash(0))
 	}

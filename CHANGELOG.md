@@ -42,7 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Verify`, `NodeIDOf`, `KeyIDOf`, `CarriedKeyWellFormed`, `SignatureSize` and
   `PuzzleSolved`. In `pq_hybrid` a key signs Macula's composite
   ML-DSA-87-PS384, valid only if both halves verify. A node key never shows a
-  private half when printed or logged.
+  private half when printed or logged. A `NodeKey` that holds no key, such as
+  the zero value, has no public key and refuses to sign with `ErrEmptyNodeKey`.
 - `NodeKey.Save` and `identity.LoadKey`: key files in the seed form, readable
   by their owner only. `Save` creates the file exclusively in a new owner-only
   directory beside the path, syncs it, renames it over the path, syncs the
@@ -64,15 +65,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decoding rule. They refuse an unknown or duplicate key, a field of the wrong
   type or length, another node_id, use or subject, and a binding or statement
   outside its validity with 5 minutes of tolerance, each with its own error.
-  `ParseSignedTBS` reads the `{tbs, signature}` map.
+  `VerifyStatus` checks that a statement names its binding, not the binding
+  itself, so a caller verifies both. `ParseSignedTBS` reads the
+  `{tbs, signature}` map.
 - `identity.StatementIssuer`: a client's status statement issuer. It holds the
   CONNECT key with its binding and a fresh status statement. At every `Tick`
   (`Run` ticks every 15 minutes) it issues a statement valid for an hour for
   each binding still in force. Every 5 days it rotates the CONNECT key, with
   the new binding and statement in place before `ConnectMaterial` hands the key
-  out, and a rotated-out binding keeps its statements until its not_after.
-  `Subscribe` delivers a binding's newest statement, and its channel closes when
-  the binding ends or the subscriber unsubscribes. Nothing is written to disk.
+  out; a rotated-out binding keeps its statements until its not_after, and the
+  issuer lets go of the rotated-out key. `ConnectMaterial` does work that is
+  due itself, after missed ticks, a sleep or a clock step, and returns
+  `ErrNoConnectMaterial` rather than a binding or statement out of force. The
+  current binding is let go of only once a new one replaces it, and a tick
+  carries on past a failure and returns every error. `Subscribe` delivers a
+  binding's newest statement, and its channel closes when the binding ends or
+  the subscriber unsubscribes; the subscriber owns the subscription. Bindings
+  and statements are handed out as copies. Nothing is written to disk.
 - `handshake`: the version 3 connection handshake as CBOR bytes, on both
   sides. `Opener`, `Challenge`, `AnswerChallenge` (the client checks the
   challenge's frame, profile, carried key, key purposes, the station's node_id

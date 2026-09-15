@@ -100,7 +100,7 @@ func reissuedAt(t *testing.T, issuer *StatementIssuer, clock *testClock, ch <-ch
 
 func TestConnectMaterialIsBoundAndStatedFromTheStart(t *testing.T) {
 	forEachProfile(t, func(t *testing.T, p profile.Profile, keys bindingKeys) {
-		material := newIssuer(t, keys.identity, newTestClock()).ConnectMaterial()
+		material := currentMaterial(t, newIssuer(t, keys.identity, newTestClock()))
 		if material.Key.Purpose() != PurposeConnect || material.Key.Profile() != p {
 			t.Fatalf("the CONNECT key is a %s key, want a %s CONNECT key", material.Key, p)
 		}
@@ -116,12 +116,12 @@ func TestAStatementIsReissuedEvery15MinutesAndValidForAnHour(t *testing.T) {
 	identity := sharedKey(t, pureIdentityKey)
 	clock := newTestClock()
 	issuer := newIssuer(t, identity, clock)
-	binding := issuer.ConnectMaterial().Binding
+	binding := currentMaterial(t, issuer).Binding
 	ch, _ := subscribed(t, issuer, binding)
 	reissuedAt(t, issuer, clock, ch, binding, identity, issuerT0+15*minuteMs)
 	reissuedAt(t, issuer, clock, ch, binding, identity, issuerT0+30*minuteMs)
 	// A new dial takes the newest statement too.
-	checkStatementAt(t, issuer.ConnectMaterial().Status, binding, identity, issuerT0+30*minuteMs)
+	checkStatementAt(t, currentMaterial(t, issuer).Status, binding, identity, issuerT0+30*minuteMs)
 }
 
 // A subscriber that has not read keeps only the newest statement: statements
@@ -130,7 +130,7 @@ func TestASubscriberThatFallsBehindHoldsOnlyTheNewestStatement(t *testing.T) {
 	identity := sharedKey(t, pureIdentityKey)
 	clock := newTestClock()
 	issuer := newIssuer(t, identity, clock)
-	binding := issuer.ConnectMaterial().Binding
+	binding := currentMaterial(t, issuer).Binding
 	ch, _ := subscribed(t, issuer, binding)
 	tickAt(t, issuer, clock, issuerT0+15*minuteMs)
 	tickAt(t, issuer, clock, issuerT0+30*minuteMs)
@@ -148,15 +148,15 @@ func TestTheConnectKeyRotatesEvery5DaysWithItsBindingAndStatementFirst(t *testin
 	identity := sharedKey(t, pureIdentityKey)
 	clock := newTestClock()
 	issuer := newIssuer(t, identity, clock)
-	first := issuer.ConnectMaterial().Key.PublicKey()
+	first := currentMaterial(t, issuer).Key.PublicKey()
 
 	tickAt(t, issuer, clock, issuerT0+5*dayMs-1)
-	if !bytes.Equal(issuer.ConnectMaterial().Key.PublicKey(), first) {
+	if !bytes.Equal(currentMaterial(t, issuer).Key.PublicKey(), first) {
 		t.Fatal("the CONNECT key rotated before 5 days")
 	}
 	rotation := issuerT0 + 5*dayMs
 	tickAt(t, issuer, clock, rotation)
-	material := issuer.ConnectMaterial()
+	material := currentMaterial(t, issuer)
 	if bytes.Equal(material.Key.PublicKey(), first) {
 		t.Fatal("the CONNECT key did not rotate at 5 days")
 	}
@@ -172,7 +172,7 @@ func TestARotatedOutBindingKeepsItsStatementsUntilItsNotAfterAndNoneAfter(t *tes
 	identity := sharedKey(t, pureIdentityKey)
 	clock := newTestClock()
 	issuer := newIssuer(t, identity, clock)
-	old := issuer.ConnectMaterial().Binding
+	old := currentMaterial(t, issuer).Binding
 	ch, _ := subscribed(t, issuer, old)
 
 	reissuedAt(t, issuer, clock, ch, old, identity, issuerT0+5*dayMs)
@@ -189,9 +189,9 @@ func TestARotatedOutBindingKeepsItsStatementsUntilItsNotAfterAndNoneAfter(t *tes
 // Nothing is kept across issuers: a new one starts with a new CONNECT key.
 func TestANewIssuerStartsWithANewConnectBinding(t *testing.T) {
 	identity := sharedKey(t, pureIdentityKey)
-	first := newIssuer(t, identity, newTestClock()).ConnectMaterial().Binding
+	first := currentMaterial(t, newIssuer(t, identity, newTestClock())).Binding
 	second := newIssuer(t, identity, newTestClock())
-	if bindingHashOf(second.ConnectMaterial().Binding) == bindingHashOf(first) {
+	if bindingHashOf(currentMaterial(t, second).Binding) == bindingHashOf(first) {
 		t.Fatal("a new issuer reuses the old binding")
 	}
 	if _, _, err := second.Subscribe(bindingHashOf(first)); !errors.Is(err, ErrUnknownBinding) {
@@ -210,7 +210,7 @@ func TestUnsubscribingClosesTheChannelAndStopsStatements(t *testing.T) {
 	identity := sharedKey(t, pureIdentityKey)
 	clock := newTestClock()
 	issuer := newIssuer(t, identity, clock)
-	ch, unsubscribe := subscribed(t, issuer, issuer.ConnectMaterial().Binding)
+	ch, unsubscribe := subscribed(t, issuer, currentMaterial(t, issuer).Binding)
 	unsubscribe()
 	if _, got := pendingStatement(ch); got != channelClosed {
 		t.Fatalf("after unsubscribing the channel is %d, want it closed", got)
@@ -223,7 +223,7 @@ func TestRunEveryTicksOnEachTickUntilItsContextEnds(t *testing.T) {
 	identity := sharedKey(t, pureIdentityKey)
 	clock := newTestClock()
 	issuer := newIssuer(t, identity, clock)
-	binding := issuer.ConnectMaterial().Binding
+	binding := currentMaterial(t, issuer).Binding
 	ch, _ := subscribed(t, issuer, binding)
 
 	ticks := make(chan time.Time)
@@ -258,7 +258,7 @@ func TestAnIssuerThatMissedItsTicksRotatesToANewBindingAtTheNextOne(t *testing.T
 	identity := sharedKey(t, pureIdentityKey)
 	clock := newTestClock()
 	issuer := newIssuer(t, identity, clock)
-	old := issuer.ConnectMaterial()
+	old := currentMaterial(t, issuer)
 	ch, _ := subscribed(t, issuer, old.Binding)
 
 	late := issuerT0 + 7*dayMs + 1
@@ -266,7 +266,7 @@ func TestAnIssuerThatMissedItsTicksRotatesToANewBindingAtTheNextOne(t *testing.T
 	if _, got := pendingStatement(ch); got != channelClosed {
 		t.Fatalf("the expired binding's subscriber channel is %d, want it closed", got)
 	}
-	material := issuer.ConnectMaterial()
+	material := currentMaterial(t, issuer)
 	if bytes.Equal(material.Key.PublicKey(), old.Key.PublicKey()) {
 		t.Fatal("a new dial still takes the CONNECT key whose binding expired")
 	}
@@ -274,4 +274,105 @@ func TestAnIssuerThatMissedItsTicksRotatesToANewBindingAtTheNextOne(t *testing.T
 		t.Fatalf("the new CONNECT binding: %v", err)
 	}
 	checkStatementAt(t, material.Status, material.Binding, identity, late)
+}
+
+// An issuer whose clock reads a time nothing can be issued at fails its tick
+// and ConnectMaterial, without panicking or handing out a binding past its
+// not_after, and is whole again at its next tick at a time it can issue at.
+func TestAnIssuerRecoversFromATimeItCannotIssueAt(t *testing.T) {
+	identity := sharedKey(t, pureIdentityKey)
+	clock := newTestClock()
+	issuer := newIssuer(t, identity, clock)
+
+	clock.set(maxProtocolInt - 1)
+	if err := issuer.Tick(); err == nil {
+		t.Fatal("Tick at 2^53-1 succeeded, want an error")
+	}
+	if _, err := materialOf(t, issuer); err == nil {
+		t.Fatal("ConnectMaterial at 2^53-1 succeeded, want an error")
+	}
+
+	later := issuerT0 + 7*dayMs + minuteMs
+	tickAt(t, issuer, clock, later)
+	material := currentMaterial(t, issuer)
+	if _, err := VerifyConnectBinding(material.Binding, identity.PublicKey(), profile.PQPure, material.Key.PublicKey(), later); err != nil {
+		t.Fatalf("the CONNECT binding after the issuer recovered: %v", err)
+	}
+	checkStatementAt(t, material.Status, material.Binding, identity, later)
+}
+
+// ConnectMaterial is in force at the clock's time even when no Tick ran since
+// the clock moved, as after a sleep or a clock step: it reissues the statement,
+// or rotates the key, first.
+func TestConnectMaterialIsInForceWhenTheClockMovedWithoutATick(t *testing.T) {
+	jumps := map[string]int64{
+		"2 hours on":         2 * hourMs,
+		"7 days and 1 ms on": 7*dayMs + 1,
+		"an hour back":       -hourMs,
+	}
+	for name, jump := range jumps {
+		t.Run(name, func(t *testing.T) {
+			identity := sharedKey(t, pureIdentityKey)
+			clock := newTestClock()
+			issuer := newIssuer(t, identity, clock)
+			now := issuerT0 + jump
+			clock.set(now)
+			material := currentMaterial(t, issuer)
+			if _, err := VerifyConnectBinding(material.Binding, identity.PublicKey(), profile.PQPure, material.Key.PublicKey(), now); err != nil {
+				t.Errorf("the CONNECT binding at the clock's time: %v", err)
+			}
+			checkStatementAt(t, material.Status, material.Binding, identity, now)
+		})
+	}
+}
+
+// At a rotation the issuer lets go of the rotated-out CONNECT key: the binding
+// it keeps until its not_after no longer holds that key.
+func TestARotationLetsGoOfTheRotatedOutKey(t *testing.T) {
+	identity := sharedKey(t, pureIdentityKey)
+	clock := newTestClock()
+	issuer := newIssuer(t, identity, clock)
+	old := bindingHashOf(currentMaterial(t, issuer).Binding)
+	tickAt(t, issuer, clock, issuerT0+5*dayMs)
+
+	issuer.mu.Lock()
+	defer issuer.mu.Unlock()
+	held := issuer.bindings[old]
+	if held == nil || held.key != nil {
+		t.Fatalf("the rotated-out binding: held %t, key kept %t; want it held without its key", held != nil, held != nil && held.key != nil)
+	}
+}
+
+// The binding and statement ConnectMaterial hands out are the caller's own:
+// changing their bytes changes nothing the issuer holds.
+func TestConnectMaterialHandsOutCopies(t *testing.T) {
+	identity := sharedKey(t, pureIdentityKey)
+	issuer := newIssuer(t, identity, newTestClock())
+	first := currentMaterial(t, issuer)
+	first.Binding.TBS[0] ^= 0xff
+	first.Status.Signature[0] ^= 0xff
+
+	material := currentMaterial(t, issuer)
+	if _, err := VerifyConnectBinding(material.Binding, identity.PublicKey(), profile.PQPure, material.Key.PublicKey(), issuerT0); err != nil {
+		t.Errorf("the binding after a caller changed its copy: %v", err)
+	}
+	checkStatementAt(t, material.Status, material.Binding, identity, issuerT0)
+}
+
+// A statement a subscriber receives is its own: changing its bytes changes
+// nothing the issuer holds or hands out next.
+func TestADeliveredStatementIsTheSubscribersOwnCopy(t *testing.T) {
+	identity := sharedKey(t, pureIdentityKey)
+	clock := newTestClock()
+	issuer := newIssuer(t, identity, clock)
+	binding := currentMaterial(t, issuer).Binding
+	ch, _ := subscribed(t, issuer, binding)
+	tickAt(t, issuer, clock, issuerT0+15*minuteMs)
+	delivered, got := pendingStatement(ch)
+	if got != statementPending {
+		t.Fatalf("the subscriber holds no statement (%d)", got)
+	}
+	delivered.Signature[0] ^= 0xff
+
+	checkStatementAt(t, currentMaterial(t, issuer).Status, binding, identity, issuerT0+15*minuteMs)
 }
