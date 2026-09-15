@@ -34,8 +34,9 @@ type Subscription struct {
 
 // Subscribe starts a subscription to spec's realm and topic. The station is
 // sent a SUBSCRIBE only for the session's first subscription to that realm and
-// topic. A topic a station refuses, over 512 bytes or not UTF-8, is refused
-// with frame.Subscribe's error before anything is tracked or sent.
+// topic. A subscription a station refuses, to a realm or subscriber that is not
+// 32 bytes or a topic over 512 bytes or not UTF-8, is refused with
+// frame.Subscribe's error before anything is tracked or sent.
 func (s *Session) Subscribe(spec frame.SubscribeSpec, id identity.KeyPair) (*Subscription, error) {
 	subscribe, err := frame.Subscribe(spec)
 	if err != nil {

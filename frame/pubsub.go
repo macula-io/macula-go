@@ -1,6 +1,10 @@
 package frame
 
-import "github.com/macula-io/macula-go/cbor"
+import (
+	"fmt"
+
+	"github.com/macula-io/macula-go/cbor"
+)
 
 // maxTopicBytes is the bound of a SUBSCRIBE's and an UNSUBSCRIBE's topic, UTF-8
 // bytes on the wire, as a station's receive rule reads it.
@@ -55,7 +59,7 @@ func NewSubscribeSpec(topic string, realm, subscriber []byte) SubscribeSpec {
 }
 
 func subscribeValue(spec SubscribeSpec, frameID []byte, sentAtMs int64) (cbor.Value, error) {
-	if err := topicChecked(spec.Topic); err != nil {
+	if err := subscriptionChecked(spec.Realm, spec.Subscriber, spec.Topic); err != nil {
 		return cbor.Value{}, err
 	}
 	fields := base("subscribe", 0, frameID, sentAtMs)
@@ -68,8 +72,9 @@ func subscribeValue(spec SubscribeSpec, frameID []byte, sentAtMs int64) (cbor.Va
 
 // Subscribe builds a SUBSCRIBE frame with a fresh frame_id and sent_at_ms, and
 // no options. It carries no filter, which macula 11.0.0 refuses, and it refuses
-// a topic over 512 bytes (ErrTextTooLong) or not UTF-8 (ErrInvalidText), as a
-// station's receive rule does.
+// what a station's receive rule refuses: a realm or subscriber that is not 32
+// bytes (ErrOutOfRange), checked first, and a topic over 512 bytes
+// (ErrTextTooLong) or not UTF-8 (ErrInvalidText).
 func Subscribe(spec SubscribeSpec) (cbor.Value, error) {
 	return subscribeValue(spec, freshFrameID(), currentMillis())
 }
@@ -86,7 +91,7 @@ func NewUnsubscribeSpec(topic string, realm, subscriber []byte) UnsubscribeSpec 
 }
 
 func unsubscribeValue(spec UnsubscribeSpec, frameID []byte, sentAtMs int64) (cbor.Value, error) {
-	if err := topicChecked(spec.Topic); err != nil {
+	if err := subscriptionChecked(spec.Realm, spec.Subscriber, spec.Topic); err != nil {
 		return cbor.Value{}, err
 	}
 	fields := base("unsubscribe", 0, frameID, sentAtMs)
@@ -97,9 +102,19 @@ func unsubscribeValue(spec UnsubscribeSpec, frameID []byte, sentAtMs int64) (cbo
 }
 
 // Unsubscribe builds an UNSUBSCRIBE frame with a fresh frame_id and
-// sent_at_ms, refusing a topic as Subscribe does.
+// sent_at_ms, refusing what Subscribe refuses.
 func Unsubscribe(spec UnsubscribeSpec) (cbor.Value, error) {
 	return unsubscribeValue(spec, freshFrameID(), currentMillis())
+}
+
+// subscriptionChecked refuses what a station refuses in a SUBSCRIBE or an
+// UNSUBSCRIBE: a realm or subscriber that is not 32 bytes, checked first, and
+// then a topic it refuses.
+func subscriptionChecked(realm, subscriber []byte, topic string) error {
+	if len(realm) != 32 || len(subscriber) != 32 {
+		return fmt.Errorf("%w: a realm of %d bytes and a subscriber of %d, want 32 each", ErrOutOfRange, len(realm), len(subscriber))
+	}
+	return topicChecked(topic)
 }
 
 // topicChecked refuses a topic a station refuses: over 512 bytes, judged first,

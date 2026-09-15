@@ -60,7 +60,8 @@ var (
 	// the closed set of relay codes.
 	ErrRelayCodeOutsideItsSet = errors.New("frame: a relay error code outside its closed set")
 	// ErrOutOfRange is a build whose frame type, stream mode, deadline or
-	// retry budget is outside its set or range.
+	// retry budget is outside its set or range, or whose realm or subscriber
+	// is not 32 bytes.
 	ErrOutOfRange = errors.New("frame: a field outside its range")
 )
 

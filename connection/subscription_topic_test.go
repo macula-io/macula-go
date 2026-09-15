@@ -8,20 +8,24 @@ import (
 	"github.com/macula-io/macula-go/frame"
 )
 
-// A subscription to a topic a station refuses, over 512 bytes or not UTF-8, is
-// refused with frame.Subscribe's error before anything is tracked or sent, and
-// the session still subscribes to a topic a station reads.
-func TestASubscriptionToATopicAStationRefusesSendsNothing(t *testing.T) {
+// A subscription a station refuses, to a realm or subscriber that is not 32
+// bytes or a topic over 512 bytes or not UTF-8, is refused with frame.Subscribe's
+// error before anything is tracked or sent, and the session still subscribes to
+// one a station reads.
+func TestASubscriptionAStationRefusesSendsNothing(t *testing.T) {
 	s, fc, id := readingSession(t)
 	cases := []struct {
-		name, topic string
-		want        error
+		name, topic       string
+		realm, subscriber []byte
+		want              error
 	}{
-		{"a 513-byte topic", strings.Repeat("t", 513), frame.ErrTextTooLong},
-		{"a topic that is not UTF-8", "\xff", frame.ErrInvalidText},
+		{"a 31-byte realm", "news/today", testRealm()[:31], id.NodeID(), frame.ErrOutOfRange},
+		{"a 31-byte subscriber", "news/today", testRealm(), id.NodeID()[:31], frame.ErrOutOfRange},
+		{"a 513-byte topic", strings.Repeat("t", 513), testRealm(), id.NodeID(), frame.ErrTextTooLong},
+		{"a topic that is not UTF-8", "\xff", testRealm(), id.NodeID(), frame.ErrInvalidText},
 	}
 	for _, c := range cases {
-		sub, err := s.Subscribe(frame.NewSubscribeSpec(c.topic, testRealm(), id.NodeID()), id)
+		sub, err := s.Subscribe(frame.NewSubscribeSpec(c.topic, c.realm, c.subscriber), id)
 		if sub != nil || !errors.Is(err, c.want) {
 			t.Errorf("%s: (%v, %v), want it refused with %v", c.name, sub, err, c.want)
 		}

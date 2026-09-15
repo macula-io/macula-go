@@ -51,3 +51,29 @@ func TestASubscribeTopicIsUTF8OfAtMost512Bytes(t *testing.T) {
 		wantRefusal(t, name+" with a topic that is not UTF-8", build("\xff"), ErrInvalidText)
 	}
 }
+
+// A SUBSCRIBE and an UNSUBSCRIBE name a realm and a subscriber of 32 bytes each,
+// as a station's field table reads them: both builders refuse either of another
+// size, before they read the topic.
+func TestASubscribeNamesARealmAndASubscriberOf32Bytes(t *testing.T) {
+	key, short := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{1}, 31)
+	builds := map[string]func(realm, subscriber []byte, topic string) error{
+		"SUBSCRIBE": func(realm, subscriber []byte, topic string) error {
+			_, err := Subscribe(NewSubscribeSpec(topic, realm, subscriber))
+			return err
+		},
+		"UNSUBSCRIBE": func(realm, subscriber []byte, topic string) error {
+			_, err := Unsubscribe(NewUnsubscribeSpec(topic, realm, subscriber))
+			return err
+		},
+	}
+	for name, build := range builds {
+		if err := build(key, key, "news"); err != nil {
+			t.Errorf("%s with a 32-byte realm and subscriber: %v, want it built", name, err)
+		}
+		wantRefusal(t, name+" with a 31-byte realm", build(short, key, "news"), ErrOutOfRange)
+		wantRefusal(t, name+" with a 31-byte subscriber", build(key, short, "news"), ErrOutOfRange)
+		wantRefusal(t, name+" with no realm", build(nil, key, "news"), ErrOutOfRange)
+		wantRefusal(t, name+" with a 31-byte realm and a 513-byte topic", build(short, key, strings.Repeat("t", 513)), ErrOutOfRange)
+	}
+}
