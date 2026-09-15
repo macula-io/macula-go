@@ -97,25 +97,31 @@ func tombstonePayloadOK(payload cbor.Value, entries []cbor.MapEntry) bool {
 		slotOK(withdrawn, slot)
 }
 
-// withdrawable reports whether a record of type t can be withdrawn: a domain
-// type, or a type other than a tombstone that some key signs.
+// withdrawable reports whether a record of type t can be withdrawn, as
+// macula_record's withdrawable/1 has it at merge-11.0.0 81b90d7c: a domain
+// type from 0x20 to 0xFF, or a built-in type below 0x20, other than a
+// tombstone, that some key signs. Any other integer names no record type.
 func withdrawable(t int64) bool {
-	if t >= int64(DomainTypeMin) && t <= 0xFF {
+	switch {
+	case t >= int64(DomainTypeMin) && t <= 0xFF:
 		return true
+	case t >= 1 && t < int64(DomainTypeMin):
+		return t != int64(TypeTombstone) && len(signerPurposes(t, cbor.Map(nil))) > 0
 	}
-	return t != int64(TypeTombstone) && len(signerPurposes(t, cbor.Map(nil))) > 0
+	return false
 }
 
 // slotOK reports whether a tombstone's slot fields are exactly the withdrawn
-// type's, each of its kind; for a domain type, none or a subject (bytes).
+// type's, each of its kind; for a domain type, none or a subject (bytes, not
+// empty, since an empty subject would name a slot apart from no subject).
 func slotOK(t int64, slot []cbor.MapEntry) bool {
 	if t >= int64(DomainTypeMin) {
 		if len(slot) == 0 {
 			return true
 		}
 		name, _ := slot[0].Key.AsText()
-		_, isBytes := slot[0].Val.AsBytes()
-		return len(slot) == 1 && name == "subject" && isBytes
+		subject, isBytes := slot[0].Val.AsBytes()
+		return len(slot) == 1 && name == "subject" && isBytes && len(subject) > 0
 	}
 	names := slotFieldNames(t)
 	if len(slot) != len(names) {

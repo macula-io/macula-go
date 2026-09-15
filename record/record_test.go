@@ -3,6 +3,7 @@ package record
 import (
 	"bytes"
 	"crypto/fips140"
+	"crypto/sha512"
 	"errors"
 	"slices"
 	"strings"
@@ -375,9 +376,49 @@ func TestTBSFieldsTheDesignDoesNotAllowAreMalformed(t *testing.T) {
 		{"a type of 256", withEntry(base, "type", cbor.Uint64(256))},
 		{"a created_at of 2^53", withEntry(base, "created_at", cbor.Uint64(maxProtocolInt))},
 		{"an expires_at of 2^53", withEntry(base, "expires_at", cbor.Uint64(maxProtocolInt))},
+		{"created_at replaced by a key no record has", withEntry(withoutEntry(base, "created_at"), "extra", cbor.Uint64(0))},
+		{"expires_at replaced by a key no record has", withEntry(withoutEntry(base, "expires_at"), "extra", cbor.Uint64(0))},
 	} {
 		wantRefusal(t, c.name, verify(c.fields), ErrMalformed)
 	}
+}
+
+// A tbs key that is not text counts toward the tbs's size, as map_size/1
+// counts it, so it neither takes a missing field's place nor sits beside the
+// fields. SignObject builds no such tbs, so these are signed by hand.
+func TestATBSKeyThatIsNotTextIsMalformed(t *testing.T) {
+	keys := keysFor(t)
+	base := withEntry(nodeFields(t, keys.node, nowMs()), "alg", cbor.Text("ML-DSA-87"))
+	verify := func(fields []cbor.MapEntry) error {
+		_, err := Verify(signedTBSByHand(t, label, cbor.Encode(cbor.Map(fields)), keys.node), profile.PQPure, nowMs())
+		return err
+	}
+	if err := verify(base); err != nil {
+		t.Fatalf("the node record signed by hand: %v, want it verified", err)
+	}
+	notText := cbor.MapEntry{Key: cbor.Uint64(7), Val: cbor.Uint64(0)}
+	for _, c := range []struct {
+		name   string
+		fields []cbor.MapEntry
+	}{
+		{"created_at replaced by a key that is not text", append(withoutEntry(base, "created_at"), notText)},
+		{"expires_at replaced by a key that is not text", append(withoutEntry(base, "expires_at"), notText)},
+		{"a key that is not text beside every field", append(slices.Clone(base), notText)},
+	} {
+		wantRefusal(t, c.name, verify(c.fields), ErrMalformed)
+	}
+}
+
+// signedTBSByHand is the wire form of tbs signed under objectLabel by key, as
+// identity signs an object: the signature covers the label, a zero byte, the
+// SHA-384 of the key as carried, and tbs.
+func signedTBSByHand(t *testing.T, objectLabel string, tbs []byte, key *identity.NodeKey) []byte {
+	t.Helper()
+	carried := key.PublicKey()
+	keyHash := sha512.Sum384(carried)
+	message := append(append(append([]byte(objectLabel), 0), keyHash[:]...), tbs...)
+	signature := must[[]byte](t)(key.Sign(message))
+	return cbor.Encode(identity.Object{Key: carried, TBS: tbs, Signature: signature}.Value())
 }
 
 func TestANodeRecordNamingAnotherNodeIsRefused(t *testing.T) {
@@ -385,6 +426,84 @@ func TestANodeRecordNamingAnotherNodeIsRefused(t *testing.T) {
 	fields := recordFields(t, TypeNodeRecord, nodePayload(fill(9)), nowMs(), testHour)
 	_, err := Verify(signedByHand(t, label, fields, keys.node), profile.PQPure, nowMs())
 	wantRefusal(t, "a node record naming another node", err, ErrKeyIDMismatch)
+}
+
+// A verifier refuses a payload its type's rules do not allow as malformed, as
+// macula_record's payload_ok/2 does, and in verify/3's order: a record living
+// past its type's maximum is refused for that before its payload is read, and a
+// payload is read before the signer it names.
+func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
+	keys := keysFor(t)
+	nodeID := keys.node.KeyID()
+	entriesOf := func(v cbor.Value) []cbor.MapEntry {
+		entries, _ := v.AsMap()
+		return entries
+	}
+	contentID := func(tag byte) []byte {
+		id := make([]byte, 50)
+		id[0], id[1] = tag, 0x55
+		return id
+	}
+	advertisement := entriesOf(advertisementPayload(nodeID))
+	unknownKey := withEntry(advertisement, "session_token_hint", cbor.Text("h"))
+	announcement := entriesOf(contentAnnouncementPayload(nodeID))
+	withdrawing := func(withdrawn Type, slot ...cbor.MapEntry) []cbor.MapEntry {
+		return append([]cbor.MapEntry{uintEntry("withdrawn_type", uint64(withdrawn)),
+			bytesEntry("withdrawn_version", make([]byte, 16)), textEntry("reason", "revoked")}, slot...)
+	}
+	advertisementTombstone := withdrawing(TypeProcedureAdvertisement, bytesEntry("realm_id", idBytes(0x11)), textEntry("procedure", "acme/echo_v1"))
+	endorsementTombstone := withdrawing(TypeRealmMemberEndorsement, bytesEntry("realm_id", idBytes(0x11)), bytesEntry("member_node", idBytes(2)))
+	for _, c := range []struct {
+		name       string
+		recordType Type
+		payload    []cbor.MapEntry
+		lifetimeMs int64
+		want       error
+	}{
+		{"an advertisement", TypeProcedureAdvertisement, advertisement, 5 * testMinute, nil},
+		{"an advertisement with an authorization map", TypeProcedureAdvertisement,
+			withEntry(advertisement, "authorization", cbor.Map([]cbor.MapEntry{uintEntry("anything", 1)})), 5 * testMinute, nil},
+		{"an authorization that is not a map", TypeProcedureAdvertisement,
+			withEntry(advertisement, "authorization", cbor.List([]cbor.Value{cbor.Uint64(1)})), 5 * testMinute, ErrMalformed},
+		{"a fifth key that is not authorization", TypeProcedureAdvertisement, unknownKey, 5 * testMinute, ErrMalformed},
+		{"an advertisement without serving_station", TypeProcedureAdvertisement, withoutEntry(advertisement, "serving_station"), 5 * testMinute, ErrMalformed},
+		{"a realm_id of 31 bytes", TypeProcedureAdvertisement, withEntry(advertisement, "realm_id", cbor.Bytes(make([]byte, 31))), 5 * testMinute, ErrMalformed},
+		{"a procedure as bytes", TypeProcedureAdvertisement, withEntry(advertisement, "procedure", cbor.Bytes([]byte("acme/x"))), 5 * testMinute, ErrMalformed},
+		{"a content announcement", TypeContentAnnouncement, announcement, testHour, nil},
+		{"a content id with tag 1", TypeContentAnnouncement, withEntry(announcement, "mcid", cbor.Bytes(contentID(1))), testHour, ErrMalformed},
+		{"a tombstone of an advertisement", TypeTombstone, advertisementTombstone, 10 * testMinute, nil},
+		{"a tombstone with a detail", TypeTombstone, withEntry(advertisementTombstone, "detail", cbor.Text("to beam01")), 10 * testMinute, nil},
+		{"a tombstone missing a slot field", TypeTombstone, withoutEntry(advertisementTombstone, "procedure"), 10 * testMinute, ErrMalformed},
+		{"a tombstone with an extra slot field", TypeTombstone,
+			withEntry(advertisementTombstone, "member_node", cbor.Bytes(idBytes(2))), 10 * testMinute, ErrMalformed},
+		{"a reason macula does not define", TypeTombstone, withEntry(advertisementTombstone, "reason", cbor.Text("retired")), 10 * testMinute, ErrMalformed},
+		{"a detail that is not text", TypeTombstone, withEntry(advertisementTombstone, "detail", cbor.Bytes([]byte("not text"))), 10 * testMinute, ErrMalformed},
+		{"a withdrawn_version of 15 bytes", TypeTombstone,
+			withEntry(advertisementTombstone, "withdrawn_version", cbor.Bytes(make([]byte, 15))), 10 * testMinute, ErrMalformed},
+		{"a tombstone without withdrawn_version", TypeTombstone, withoutEntry(advertisementTombstone, "withdrawn_version"), 10 * testMinute, ErrMalformed},
+		{"a tombstone withdrawing a tombstone", TypeTombstone, withdrawing(TypeTombstone), 10 * testMinute, ErrMalformed},
+		{"a tombstone withdrawing a type no key signs", TypeTombstone, withdrawing(0x07), 10 * testMinute, ErrMalformed},
+		{"a tombstone of a realm member endorsement", TypeTombstone, endorsementTombstone, testHour, nil},
+		{"an endorsement tombstone without member_node", TypeTombstone, withoutEntry(endorsementTombstone, "member_node"), testHour, ErrMalformed},
+		{"an endorsement tombstone with a member_node of 31 bytes", TypeTombstone,
+			withEntry(endorsementTombstone, "member_node", cbor.Bytes(make([]byte, 31))), testHour, ErrMalformed},
+		{"a signer that is not its key", TypeProcedureAdvertisement,
+			withEntry(advertisement, "advertiser_node", cbor.Bytes(idBytes(9))), 5 * testMinute, ErrKeyIDMismatch},
+		{"a payload fault and a lifetime fault", TypeProcedureAdvertisement, unknownKey, 5*testMinute + 1, ErrLifetimeTooLong},
+		{"a payload fault and a signer that is not its key", TypeProcedureAdvertisement,
+			withEntry(unknownKey, "advertiser_node", cbor.Bytes(idBytes(9))), 5 * testMinute, ErrMalformed},
+	} {
+		now := nowMs()
+		fields := recordFields(t, c.recordType, cbor.Map(c.payload), now, c.lifetimeMs)
+		_, err := Verify(signedByHand(t, label, fields, keys.node), profile.PQPure, now)
+		if c.want == nil {
+			if err != nil {
+				t.Errorf("%s: %v, want it verified", c.name, err)
+			}
+			continue
+		}
+		wantRefusal(t, c.name, err, c.want)
+	}
 }
 
 // A verifier's clock may be 5 minutes from a record's created_at and expires_at,

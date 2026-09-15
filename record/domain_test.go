@@ -1,0 +1,84 @@
+package record
+
+import (
+	"testing"
+
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/profile"
+)
+
+// These tests mirror macula's macula_record_domain_tests at merge-11.0.0
+// 81b90d7c. A domain record's subject is a non-empty binary: Envelope and
+// every verifier refuse an empty one, since it would name a slot apart from no
+// subject, and so does a tombstone's slot. A tombstone names a withdrawn type
+// from 1 to 255. macula's domain_record_checked/1 is a pool's check before it
+// signs a domain record as its node, and Go has no such pool. The domain
+// tombstone's lifetime and slot come with the tombstone builder and storage
+// keys.
+
+func TestAnEmptySubjectIsRefusedByEnvelope(t *testing.T) {
+	_, err := Envelope(DomainTypeMin, cbor.Map(nil), []byte{}, 0)
+	wantRefusal(t, "an envelope with an empty subject", err, ErrInvalidSubject)
+	r, err := Envelope(DomainTypeMin, cbor.Map(nil), nil, 0)
+	if err != nil || r.Subject != nil {
+		t.Errorf("an envelope without a subject: %v, with subject %q, want none", err, r.Subject)
+	}
+}
+
+func TestAnEmptySubjectIsRefusedByAVerifier(t *testing.T) {
+	keys := keysFor(t)
+	r := must[Record](t)(Envelope(DomainTypeMin, cbor.Map(nil), nil, 0))
+	r.Subject = []byte{}
+	_, err := Verify(wireOf(t, must[Record](t)(Sign(r, keys.node))), profile.PQPure, nowMs())
+	wantRefusal(t, "a domain record with an empty subject", err, ErrMalformed)
+}
+
+// A tombstone of a domain record carries none of the record's slot fields, or
+// its subject, which is not empty.
+func TestAnEmptySubjectIsRefusedInATombstonesSlot(t *testing.T) {
+	keys := keysFor(t)
+	withdrawing := func(slot ...cbor.MapEntry) []cbor.MapEntry {
+		return append([]cbor.MapEntry{uintEntry("withdrawn_type", uint64(DomainTypeMin)),
+			bytesEntry("withdrawn_version", make([]byte, 16)), textEntry("reason", "shutdown")}, slot...)
+	}
+	for _, c := range []struct {
+		name    string
+		payload []cbor.MapEntry
+		want    error
+	}{
+		{"a tombstone of a domain record without a subject", withdrawing(), nil},
+		{"a tombstone of a domain record with its subject", withdrawing(bytesEntry("subject", []byte("s1"))), nil},
+		{"a tombstone of a domain record with an empty subject", withdrawing(bytesEntry("subject", []byte{})), ErrMalformed},
+	} {
+		now := nowMs()
+		fields := recordFields(t, TypeTombstone, cbor.Map(c.payload), now, testDay)
+		_, err := Verify(signedByHand(t, label, fields, keys.node), profile.PQPure, now)
+		if c.want == nil {
+			if err != nil {
+				t.Errorf("%s: %v, want it verified", c.name, err)
+			}
+			continue
+		}
+		wantRefusal(t, c.name, err, c.want)
+	}
+}
+
+// A tombstone names a withdrawn type from 1 to 255, since every record type is
+// a tag in that range, and a type beyond it would be read by its low byte: one
+// naming 0x100 is malformed however it was signed, and one naming 0xFF still
+// verifies.
+func TestATombstoneNamesAWithdrawnTypeWithinTheTypeRange(t *testing.T) {
+	keys := keysFor(t)
+	withdrawn := must[Record](t)(Sign(must[Record](t)(Envelope(0xFF, cbor.Map(nil), nil, 0)), keys.node))
+	signedTombstone := func(withdrawnType uint64) []byte {
+		payload := cbor.Map([]cbor.MapEntry{uintEntry("withdrawn_type", withdrawnType),
+			bytesEntry("withdrawn_version", withdrawn.Version[:]), textEntry("reason", "shutdown")})
+		r := must[Record](t)(unsigned(TypeTombstone, payload, withdrawn.ExpiresAt-withdrawn.CreatedAt+ClockToleranceMs))
+		return wireOf(t, must[Record](t)(Sign(r, keys.node)))
+	}
+	if _, err := Verify(signedTombstone(0xFF), profile.PQPure, nowMs()); err != nil {
+		t.Errorf("a tombstone naming 0xFF: %v, want it verified", err)
+	}
+	_, err := Verify(signedTombstone(0x100), profile.PQPure, nowMs())
+	wantRefusal(t, "a tombstone naming 0x100", err, ErrMalformed)
+}

@@ -118,6 +118,8 @@ var (
 	ErrUnsigned = errors.New("record: not signed")
 	// ErrNotADomainType is a domain envelope for a built-in type.
 	ErrNotADomainType = errors.New("record: not a domain type")
+	// ErrInvalidSubject is a domain record's subject that is empty.
+	ErrInvalidSubject = errors.New("record: an empty subject")
 )
 
 // Record is a record: unsigned as a builder returns it, or signed or verified,
@@ -155,10 +157,14 @@ func unsigned(t Type, payload cbor.Value, ttlMs uint64) (Record, error) {
 
 // Envelope is an unsigned record of a domain type, from DomainTypeMin to 0xFF,
 // with subject, nil for none, living ttlMs, or 48 hours when ttlMs is 0. A
-// built-in type is ErrNotADomainType.
+// built-in type is ErrNotADomainType, and an empty subject is
+// ErrInvalidSubject, since it would name a slot apart from no subject.
 func Envelope(t Type, payload cbor.Value, subject []byte, ttlMs uint64) (Record, error) {
 	if t < DomainTypeMin {
 		return Record{}, fmt.Errorf("%w: %#02x", ErrNotADomainType, uint8(t))
+	}
+	if subject != nil && len(subject) == 0 {
+		return Record{}, ErrInvalidSubject
 	}
 	r, err := unsigned(t, payload, ttlMs)
 	r.Subject = bytes.Clone(subject)
@@ -343,8 +349,10 @@ func tbsFields(r Record) []cbor.MapEntry {
 
 // readTBS reads a verified record's tbs, as macula_record's read_tbs does:
 // exactly type (1 to 255), alg (text), version (16 bytes), created_at and
-// expires_at (below 2^53), payload (a map), and subject (bytes) only on a
-// domain type.
+// expires_at (below 2^53), payload (a map), and subject (bytes, not empty) only
+// on a domain type. Each field must be present, since a missing one reads as
+// the zero cbor.Value, the integer 0. The tbs's size counts every key, text or
+// not, as map_size/1 counts it.
 func readTBS(tbs cbor.Value) (Record, bool) {
 	entries, isMap := tbs.AsMap()
 	if !isMap {
@@ -354,6 +362,11 @@ func readTBS(tbs cbor.Value) (Record, bool) {
 	for _, e := range entries {
 		if name, isText := e.Key.AsText(); isText {
 			fields[name] = e.Val
+		}
+	}
+	for _, name := range []string{"type", "alg", "version", "created_at", "expires_at", "payload"} {
+		if _, present := fields[name]; !present {
+			return Record{}, false
 		}
 	}
 	t, isType := fields["type"].AsInt64()
@@ -374,7 +387,7 @@ func readTBS(tbs cbor.Value) (Record, bool) {
 	case 7:
 		b, isBytes := subject.AsBytes()
 		r.Subject = bytes.Clone(b)
-		return r, isBytes && r.Type >= DomainTypeMin
+		return r, isBytes && len(b) > 0 && r.Type >= DomainTypeMin
 	}
 	return Record{}, false
 }

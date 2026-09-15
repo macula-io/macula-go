@@ -239,7 +239,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `identity.ErrPostQuantumUnavailable`.
 - `record`: macula 11.0.0's records, the signed object under
   `MACULA-PQ-RECORD-V1`, as `macula_record` has them at merge-11.0.0
-  0d8abf3d. `record.Sign` refuses, in macula's order, a key whose purpose does
+  81b90d7c. `record.Sign` refuses, in macula's order, a key whose purpose does
   not fit the type (`ErrKeyPurposeMismatch`; a Go key signs the types an
   identity key signs), a lifetime that runs backwards or past its type's
   maximum (`ErrLifetimeReversed`, `ErrLifetimeTooLong`), a payload that names
@@ -255,9 +255,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   7 days for a domain record and 30 days otherwise; a tombstone lives its
   withdrawn type's maximum plus 10 minutes. A record is named by its signer's
   node_id on the node-signed types and by its key id on every other type.
-  `NewNodeRecord` and `ReadNodeRecord` build and read node records,
-  `Envelope` builds domain records, `Refresh` signs a record again with a new
-  version, and `PayloadBounded` checks a payload before signing.
+  `NewNodeRecord` and `ReadNodeRecord` build and read node records. A
+  coordinate travels as text and reads back only from text of at most 32
+  bytes that spells a finite float or integer in full, as `macula_record`
+  reads it, so `NewNodeRecord` refuses a coordinate no reader reads back
+  (`ErrUnreadableCoordinate`). `Envelope` builds domain records and refuses
+  an empty subject (`ErrInvalidSubject`), which a verifier refuses as
+  malformed. `Refresh` signs a record again with a new version, and
+  `PayloadBounded` checks a payload before signing.
 
 ### Fixed
 
