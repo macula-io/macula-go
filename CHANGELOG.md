@@ -135,6 +135,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signature or a TLS handshake. Build without `GOFIPS140`, or with
   `GOFIPS140=v1.26.0` or later. CI runs the tests for it under
   `GOFIPS140=v1.0.0`.
+- `identity.SignObject`, `SignHeldObject`, `VerifyObject` and
+  `VerifyHeldObject`: the signed objects of macula 11.0.0's records and
+  frames, `{key, tbs, signature}` when the signer's key travels with the
+  object and `{tbs, signature}` when the verifier holds it. A signature covers
+  the label, a zero byte, the SHA-384 of the key as carried, and `tbs`, which
+  holds the signed fields with `alg`. A verifier checks the object's shape,
+  the carried key's form, the signature over `tbs` as received, and only then
+  decodes `tbs` under the decoding rule and checks its `alg`, refusing with
+  `ErrObjectMalformed`, `ErrObjectSignatureInvalid` or `ErrObjectAlgMismatch`.
+  `ParseObject`, `ParseHeldObject`, `DecodeObject` and `DecodeHeldObject` read
+  the wire form.
 
 ### Fixed
 
