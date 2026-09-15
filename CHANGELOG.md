@@ -50,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type or length, another node_id, use or subject, and a binding or statement
   outside its validity with 5 minutes of tolerance, each with its own error.
   `ParseSignedTBS` reads the `{tbs, signature}` map.
+- `identity.StatementIssuer`: a client's status statement issuer. It holds the
+  CONNECT key with its binding and a fresh status statement. At every `Tick`
+  (`Run` ticks every 15 minutes) it issues a statement valid for an hour for
+  each binding still in force. Every 5 days it rotates the CONNECT key, with
+  the new binding and statement in place before `ConnectMaterial` hands the key
+  out, and a rotated-out binding keeps its statements until its not_after.
+  `Subscribe` delivers a binding's newest statement, and its channel closes when
+  the binding ends or the subscriber unsubscribes. Nothing is written to disk.
 
 ### Fixed
 
