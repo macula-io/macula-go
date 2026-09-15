@@ -26,8 +26,8 @@ func StorageKey(r Record) ([32]byte, error) {
 	}
 	withdrawnValue, present := r.Payload.Get("withdrawn_type")
 	withdrawn, isInt := withdrawnValue.AsInt64()
-	if !present || !isInt || withdrawn < 1 || withdrawn > 0xFF {
-		return [32]byte{}, fmt.Errorf("%w: a tombstone's withdrawn_type names no record type", ErrMalformed)
+	if !present || !isInt {
+		return [32]byte{}, fmt.Errorf("%w: a tombstone without an integer withdrawn_type", ErrMalformed)
 	}
 	subjectValue, hasSubject := r.Payload.Get("subject")
 	subject, isBytes := subjectValue.AsBytes()
