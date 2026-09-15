@@ -58,6 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   out, and a rotated-out binding keeps its statements until its not_after.
   `Subscribe` delivers a binding's newest statement, and its channel closes when
   the binding ends or the subscriber unsubscribes. Nothing is written to disk.
+- `handshake`: the version 3 connection handshake as CBOR bytes, on both
+  sides. `Opener`, `Challenge`, `AnswerChallenge` (the client checks the
+  challenge's frame, profile, carried key, key purposes, the station's node_id
+  against the one dialed, the TLS binding against the leaf it received, and the
+  status statement, before it signs its proof), `AcceptConnect` (the station
+  checks CONNECT, the node_id puzzle before any signature, the CONNECT binding
+  and statement, and the proof, and answers with a HELLO that refuses with one
+  coarse code), `ReadHello`, `StatusFrame` and `ReadStatus`. Every frame
+  decodes exactly its keys, each of its type and length.
 
 ### Fixed
 
