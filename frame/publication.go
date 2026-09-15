@@ -83,12 +83,12 @@ type VerifiedPublication struct {
 // PUBLISH, as macula_frame's publish/2 builds one: publisher is the key's key
 // id, and publication is a signed object under MACULA-PQ-PUBLICATION-V1 whose
 // tbs holds no frame_type, since the same bytes ride in every EVENT and GOSSIP
-// made from it. It checks, in this order, and refuses a key that is not an
-// identity key (ErrUnsignable); a topic a station refuses, with
-// CheckPublication, over 512 bytes (ErrTextTooLong) or not UTF-8
-// (ErrInvalidText); a payload the wire cannot carry (CheckPayload's refusal);
-// and a seq or published_at of 2^53 or more, or a ttl_ms over one hour
-// (ErrOutOfRange).
+// made from it. It checks in the order of publish/2 and refuses a key that is
+// not an identity key (ErrUnsignable); a seq or published_at of 2^53 or more
+// (ErrOutOfRange), which publish/2's head refuses with the key; a topic a
+// station refuses, with CheckPublication, over 512 bytes (ErrTextTooLong) or not
+// UTF-8 (ErrInvalidText); a payload the wire cannot carry (CheckPayload's
+// refusal); and a ttl_ms over one hour (ErrOutOfRange).
 func SignPublish(spec PublicationSpec, key *identity.NodeKey) (cbor.Value, error) {
 	if err := publicationBuildable(spec, key); err != nil {
 		return cbor.Value{}, err
@@ -116,12 +116,16 @@ func SignPublish(spec PublicationSpec, key *identity.NodeKey) (cbor.Value, error
 	}), nil
 }
 
-// publicationBuildable runs a publication build's checks in macula's order: the
-// key, the realm and topic, the payload, then the ranges of seq, published_at
-// and ttl_ms.
+// publicationBuildable runs a publication build's checks in the order of
+// macula's publish/2: the key and the ranges of seq and published_at, which its
+// head refuses, then the realm and topic, then the payload, then the range of
+// ttl_ms, which optional_ttl/2 refuses last.
 func publicationBuildable(spec PublicationSpec, key *identity.NodeKey) error {
 	if err := identitySigner(key); err != nil {
 		return err
+	}
+	if spec.Seq >= maxProtocolInt || spec.PublishedAt >= maxProtocolInt {
+		return fmt.Errorf("%w: a seq or published_at of 2^53 or more", ErrOutOfRange)
 	}
 	if err := CheckPublication(spec.Realm[:], spec.Topic); err != nil {
 		return err
@@ -129,10 +133,7 @@ func publicationBuildable(spec PublicationSpec, key *identity.NodeKey) error {
 	if err := CheckPayload(spec.Payload); err != nil {
 		return err
 	}
-	switch {
-	case spec.Seq >= maxProtocolInt || spec.PublishedAt >= maxProtocolInt:
-		return fmt.Errorf("%w: a seq or published_at of 2^53 or more", ErrOutOfRange)
-	case spec.TTLMs != nil && *spec.TTLMs > publicationMaxTTLMs:
+	if spec.TTLMs != nil && *spec.TTLMs > publicationMaxTTLMs {
 		return fmt.Errorf("%w: a ttl_ms of %d, over one hour", ErrOutOfRange, *spec.TTLMs)
 	}
 	return nil

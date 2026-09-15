@@ -355,29 +355,51 @@ func TestAFrameAroundAPublicationIsReadAsAReceivedFrameIs(t *testing.T) {
 	}
 }
 
-// A publication build with more than one fault is refused for the first in
-// macula's order: the key, then the topic, then the payload, then a field's
-// range.
+// A publication build with more than one fault is refused for the first in the
+// order of macula's publish/2: the key and the ranges of seq and published_at,
+// which its head refuses, then the topic, then the payload, then the range of
+// ttl_ms.
 func TestAPublicationBuildIsRefusedForItsFirstFaultInMaculasOrder(t *testing.T) {
 	keys := requestKeysFor(t)
 	connectKey := must[*identity.NodeKey](t)(identity.GenerateKey(identity.PurposeConnect, profile.PQPure))
 	unsendable := cbor.Map([]cbor.MapEntry{textEntry("unsendable", "\xff")})
-	spec := publishSpecAt(testNow)
+	spec := withTTL(publishSpecAt(testNow), 3_600_001)
 	spec.Topic, spec.Payload, spec.Seq = strings.Repeat("t", 513), unsendable, maxProtocolInt
 
 	_, err := SignPublish(spec, connectKey)
-	wantRefusal(t, "a CONNECT key, a 513-byte topic, an unsendable payload and a seq of 2^53", err, ErrUnsignable)
+	wantRefusal(t, "a CONNECT key and every fault after it", err, ErrUnsignable)
 	_, err = SignPublish(spec, keys.caller)
-	wantRefusal(t, "a 513-byte topic, an unsendable payload and a seq of 2^53", err, ErrTextTooLong)
+	wantRefusal(t, "a seq of 2^53, a 513-byte topic, an unsendable payload and a ttl_ms over an hour", err, ErrOutOfRange)
+	spec.Seq, spec.PublishedAt = 7, maxProtocolInt
+	_, err = SignPublish(spec, keys.caller)
+	wantRefusal(t, "a published_at of 2^53, a 513-byte topic, an unsendable payload and a ttl_ms over an hour", err, ErrOutOfRange)
+	spec.PublishedAt = uint64(testNow)
+	_, err = SignPublish(spec, keys.caller)
+	wantRefusal(t, "a 513-byte topic, an unsendable payload and a ttl_ms over an hour", err, ErrTextTooLong)
 	spec.Topic = "weather.tienen"
 	_, err = SignPublish(spec, keys.caller)
 	if want := CheckPayload(unsendable); err == nil || err.Error() != want.Error() {
-		t.Errorf("an unsendable payload and a seq of 2^53: %v, want %v", err, want)
+		t.Errorf("an unsendable payload and a ttl_ms over an hour: %v, want %v", err, want)
 	}
 	spec.Payload = cbor.Uint64(1)
 	_, err = SignPublish(spec, keys.caller)
-	wantRefusal(t, "a seq of 2^53", err, ErrOutOfRange)
-	spec.Seq, spec.PublishedAt = 7, maxProtocolInt
-	_, err = SignPublish(spec, keys.caller)
-	wantRefusal(t, "a published_at of 2^53", err, ErrOutOfRange)
+	wantRefusal(t, "a ttl_ms over an hour", err, ErrOutOfRange)
+}
+
+// A publication with more than one fault is refused for the first in the order
+// of macula's publication_read: its ttl_ms, then its publisher, then its time.
+// The refusal decides how the connection that carried it is charged, so the
+// order is part of what a verifier keeps.
+func TestAPublicationIsRefusedForItsFirstFaultInMaculasOrder(t *testing.T) {
+	keys := requestKeysFor(t)
+	other := keys.other.KeyID()
+	namingAnotherPublisher := func(publishedAt int64) []cbor.MapEntry {
+		return withEntry(publicationTBS(keys.caller, publishedAt), "publisher", cbor.Bytes(other[:]))
+	}
+	_, err := verifyCraftedPublication(t, namingAnotherPublisher(testNow-16*testMinute), keys.caller)
+	wantStreamRefusal(t, "an expired publication naming another publisher", err, ErrKeyIDMismatch)
+	_, err = verifyCraftedPublication(t, namingAnotherPublisher(testNow+6*testMinute), keys.caller)
+	wantStreamRefusal(t, "a not-yet-valid publication naming another publisher", err, ErrKeyIDMismatch)
+	_, err = verifyCraftedPublication(t, withEntry(namingAnotherPublisher(testNow), "ttl_ms", cbor.Uint64(3_600_001)), keys.caller)
+	wantStreamRefusal(t, "a publication with a ttl_ms over an hour naming another publisher", err, ErrMalformedFrame)
 }

@@ -225,9 +225,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (D17). A PUBLISH carries a signed object under `MACULA-PQ-PUBLICATION-V1`
   from the publisher's identity key. Its tbs holds no frame type, so the same
   bytes ride in every EVENT and GOSSIP made from it. `SignPublish` refuses, in
-  macula's order, a key that is not an identity key (`ErrUnsignable`), a topic
-  over 512 bytes or not UTF-8, a payload the wire cannot carry, and a seq or
-  published_at of 2^53 or more or a ttl_ms over one hour (`ErrOutOfRange`).
+  the order of macula's `publish/2`, a key that is not an identity key
+  (`ErrUnsignable`), a seq or published_at of 2^53 or more (`ErrOutOfRange`),
+  a topic over 512 bytes or not UTF-8, a payload the wire cannot carry, and a
+  ttl_ms over one hour (`ErrOutOfRange`).
   `VerifyPublication` reads a PUBLISH, EVENT or GOSSIP and returns the
   publication with its hash and `ExpiresAt`. It refuses with
   `ErrMalformedFrame`, `identity.ErrObjectSignatureInvalid`,
