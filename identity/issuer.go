@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/sha512"
 	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -19,6 +21,10 @@ const (
 	ConnectBindingValid = 7 * 24 * time.Hour
 	// ConnectRotateEvery is how often the CONNECT key rotates.
 	ConnectRotateEvery = 5 * 24 * time.Hour
+	// RotationMargin is how long before the current CONNECT binding's not_after
+	// a failed rotation stops being an ordinary tick error and is reported as
+	// ErrRotationOverdue.
+	RotationMargin = 24 * time.Hour
 )
 
 var (
@@ -29,6 +35,10 @@ var (
 	// issuer holds no CONNECT binding and status statement in force, because the
 	// work that renews them failed.
 	ErrNoConnectMaterial = errors.New("identity: no CONNECT binding and status statement in force")
+	// ErrRotationOverdue is a tick whose CONNECT key rotation failed while the
+	// current binding expires within RotationMargin. Dials keep that binding
+	// until its not_after, and have no connect material after it.
+	ErrRotationOverdue = errors.New("identity: the CONNECT key has not rotated and its binding expires within the rotation margin")
 )
 
 // ConnectMaterial is what a new dial carries: the CONNECT key, its binding, and
@@ -47,17 +57,20 @@ type ConnectMaterial struct {
 // subscribers. Every ConnectRotateEvery it rotates the CONNECT key: the new
 // key's binding and statement exist before ConnectMaterial hands the key out,
 // the rotated-out binding keeps its statements until its not_after, and the
-// issuer lets go of the rotated-out key. ConnectMaterial does work that is due
-// itself, so a dial after missed ticks, a sleep or a clock step still carries
-// material in force. Nothing is written to disk, so a new issuer starts with a
-// new CONNECT key.
+// issuer lets go of the rotated-out key. A rotation that fails is counted and
+// retried at the next tick, and escalates to ErrRotationOverdue within
+// RotationMargin of the current binding's not_after. ConnectMaterial does work
+// that is due itself, so a dial after missed ticks, a sleep or a clock step
+// still carries material in force. Nothing is written to disk, so a new issuer
+// starts with a new CONNECT key.
 type StatementIssuer struct {
-	mu          sync.Mutex
-	identity    *NodeKey
-	clock       func() int64
-	current     [48]byte
-	bindings    map[[48]byte]*statedBinding
-	subscribers map[[48]byte][]*statementSubscription
+	mu               sync.Mutex
+	identity         *NodeKey
+	clock            func() int64
+	current          [48]byte
+	bindings         map[[48]byte]*statedBinding
+	subscribers      map[[48]byte][]*statementSubscription
+	rotationFailures uint64
 }
 
 // statedBinding is a CONNECT binding the issuer holds, with its newest
@@ -101,11 +114,12 @@ func NewStatementIssuer(identityKey *NodeKey, clock func() int64) (*StatementIss
 }
 
 // ConnectMaterial is the current CONNECT key with its binding and a statement
-// for it, both in force at the clock's time, for a new dial. When a statement
-// or a rotation is due, because ticks were missed or the clock moved, it does
-// Tick's work first. It returns ErrNoConnectMaterial, with the errors of that
-// work, rather than a binding or statement out of force. The binding and
-// statement are the caller's own copies.
+// for it, both in force at the clock's time within a verifier's 5 minutes of
+// tolerance, for a new dial. When a statement or a rotation is due, because
+// ticks were missed or the clock moved, it does Tick's work first. It returns
+// ErrNoConnectMaterial, with the errors of that work, rather than a binding or
+// statement out of force. The binding and statement are the caller's own
+// copies.
 func (i *StatementIssuer) ConnectMaterial() (ConnectMaterial, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -119,6 +133,14 @@ func (i *StatementIssuer) ConnectMaterial() (ConnectMaterial, error) {
 		return ConnectMaterial{}, errors.Join(ErrNoConnectMaterial, workErr)
 	}
 	return ConnectMaterial{Key: current.key, Binding: current.binding.clone(), Status: current.statement.clone()}, nil
+}
+
+// RotationFailures is how many CONNECT key rotations have failed since the
+// last one that succeeded.
+func (i *StatementIssuer) RotationFailures() uint64 {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.rotationFailures
 }
 
 // Subscribe hands over the newest statement for the binding whose tbs hashes to
@@ -158,10 +180,13 @@ func (i *StatementIssuer) unsubscribe(bindingHash [48]byte, sub *statementSubscr
 // Tick does the periodic work at the clock's time. It issues a statement for
 // each binding whose not_after has not passed, and hands it to that binding's
 // subscribers. It rotates the CONNECT key when ConnectRotateEvery has passed
-// since the current binding, or the clock reads earlier than that binding.
-// Then it lets go of the bindings past their not_after and closes their
-// subscribers' channels, but keeps the current binding until a rotation has
-// replaced it. It carries on past a failure and returns every error it met.
+// since the current binding, or the clock reads more than a verifier's 5
+// minutes of tolerance earlier than that binding; a rotation that fails is
+// counted, and reported as ErrRotationOverdue once the current binding expires
+// within RotationMargin. Then it lets go of the bindings past their not_after
+// and closes their subscribers' channels, but keeps the current binding until
+// a rotation has replaced it. It carries on past a failure and returns every
+// error it met.
 func (i *StatementIssuer) Tick() error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -171,22 +196,44 @@ func (i *StatementIssuer) Tick() error {
 func (i *StatementIssuer) tick(now int64) error {
 	reissueErr := i.reissue(now)
 	var rotateErr error
-	if i.bindings[i.current].rotationDue(now) {
-		rotateErr = i.rotateConnect(now)
+	if current := i.bindings[i.current]; current.rotationDue(now) {
+		rotateErr = i.rotate(now, current)
 	}
 	i.dropExpired(now)
 	return errors.Join(reissueErr, rotateErr)
 }
 
+// rotate rotates the CONNECT key at now in place of current, and counts a
+// failure. A failure while current expires within RotationMargin is reported
+// as ErrRotationOverdue, with the count and the time current has left.
+func (i *StatementIssuer) rotate(now int64, current *statedBinding) error {
+	err := i.rotateConnect(now)
+	if err == nil {
+		i.rotationFailures = 0
+		return nil
+	}
+	i.rotationFailures++
+	if left := current.notAfter - now; left < RotationMargin.Milliseconds() {
+		return fmt.Errorf("%w: %d failed rotations, %d ms left: %w", ErrRotationOverdue, i.rotationFailures, left, err)
+	}
+	return err
+}
+
 // RunEvery calls Tick at every value from ticks until ctx ends, and hands a
-// failed tick's error to onError when onError is not nil.
+// failed tick's error to onError. With no onError, a failed tick is logged as a
+// warning on slog's default logger, so no failure goes unreported.
 func (i *StatementIssuer) RunEvery(ctx context.Context, ticks <-chan time.Time, onError func(error)) {
+	if onError == nil {
+		onError = func(err error) {
+			slog.Warn("macula: the statement issuer's tick failed", "error", err.Error())
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticks:
-			if err := i.Tick(); err != nil && onError != nil {
+			if err := i.Tick(); err != nil {
 				onError(err)
 			}
 		}
@@ -278,20 +325,24 @@ func (i *StatementIssuer) rotateConnect(now int64) error {
 }
 
 // rotationDue reports whether the key of binding b is due to be replaced at
-// now: ConnectRotateEvery has passed since b, or now is earlier than b.
+// now: ConnectRotateEvery has passed since b, or now is earlier than b by more
+// than a verifier's tolerance, so b would not verify.
 func (b *statedBinding) rotationDue(now int64) bool {
-	return now < b.boundAt || now >= b.boundAt+ConnectRotateEvery.Milliseconds()
+	return now < b.boundAt-toleranceMs || now >= b.boundAt+ConnectRotateEvery.Milliseconds()
 }
 
 // restatementDue reports whether b's statement is due to be reissued at now:
-// StatementEvery has passed since it, or now is earlier than it.
+// StatementEvery has passed since it, or now is earlier than it by more than a
+// verifier's tolerance.
 func (b *statedBinding) restatementDue(now int64) bool {
-	return now < b.statedAt || now >= b.statedAt+StatementEvery.Milliseconds()
+	return now < b.statedAt-toleranceMs || now >= b.statedAt+StatementEvery.Milliseconds()
 }
 
-// inForce reports whether b's binding and its statement are both valid at now.
+// inForce reports whether b's binding and its statement are both valid at now,
+// allowing a clock up to a verifier's tolerance earlier than either.
 func (b *statedBinding) inForce(now int64) bool {
-	return b.boundAt <= now && now <= b.notAfter && b.statedAt <= now && now < b.statedAt+StatementValid.Milliseconds()
+	return b.boundAt-toleranceMs <= now && now <= b.notAfter &&
+		b.statedAt-toleranceMs <= now && now < b.statedAt+StatementValid.Milliseconds()
 }
 
 // clone is s with bytes of its own.

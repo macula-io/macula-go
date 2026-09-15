@@ -288,8 +288,8 @@ func TestAnIssuerRecoversFromATimeItCannotIssueAt(t *testing.T) {
 	if err := issuer.Tick(); err == nil {
 		t.Fatal("Tick at 2^53-1 succeeded, want an error")
 	}
-	if _, err := materialOf(t, issuer); err == nil {
-		t.Fatal("ConnectMaterial at 2^53-1 succeeded, want an error")
+	if _, err := materialOf(t, issuer); !errors.Is(err, ErrNoConnectMaterial) {
+		t.Fatalf("ConnectMaterial at 2^53-1: %v, want ErrNoConnectMaterial", err)
 	}
 
 	later := issuerT0 + 7*dayMs + minuteMs
@@ -375,4 +375,45 @@ func TestADeliveredStatementIsTheSubscribersOwnCopy(t *testing.T) {
 	delivered.Signature[0] ^= 0xff
 
 	checkStatementAt(t, currentMaterial(t, issuer).Status, binding, identity, issuerT0+15*minuteMs)
+}
+
+// A CONNECT key rotation that keeps failing is counted, and a tick reports it
+// as ErrRotationOverdue once the current binding expires within
+// RotationMargin. Until its not_after, the binding and a fresh statement still
+// serve dials.
+func TestARotationThatKeepsFailingIsCountedAndEscalatesBeforeTheBindingExpires(t *testing.T) {
+	identity := sharedKey(t, pureIdentityKey)
+	// An issuer this close to 2^53 can still issue an hour's statement, but a
+	// rotation's 7-day binding would end at 2^53 or later, which no verifier
+	// accepts, so every rotation fails.
+	start := int64(maxProtocolInt) - 7*dayMs - 1
+	clock := newTestClock()
+	clock.set(start)
+	issuer := newIssuer(t, identity, clock)
+	notAfter := start + 7*dayMs
+
+	before := []int64{start + 5*dayMs, start + 5*dayMs + 15*minuteMs, notAfter - dayMs}
+	for n, at := range before {
+		clock.set(at)
+		if err := issuer.Tick(); err == nil || errors.Is(err, ErrRotationOverdue) {
+			t.Fatalf("tick %d, %d ms before not_after: %v, want an ordinary rotation error", n+1, notAfter-at, err)
+		}
+		if got := issuer.RotationFailures(); got != uint64(n+1) {
+			t.Fatalf("after tick %d, %d rotation failures counted, want %d", n+1, got, n+1)
+		}
+	}
+
+	inMargin := notAfter - dayMs + 1
+	clock.set(inMargin)
+	if err := issuer.Tick(); !errors.Is(err, ErrRotationOverdue) {
+		t.Fatalf("a tick less than 24 h before not_after: %v, want ErrRotationOverdue", err)
+	}
+	if got := issuer.RotationFailures(); got != uint64(len(before)+1) {
+		t.Fatalf("%d rotation failures counted, want %d", got, len(before)+1)
+	}
+	material := currentMaterial(t, issuer)
+	if _, err := VerifyConnectBinding(material.Binding, identity.PublicKey(), profile.PQPure, material.Key.PublicKey(), inMargin); err != nil {
+		t.Fatalf("the CONNECT binding inside the margin: %v", err)
+	}
+	checkStatementAt(t, material.Status, material.Binding, identity, inMargin)
 }

@@ -141,6 +141,25 @@ func TestLoadFollowsASymlinkAndChecksTheFileItNames(t *testing.T) {
 	}
 }
 
+// sysLessFileInfo is a regular owner-only file whose platform information is
+// missing, so it names no owner.
+type sysLessFileInfo struct{}
+
+func (sysLessFileInfo) Name() string       { return "node.key" }
+func (sysLessFileInfo) Size() int64        { return 0 }
+func (sysLessFileInfo) Mode() fs.FileMode  { return 0o600 }
+func (sysLessFileInfo) ModTime() time.Time { return time.Time{} }
+func (sysLessFileInfo) IsDir() bool        { return false }
+func (sysLessFileInfo) Sys() any           { return nil }
+
+// On a platform with user ids, a file whose owner cannot be read is refused as
+// another user's, never let through unchecked.
+func TestAKeyFileWhoseOwnerCannotBeReadIsRefused(t *testing.T) {
+	if err := ownerOnly(sysLessFileInfo{}); !errors.Is(err, ErrKeyFileOwner) {
+		t.Fatalf("ownerOnly on a file without an owner = %v, want ErrKeyFileOwner", err)
+	}
+}
+
 // assertOwnerOnlyKeyFile fails the test unless path itself, not a symlink, is a
 // regular file of mode 600 that loads as key.
 func assertOwnerOnlyKeyFile(t *testing.T, path string, key *NodeKey) {

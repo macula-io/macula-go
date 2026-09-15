@@ -32,7 +32,7 @@ var (
 	// a regular file, directly or through a symlink.
 	ErrKeyFileNotRegular = errors.New("identity: the key file is not a regular file")
 	// ErrKeyFileOwner is a key file that a user other than the effective user
-	// owns.
+	// owns, or whose owner cannot be read, on a platform with user ids.
 	ErrKeyFileOwner = errors.New("identity: the key file is owned by another user")
 	// ErrKeyFilePermissions is a key file its group or others can read.
 	ErrKeyFilePermissions = errors.New("identity: the key file can be read by its group or others")
@@ -66,8 +66,8 @@ var openKeyFile = func(name string) (*os.File, error) {
 	return os.OpenFile(name, keyFileOpenFlags, 0)
 }
 
-// effectiveUID is the user id a key file's owner must have, negative where the
-// platform has none. Tests replace it.
+// effectiveUID is the user id that must own a key file LoadKey reads, on a
+// platform with user ids. Tests replace it.
 var effectiveUID = os.Geteuid
 
 // The tags a key file names a purpose, a profile and a half's algorithm by.
@@ -91,7 +91,9 @@ var (
 // The file is created, readable by its owner only, inside a new owner-only
 // directory beside path, and written, synced and renamed over any file at path.
 // Save then syncs path's directory and removes the new one. It reads, writes
-// and removes nothing else, whatever path's directory already holds.
+// and removes nothing else, whatever path's directory already holds. An error
+// from syncing path's directory or removing the new one comes after the rename,
+// so the key file is already in place when Save returns it.
 func (k *NodeKey) Save(path string) error {
 	if err := k.save(path); err != nil {
 		return fmt.Errorf("identity: save key: %w", err)
@@ -220,14 +222,13 @@ func readKeyFile(path string) ([]byte, error) {
 	return contents, nil
 }
 
-// ownerOnly refuses an opened key file that is not a regular file, that a user
-// other than the effective user owns, or that its group or others can read.
+// ownerOnly refuses an opened key file that is not a regular file, that is not
+// the effective user's, or that its group or others can read.
 func ownerOnly(info fs.FileInfo) error {
 	if !info.Mode().IsRegular() {
 		return ErrKeyFileNotRegular
 	}
-	euid := effectiveUID()
-	if owner, known := fileOwner(info); known && euid >= 0 && owner != euid {
+	if !ownedByEffectiveUser(info) {
 		return ErrKeyFileOwner
 	}
 	if info.Mode().Perm()&0o077 != 0 {

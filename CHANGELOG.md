@@ -43,7 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PuzzleSolved`. In `pq_hybrid` a key signs Macula's composite
   ML-DSA-87-PS384, valid only if both halves verify. A node key never shows a
   private half when printed or logged. A `NodeKey` that holds no key, such as
-  the zero value, has no public key and refuses to sign with `ErrEmptyNodeKey`.
+  the zero value, and a nil `*NodeKey` have no public key and refuse to sign
+  with `ErrEmptyNodeKey`.
 - `NodeKey.Save` and `identity.LoadKey`: key files in the seed form, readable
   by their owner only. `Save` creates the file exclusively in a new owner-only
   directory beside the path, syncs it, renames it over the path, syncs the
@@ -51,12 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path as it was. `LoadKey` follows a symlink, as macula does, and checks the
   file it reaches. It refuses a path that names anything but a regular file
   (`ErrKeyFileNotRegular`) before opening it and again on the opened file,
-  which it opens without waiting on a FIFO; a file another user owns
-  (`ErrKeyFileOwner`), where the platform has user ids; a file its group or
-  others can read (`ErrKeyFilePermissions`); a file longer than 64 KiB
-  (`ErrKeyFileTooLarge`); a key for another purpose or profile; a stored public
-  key its private key does not derive; and a key that fails a sign-and-verify
-  round trip.
+  which it opens without waiting on a FIFO; a file another user owns, or whose
+  owner cannot be read (`ErrKeyFileOwner`), where the platform has user ids; a
+  file its group or others can read (`ErrKeyFilePermissions`); a file longer
+  than 64 KiB (`ErrKeyFileTooLarge`); a key for another purpose or profile; a
+  stored public key its private key does not derive; and a key that fails a
+  sign-and-verify round trip.
 - `identity.TLSBinding`, `ConnectBinding` and `StatusStatement` issue the
   signed structures that bind a TLS or CONNECT key to an identity key, and
   that keep a binding in force, as a `SignedTBS` of `tbs` and `signature`.
@@ -78,7 +79,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   due itself, after missed ticks, a sleep or a clock step, and returns
   `ErrNoConnectMaterial` rather than a binding or statement out of force. The
   current binding is let go of only once a new one replaces it, and a tick
-  carries on past a failure and returns every error. `Subscribe` delivers a
+  carries on past a failure and returns every error. A rotation that fails is
+  counted (`RotationFailures`) and retried at the next tick, and once the
+  current binding expires within `RotationMargin` (24 hours) a tick reports it
+  as `ErrRotationOverdue`. `Run` and `RunEvery` with no error handler log a
+  failed tick as a warning on slog's default logger. A clock stepped back
+  within a verifier's 5 minutes of tolerance keeps the current CONNECT key;
+  a step further back rotates it. `Subscribe` delivers a
   binding's newest statement, and its channel closes when the binding ends or
   the subscriber unsubscribes; the subscriber owns the subscription. Bindings
   and statements are handed out as copies. Nothing is written to disk.
@@ -111,7 +118,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Drop warnings escaped control characters but printed Unicode format
   characters as they were. They escape those too, the bidirectional overrides
   and isolates among them.
-
 - `cbor.Value.AsInt64` reports -2^63-1 as not fitting an int64, where it
   returned 2^63-1.
 - `cbor.Value.String` prints integers below -2^63 as they are, where it

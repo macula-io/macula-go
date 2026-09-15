@@ -125,9 +125,9 @@ func (k *NodeKey) Purpose() Purpose { return k.purpose }
 func (k *NodeKey) Profile() profile.Profile { return k.profile }
 
 // PublicKey is k as carried (D13): the 2,592-byte ML-DSA-87 key, followed in
-// pq_hybrid by the DER RSAPublicKey. An empty key has none.
+// pq_hybrid by the DER RSAPublicKey. An empty or nil key has none.
 func (k *NodeKey) PublicKey() []byte {
-	if k.mldsa == nil {
+	if k == nil || k.mldsa == nil {
 		return nil
 	}
 	carried := bytes.Clone(k.mldsa.PublicKey().Bytes())
@@ -157,9 +157,9 @@ func (k *NodeKey) KeyID() [32]byte {
 // Sign signs message: with ML-DSA-87 alone in pq_pure, and with Macula's
 // composite ML-DSA-87-PS384 in pq_hybrid, where both halves sign the message
 // representative and the signature is the ML-DSA-87 signature followed by the
-// RSA-PSS signature. An empty key refuses with ErrEmptyNodeKey.
+// RSA-PSS signature. An empty or nil key refuses with ErrEmptyNodeKey.
 func (k *NodeKey) Sign(message []byte) ([]byte, error) {
-	if k.mldsa == nil {
+	if k == nil || k.mldsa == nil {
 		return nil, ErrEmptyNodeKey
 	}
 	if k.rsa == nil {

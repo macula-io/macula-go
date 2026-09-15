@@ -24,3 +24,20 @@ func TestAnEmptyNodeKeyRefusesToSignWithoutPanicking(t *testing.T) {
 		t.Errorf("NodeID = %v, want ErrNotAnIdentityKey", err)
 	}
 }
+
+// A nil *NodeKey refuses to sign and has no public key, as an empty one does,
+// and never panics.
+func TestANilNodeKeyRefusesToSignWithoutPanicking(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("a nil node key panicked: %v", r)
+		}
+	}()
+	var key *NodeKey
+	if _, err := key.Sign([]byte("a message")); !errors.Is(err, ErrEmptyNodeKey) {
+		t.Errorf("Sign = %v, want ErrEmptyNodeKey", err)
+	}
+	if public := key.PublicKey(); public != nil {
+		t.Errorf("PublicKey holds %d bytes, want none", len(public))
+	}
+}
