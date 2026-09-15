@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"bytes"
 	"crypto/sha512"
 	"errors"
 	"fmt"
@@ -41,8 +42,9 @@ type HeldObject struct {
 	Signature []byte
 }
 
-// VerifiedObject is a signed object that verified: the key it verified with,
-// its tbs bytes as received, and the map they decode to.
+// VerifiedObject is a signed object that verified: copies of the key it
+// verified with and of its tbs bytes as received, and the map they decode to.
+// Nothing a caller later writes into the bytes it verified changes them.
 type VerifiedObject struct {
 	Key    []byte
 	TBS    []byte
@@ -198,10 +200,11 @@ func objectSignedBytes(label string, key, tbs []byte) []byte {
 }
 
 // verifiedObject checks the signature over tbs as received, then decodes tbs
-// and checks its alg against profile p.
+// and checks its alg against profile p. The result holds copies of key and tbs,
+// since both may be a caller's own buffers.
 func verifiedObject(label string, key, tbs, signature []byte, p profile.Profile) (VerifiedObject, error) {
-	if !Verify(objectSignedBytes(label, key, tbs), signature, key, p) {
-		return VerifiedObject{}, ErrObjectSignatureInvalid
+	if err := verifySignature(objectSignedBytes(label, key, tbs), signature, key, p, ErrObjectSignatureInvalid); err != nil {
+		return VerifiedObject{}, err
 	}
 	fields, err := cbor.Decode(tbs)
 	if err != nil {
@@ -215,7 +218,7 @@ func verifiedObject(label string, key, tbs, signature []byte, p profile.Profile)
 	if name != sigAlg(p) {
 		return VerifiedObject{}, ErrObjectAlgMismatch
 	}
-	return VerifiedObject{Key: key, TBS: tbs, Fields: fields}, nil
+	return VerifiedObject{Key: bytes.Clone(key), TBS: bytes.Clone(tbs), Fields: fields}, nil
 }
 
 // exactByteFields is the byte strings under names in v, when v is a map of

@@ -127,14 +127,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection handshake. `Dial` and its trust modes stay until the connection
   moves to the post-quantum handshake.
 - `identity.ErrPostQuantumUnavailable` and `identity.CheckPostQuantum`. A
-  binary built with `GOFIPS140=v1.0.0` uses the FIPS 140-3 Go Cryptographic
-  Module v1.0.0, which has no ML-DSA, and every profile signs with ML-DSA-87.
-  Such a binary returns `ErrPostQuantumUnavailable` from `GenerateKey`,
-  `GenerateIdentityKey`, `LoadKey` (before reading the file) and
-  `transport.DialTarget` (before dialing), instead of an error from inside a
+  binary built with `GOFIPS140=v1.0.0` (or `GOFIPS140=certified`, which names
+  that module at Go 1.27) uses the FIPS 140-3 Go Cryptographic Module v1.0.0,
+  which has no ML-DSA, and every profile signs with ML-DSA-87. Such a binary
+  returns `ErrPostQuantumUnavailable` from `GenerateKey`,
+  `GenerateIdentityKey`, `LoadKey` (before reading the file),
+  `VerifyTLSBinding`, `VerifyConnectBinding`, `VerifyStatus`, `VerifyObject`
+  and `VerifyHeldObject` (and so from the handshake's checks), and
+  `transport.DialTarget` (before dialing), instead of an error that blames a
   signature or a TLS handshake. Build without `GOFIPS140`, or with
   `GOFIPS140=v1.26.0` or later. CI runs the tests for it under
-  `GOFIPS140=v1.0.0`.
+  `GOFIPS140=v1.0.0` and requires each to pass.
 - `identity.SignObject`, `SignHeldObject`, `VerifyObject` and
   `VerifyHeldObject`: the signed objects of macula 11.0.0's records and
   frames, `{key, tbs, signature}` when the signer's key travels with the

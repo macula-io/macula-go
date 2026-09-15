@@ -185,7 +185,10 @@ func (k *NodeKey) Sign(message []byte) ([]byte, error) {
 // Verify reports whether signature is valid over message for a key as carried,
 // under profile p: an ML-DSA-87 signature in pq_pure, and in pq_hybrid a
 // composite whose two halves both verify, with the key in its one carried form.
-// Malformed input is refused, never panicked on.
+// Malformed input is refused, never panicked on. In a binary without ML-DSA
+// (see CheckPostQuantum) it returns false for every signature; the verifiers
+// that return an error, VerifyTLSBinding, VerifyConnectBinding, VerifyStatus,
+// VerifyObject and VerifyHeldObject, return ErrPostQuantumUnavailable there.
 func Verify(message, signature, carriedKey []byte, p profile.Profile) bool {
 	definition, err := p.Definition()
 	if err != nil {

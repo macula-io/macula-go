@@ -199,8 +199,8 @@ type bindingTBS struct {
 // decodes them, then checks them in macula's order: shape, use, node_id,
 // subject, not_before, not_after.
 func verifyBinding(b SignedTBS, identityKey []byte, p profile.Profile, use BindingUse, label string, subjectHash [48]byte, nowMs int64) (BindingInfo, error) {
-	if !Verify(labelled(label, b.TBS), b.Signature, identityKey, p) {
-		return BindingInfo{}, ErrBindingSignatureInvalid
+	if err := verifySignature(labelled(label, b.TBS), b.Signature, identityKey, p, ErrBindingSignatureInvalid); err != nil {
+		return BindingInfo{}, err
 	}
 	fields, decoded := decodeTBS(b.TBS, bindingFieldNames)
 	parsed, wellFormed := wellFormedBinding(fields, p)
@@ -251,8 +251,8 @@ type statusTBS struct {
 // statement names that binding, not the binding itself: a caller verifies the
 // binding too, with VerifyTLSBinding or VerifyConnectBinding.
 func VerifyStatus(statement, binding SignedTBS, identityKey []byte, p profile.Profile, nowMs int64) (int64, error) {
-	if !Verify(labelled(labelStatus, statement.TBS), statement.Signature, identityKey, p) {
-		return 0, ErrStatusSignatureInvalid
+	if err := verifySignature(labelled(labelStatus, statement.TBS), statement.Signature, identityKey, p, ErrStatusSignatureInvalid); err != nil {
+		return 0, err
 	}
 	fields, decoded := decodeTBS(statement.TBS, statusFieldNames)
 	parsed, wellFormed := wellFormedStatus(fields, p)

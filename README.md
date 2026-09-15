@@ -323,11 +323,11 @@ unrelated PR. Same convention as `macula-rust`'s `tests/live_station.rs`.
 Checks against a compiled macula, in both directions, live in `scripts/interop/` (see its README). They need macula
 built with its NIFs and OTP 28, so they are not part of `go test ./...` or CI either.
 
-A binary built with `GOFIPS140=v1.0.0` has no ML-DSA (see Known limitations). CI runs the two tests that check such a
-build says so, and they run locally the same way:
+A binary built with `GOFIPS140=v1.0.0` has no ML-DSA (see Known limitations). CI runs the tests that check such a build
+says so, and requires a PASS line from each. They run locally the same way:
 
 ```bash
-GOFIPS140=v1.0.0 go test ./identity ./transport -run SaysWhetherTheBinaryHasMLDSA
+GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport -run SaysWhetherTheBinaryHasMLDSA -v
 ```
 
 ## Known limitations
@@ -336,7 +336,8 @@ GOFIPS140=v1.0.0 go test ./identity ./transport -run SaysWhetherTheBinaryHasMLDS
   Module v1.0.0 has no ML-DSA, and every macula 11.0.0 profile signs with
   ML-DSA-87. In a binary built with `GOFIPS140=v1.0.0` (at Go 1.27,
   `GOFIPS140=certified` names the same module), `identity.GenerateKey`,
-  `GenerateIdentityKey`, `LoadKey` and `transport.DialTarget` return
+  `GenerateIdentityKey`, `LoadKey`, the binding, status and signed object
+  verifiers, the handshake's checks and `transport.DialTarget` return
   `identity.ErrPostQuantumUnavailable`. Build without `GOFIPS140`, or with
   `GOFIPS140=v1.26.0` or later.
 - **`directdial.GetDirect` can only resolve a `content_announcement`
