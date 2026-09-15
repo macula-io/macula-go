@@ -2,6 +2,10 @@ package frame
 
 import "github.com/macula-io/macula-go/cbor"
 
+// maxTopicBytes is the bound of a SUBSCRIBE's and an UNSUBSCRIBE's topic, UTF-8
+// bytes on the wire, as a station's receive rule reads it.
+const maxTopicBytes = 512
+
 // PublishSpec holds the fields for a PUBLISH frame.
 type PublishSpec struct {
 	Topic         string
@@ -50,19 +54,23 @@ func NewSubscribeSpec(topic string, realm, subscriber []byte) SubscribeSpec {
 	return SubscribeSpec{Topic: topic, Realm: realm, Subscriber: subscriber}
 }
 
-func subscribeValue(spec SubscribeSpec, frameID []byte, sentAtMs int64) cbor.Value {
+func subscribeValue(spec SubscribeSpec, frameID []byte, sentAtMs int64) (cbor.Value, error) {
+	if err := topicChecked(spec.Topic); err != nil {
+		return cbor.Value{}, err
+	}
 	fields := base("subscribe", 0, frameID, sentAtMs)
 	fields = withField(fields, "realm", cbor.Bytes(spec.Realm))
 	fields = withField(fields, "topic", cbor.Bytes([]byte(spec.Topic)))
 	fields = withField(fields, "subscriber", cbor.Bytes(spec.Subscriber))
-	fields = withField(fields, "filter", cbor.Null())
 	fields = withField(fields, "options", cbor.Map(nil))
-	return cbor.Map(fields)
+	return cbor.Map(fields), nil
 }
 
-// Subscribe builds a SUBSCRIBE frame with a fresh frame_id/sent_at_ms.
-// No filter, no options -- the plainest possible subscription.
-func Subscribe(spec SubscribeSpec) cbor.Value {
+// Subscribe builds a SUBSCRIBE frame with a fresh frame_id and sent_at_ms, and
+// no options. It carries no filter, which macula 11.0.0 refuses, and it refuses
+// a topic over 512 bytes (ErrTextTooLong) or not UTF-8 (ErrInvalidText), as a
+// station's receive rule does.
+func Subscribe(spec SubscribeSpec) (cbor.Value, error) {
 	return subscribeValue(spec, freshFrameID(), currentMillis())
 }
 
@@ -77,17 +85,27 @@ func NewUnsubscribeSpec(topic string, realm, subscriber []byte) UnsubscribeSpec 
 	return UnsubscribeSpec{Topic: topic, Realm: realm, Subscriber: subscriber}
 }
 
-func unsubscribeValue(spec UnsubscribeSpec, frameID []byte, sentAtMs int64) cbor.Value {
+func unsubscribeValue(spec UnsubscribeSpec, frameID []byte, sentAtMs int64) (cbor.Value, error) {
+	if err := topicChecked(spec.Topic); err != nil {
+		return cbor.Value{}, err
+	}
 	fields := base("unsubscribe", 0, frameID, sentAtMs)
 	fields = withField(fields, "realm", cbor.Bytes(spec.Realm))
 	fields = withField(fields, "topic", cbor.Bytes([]byte(spec.Topic)))
 	fields = withField(fields, "subscriber", cbor.Bytes(spec.Subscriber))
-	return cbor.Map(fields)
+	return cbor.Map(fields), nil
 }
 
-// Unsubscribe builds an UNSUBSCRIBE frame with a fresh frame_id/sent_at_ms.
-func Unsubscribe(spec UnsubscribeSpec) cbor.Value {
+// Unsubscribe builds an UNSUBSCRIBE frame with a fresh frame_id and
+// sent_at_ms, refusing a topic as Subscribe does.
+func Unsubscribe(spec UnsubscribeSpec) (cbor.Value, error) {
 	return unsubscribeValue(spec, freshFrameID(), currentMillis())
+}
+
+// topicChecked refuses a topic a station refuses: over 512 bytes, judged first,
+// or not UTF-8.
+func topicChecked(topic string) error {
+	return boundedText("topic", topic, maxTopicBytes)
 }
 
 // EventInfo is what a subscriber actually receives -- the parsed

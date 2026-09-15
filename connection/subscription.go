@@ -34,8 +34,13 @@ type Subscription struct {
 
 // Subscribe starts a subscription to spec's realm and topic. The station is
 // sent a SUBSCRIBE only for the session's first subscription to that realm and
-// topic.
+// topic. A topic a station refuses, over 512 bytes or not UTF-8, is refused
+// with frame.Subscribe's error before anything is tracked or sent.
 func (s *Session) Subscribe(spec frame.SubscribeSpec, id identity.KeyPair) (*Subscription, error) {
+	subscribe, err := frame.Subscribe(spec)
+	if err != nil {
+		return nil, fmt.Errorf("connection: subscribe: %w", err)
+	}
 	sub := &Subscription{
 		session: s,
 		spec:    spec,
@@ -59,7 +64,7 @@ func (s *Session) Subscribe(spec frame.SubscribeSpec, id identity.KeyPair) (*Sub
 	if !first {
 		return sub, nil
 	}
-	if err := s.send(frame.Sign(frame.Subscribe(spec), id), time.Now().Add(s.sendTimeoutOrDefault()), nil); err != nil {
+	if err := s.send(frame.Sign(subscribe, id), time.Now().Add(s.sendTimeoutOrDefault()), nil); err != nil {
 		s.untrack(sub)
 		sub.finish(err)
 		return nil, fmt.Errorf("connection: subscribe: %w", err)
@@ -109,7 +114,7 @@ func (sub *Subscription) Close() error {
 		last := s.untrack(sub)
 		sub.finish(ErrSubscriptionClosed)
 		if last {
-			err = s.send(sub.unsubscribeFrame(), time.Now().Add(s.sendTimeoutOrDefault()), nil)
+			err = s.sendUnsubscribe(sub)
 		}
 	})
 	return err
@@ -129,6 +134,15 @@ func (s *Session) untrack(sub *Subscription) (last bool) {
 	return last
 }
 
+// sendUnsubscribe sends the station an UNSUBSCRIBE for sub's realm and topic.
+func (s *Session) sendUnsubscribe(sub *Subscription) error {
+	unsubscribe, err := sub.unsubscribeFrame()
+	if err != nil {
+		return err
+	}
+	return s.send(unsubscribe, time.Now().Add(s.sendTimeoutOrDefault()), nil)
+}
+
 func (sub *Subscription) key() topicKey {
 	return topicKey{realm: string(sub.spec.Realm), topic: sub.spec.Topic}
 }
@@ -137,9 +151,12 @@ func (sub *Subscription) matches(evt frame.EventInfo) bool {
 	return bytes.Equal(evt.Realm, sub.spec.Realm) && topicMatches(sub.spec.Topic, evt.Topic)
 }
 
-func (sub *Subscription) unsubscribeFrame() cbor.Value {
-	spec := frame.NewUnsubscribeSpec(sub.spec.Topic, sub.spec.Realm, sub.spec.Subscriber)
-	return frame.Sign(frame.Unsubscribe(spec), sub.id)
+func (sub *Subscription) unsubscribeFrame() (cbor.Value, error) {
+	unsubscribe, err := frame.Unsubscribe(frame.NewUnsubscribeSpec(sub.spec.Topic, sub.spec.Realm, sub.spec.Subscriber))
+	if err != nil {
+		return cbor.Value{}, fmt.Errorf("connection: unsubscribe: %w", err)
+	}
+	return frame.Sign(unsubscribe, sub.id), nil
 }
 
 func (sub *Subscription) finish(err error) {

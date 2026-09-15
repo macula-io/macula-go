@@ -465,7 +465,9 @@ The other primitive a mobile client needs early. `publish_spec()`:
 `topic`, `realm` (32 bytes), `publisher` (32-byte pubkey), `seq`,
 `payload`, `published_at_ms`, optional `ttl_ms`, optional
 `publisher_sig` (the separate end-to-end signature, §4). `subscribe`:
-`topic`, `realm`, `subscriber`, optional `filter`, optional `options`.
+`topic`, `realm`, `subscriber`, optional `options`; `unsubscribe`: `topic`,
+`realm`, `subscriber`. Each topic is UTF-8 bytes of at most 512. macula
+11.0.0 has no `filter` and refuses a SUBSCRIBE that carries one.
 `event` is what a subscriber actually receives: same shape as `publish`
 plus `delivered_via` ∈ `plumtree|dht|direct`. A relay station copies
 `publisher_sig` verbatim from PUBLISH onto the EVENT(s) it fans out, so a

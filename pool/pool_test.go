@@ -190,6 +190,10 @@ func (f *fakeSession) Publish(spec frame.PublishSpec, _ identity.KeyPair) error 
 }
 
 func (f *fakeSession) Subscribe(spec frame.SubscribeSpec, _ identity.KeyPair) (subscription, error) {
+	subscribe, err := frame.Subscribe(spec)
+	if err != nil {
+		return nil, err
+	}
 	if err := f.Err(); err != nil {
 		return nil, fmt.Errorf("%w: %w", err, connection.ErrNotSent)
 	}
@@ -203,7 +207,7 @@ func (f *fakeSession) Subscribe(spec frame.SubscribeSpec, _ identity.KeyPair) (s
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.subs = append(f.subs, sub)
-	f.sent = append(f.sent, frame.Subscribe(spec))
+	f.sent = append(f.sent, subscribe)
 	f.ops = append(f.ops, "subscribe "+spec.Topic)
 	return sub, nil
 }

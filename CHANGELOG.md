@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `identity.Verify` checks a signature by a node key (see Added). The Ed25519
   check it replaces is `identity.VerifyEd25519` for now.
 - macula-go requires Go 1.27.
+- `frame.Subscribe` and `frame.Unsubscribe` return `(cbor.Value, error)`. A
+  SUBSCRIBE carries no `filter`, which macula 11.0.0 refuses as a field its
+  type does not have, and both builders refuse a topic over 512 bytes
+  (`frame.ErrTextTooLong`) or not UTF-8 (`frame.ErrInvalidText`), as a
+  station's receive rule does. `connection.Session.Subscribe` returns that
+  refusal before it tracks or sends anything.
 
 ### Added
 
