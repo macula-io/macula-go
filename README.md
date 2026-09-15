@@ -327,7 +327,7 @@ A binary built with `GOFIPS140=v1.0.0` has no ML-DSA (see Known limitations). CI
 says so, and requires a PASS line from each. They run locally the same way:
 
 ```bash
-GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport -run SaysWhetherTheBinaryHasMLDSA -v
+GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame -run SaysWhetherTheBinaryHasMLDSA -v
 ```
 
 ## Known limitations
@@ -337,9 +337,9 @@ GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport -run SaysWhetherTheB
   ML-DSA-87. In a binary built with `GOFIPS140=v1.0.0` (at Go 1.27,
   `GOFIPS140=certified` names the same module), `identity.GenerateKey`,
   `GenerateIdentityKey`, `LoadKey`, the binding, status and signed object
-  verifiers, the handshake's checks and `transport.DialTarget` return
-  `identity.ErrPostQuantumUnavailable`. Build without `GOFIPS140`, or with
-  `GOFIPS140=v1.26.0` or later.
+  verifiers, the handshake's checks, the frame verifiers and
+  `transport.DialTarget` return `identity.ErrPostQuantumUnavailable`. Build
+  without `GOFIPS140`, or with `GOFIPS140=v1.26.0` or later.
 - **`directdial.GetDirect` can only resolve a `content_announcement`
   that something has actually published** — and nothing in this
   ecosystem currently does, since (per the design note above) only a

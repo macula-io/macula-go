@@ -121,8 +121,12 @@ func verifiedCall(t *testing.T, keys requestKeys) VerifiedRequest {
 func verifiedStreamOpen(t *testing.T, keys requestKeys) VerifiedRequest {
 	t.Helper()
 	spec := callSpec(keys)
-	spec.Mode = ServerStream
+	spec.Mode = modeOf(ServerStream)
 	return must[VerifiedRequest](t)(VerifyRequest(onWire(t, must[cbor.Value](t)(SignStreamOpen(spec, keys.caller))), profile.PQPure))
+}
+
+func modeOf(mode StreamMode) *StreamMode {
+	return &mode
 }
 
 // requestTBS is the fields of a CALL request as its signer puts them in tbs;
@@ -283,24 +287,27 @@ func TestACallFrameCarriesVersionFrameTypeRequestAndItsRoutingFields(t *testing.
 
 func TestAStreamOpenCarriesItsMode(t *testing.T) {
 	keys := requestKeysFor(t)
-	if open := verifiedStreamOpen(t, keys); open.FrameType != frameTypeStreamOpen || open.Mode != ServerStream {
-		t.Errorf("a STREAM_OPEN verifies as (%s, %s), want (stream_open, server_stream)", open.FrameType, open.Mode.Name())
+	if open := verifiedStreamOpen(t, keys); open.FrameType != frameTypeStreamOpen || open.Mode == nil || *open.Mode != ServerStream {
+		t.Errorf("a STREAM_OPEN verifies as %s with mode %v, want stream_open with server_stream", open.FrameType, open.Mode)
+	}
+	if call := verifiedCall(t, keys); call.Mode != nil {
+		t.Errorf("a CALL verifies with mode %s, want none", call.Mode.Name())
 	}
 }
 
-// Mode belongs to a STREAM_OPEN only: SignCall leaves it out of a CALL, and a
+// Mode belongs to a STREAM_OPEN only: SignCall refuses a CALL with a mode and
+// SignStreamOpen a STREAM_OPEN without one or with an unknown one, and a
 // verifier refuses a CALL whose tbs names one and a STREAM_OPEN whose tbs names
 // none.
 func TestModeBelongsToStreamOpenOnly(t *testing.T) {
 	keys := requestKeysFor(t)
-	spec := callSpec(keys)
-	spec.Mode = Bidi
-	call := must[cbor.Value](t)(SignCall(spec, keys.caller))
-	if _, hasMode := must[cbor.Value](t)(cbor.Decode(objectOf(t, call, "request").TBS)).Get("mode"); hasMode {
-		t.Error("SignCall put a mode in a CALL's tbs")
-	}
-	spec.Mode = StreamMode(7)
-	_, err := SignStreamOpen(spec, keys.caller)
+	withMode, withoutMode, unknownMode := callSpec(keys), callSpec(keys), callSpec(keys)
+	withMode.Mode, unknownMode.Mode = modeOf(Bidi), modeOf(StreamMode(7))
+	_, err := SignCall(withMode, keys.caller)
+	wantRefusal(t, "a CALL with a mode", err, ErrOutOfRange)
+	_, err = SignStreamOpen(withoutMode, keys.caller)
+	wantRefusal(t, "a STREAM_OPEN without a mode", err, ErrOutOfRange)
+	_, err = SignStreamOpen(unknownMode, keys.caller)
 	wantRefusal(t, "a STREAM_OPEN of an unknown mode", err, ErrOutOfRange)
 	wantRefusal(t, "a CALL whose tbs names a mode",
 		verifyCraftedRequest(t, frameTypeCall, withEntry(requestTBS(keys), "mode", cbor.Text("bidi")), keys.caller), ErrMalformedFrame)
@@ -383,7 +390,7 @@ func TestAProcedureIsTextOfAtMost512Bytes(t *testing.T) {
 	spec.Procedure = long + "p"
 	_, err := SignCall(spec, keys.caller)
 	wantRefusal(t, "a 513-byte procedure", err, ErrTextTooLong)
-	spec.Procedure, spec.Mode = "\xff\xfe", Bidi
+	spec.Procedure, spec.Mode = "\xff\xfe", modeOf(Bidi)
 	_, err = SignStreamOpen(spec, keys.caller)
 	wantRefusal(t, "a procedure that is not UTF-8", err, ErrInvalidText)
 	wantRefusal(t, "a request whose procedure is 513 bytes",

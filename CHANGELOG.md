@@ -139,7 +139,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns `ErrPostQuantumUnavailable` from `GenerateKey`,
   `GenerateIdentityKey`, `LoadKey` (before reading the file),
   `VerifyTLSBinding`, `VerifyConnectBinding`, `VerifyStatus`, `VerifyObject`
-  and `VerifyHeldObject` (and so from the handshake's checks), and
+  and `VerifyHeldObject` (and so from the handshake's checks and from
+  `frame.VerifyRequest`, `VerifyReply` and `VerifyRelayError`), and
   `transport.DialTarget` (before dialing), instead of an error that blames a
   signature or a TLS handshake. Build without `GOFIPS140`, or with
   `GOFIPS140=v1.26.0` or later. CI runs the tests for it under
@@ -161,17 +162,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (D25). A request is a signed object under `MACULA-PQ-REQUEST-V1` from the
   caller's identity key, a reply one under `MACULA-PQ-REPLY-V1` from the
   request's target, and a relay error one under `MACULA-PQ-RELAY-ERROR-V1`
-  from a station, with a code from the closed set and no detail. A builder
-  refuses what its receiver would: a key that is not an identity key or not
-  the expected sender (`ErrUnsignable`), a procedure over 512 bytes, a code
-  over 64 or a detail over 256 (`ErrTextTooLong`), text that is not UTF-8
-  (`ErrInvalidText`), a payload the wire cannot carry, a relay code outside
-  its set (`ErrRelayCodeOutsideItsSet`), and a field out of range
-  (`ErrOutOfRange`). A verifier reads a frame in macula's order and refuses
-  with `ErrMalformedFrame`, `identity.ErrObjectSignatureInvalid`,
+  from a station, with a code from the closed set and no detail. A STREAM_OPEN
+  carries a stream mode and a CALL none. A builder refuses what its receiver
+  would: a key that is not an identity key or not the expected sender
+  (`ErrUnsignable`), a procedure over 512 bytes, a code over 64 or a detail
+  over 256 (`ErrTextTooLong`), text that is not UTF-8 (`ErrInvalidText`), a
+  payload the wire cannot carry, a relay code outside its set
+  (`ErrRelayCodeOutsideItsSet`), and a field out of its range or set
+  (`ErrOutOfRange`). A verifier reads a frame in macula's order, its version
+  and routing fields as a received frame is decoded, and refuses with
+  `ErrMalformedFrame`, `identity.ErrObjectSignatureInvalid`,
   `ErrKeyIDMismatch`, `ErrRequestMismatch`, `ErrNotTheTarget` or
-  `ErrNotTheConnection`. `ClaimedReplyIDs` reads the ids a reply names without
-  verifying it, as the key for finding its pending request.
+  `ErrNotTheConnection`, and in a binary without ML-DSA with
+  `identity.ErrPostQuantumUnavailable`. `ClaimedReplyIDs` reads the ids a
+  reply names without verifying it, as the key for finding its pending
+  request.
 
 ### Fixed
 

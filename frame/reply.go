@@ -122,7 +122,8 @@ func signReply(frameType string, request VerifiedRequest, fields []cbor.MapEntry
 // signature and fields, responded_by as the key id of its key, the request's
 // request_id and request_hash, and responded_by as the request's target. It
 // refuses with ErrMalformedFrame, identity.ErrObjectSignatureInvalid,
-// ErrKeyIDMismatch, ErrRequestMismatch or ErrNotTheTarget.
+// ErrKeyIDMismatch, ErrRequestMismatch or ErrNotTheTarget, and in a binary
+// without ML-DSA with identity.ErrPostQuantumUnavailable.
 func VerifyReply(v cbor.Value, request VerifiedRequest, p profile.Profile) (VerifiedReply, error) {
 	frameType, object, ok := receivedFrame(v, "reply", replyRoutes, frameTypeResult, frameTypeError)
 	if !ok {
@@ -175,20 +176,21 @@ func replyTable(frameType string) map[string]fieldRule {
 }
 
 // SignRelayError signs a station's relay error, an ERROR or STREAM_ERROR for a
-// pending request (ErrOutOfRange for another frame type), with the station's
-// identity key (ErrUnsignable), as macula_frame's relay_error/2 and
-// stream_bytes/2 build one: reported_by is the key's key id, the code is from the
-// closed set (ErrRelayCodeOutsideItsSet), and the relay error is a signed object
-// under MACULA-PQ-RELAY-ERROR-V1.
+// pending request, with the station's identity key, as macula_frame's
+// relay_error/2 and stream_bytes/2 build one: reported_by is the key's key id,
+// and the relay error is a signed object under MACULA-PQ-RELAY-ERROR-V1. It
+// checks, in this order, and refuses a key that is not an identity key
+// (ErrUnsignable), a code outside the closed set (ErrRelayCodeOutsideItsSet),
+// and a frame type other than error or stream_error (ErrOutOfRange).
 func SignRelayError(spec RelayErrorSpec, key *identity.NodeKey) (cbor.Value, error) {
 	if err := identitySigner(key); err != nil {
 		return cbor.Value{}, err
 	}
-	if spec.FrameType != frameTypeError && spec.FrameType != frameTypeStreamError {
-		return cbor.Value{}, fmt.Errorf("%w: relay error frame type %q", ErrOutOfRange, spec.FrameType)
-	}
 	if !slices.Contains(relayCodes, spec.Code) {
 		return cbor.Value{}, fmt.Errorf("%w: %q", ErrRelayCodeOutsideItsSet, spec.Code)
+	}
+	if spec.FrameType != frameTypeError && spec.FrameType != frameTypeStreamError {
+		return cbor.Value{}, fmt.Errorf("%w: relay error frame type %q", ErrOutOfRange, spec.FrameType)
 	}
 	reportedBy := key.KeyID()
 	tbs := []cbor.MapEntry{
@@ -214,7 +216,8 @@ func SignRelayError(spec RelayErrorSpec, key *identity.NodeKey) (cbor.Value, err
 // fields, reported_by as the key id of its key, the request's request_id and
 // request_hash, and reported_by as expectedReporter, that station's node_id. It
 // refuses with ErrMalformedFrame, identity.ErrObjectSignatureInvalid,
-// ErrKeyIDMismatch, ErrRequestMismatch or ErrNotTheConnection.
+// ErrKeyIDMismatch, ErrRequestMismatch or ErrNotTheConnection, and in a binary
+// without ML-DSA with identity.ErrPostQuantumUnavailable.
 func VerifyRelayError(v cbor.Value, request VerifiedRequest, p profile.Profile, expectedReporter [32]byte) (VerifiedRelayError, error) {
 	frameType, object, ok := receivedFrame(v, "relay_error", relayErrorRoutes, frameTypeError, frameTypeStreamError)
 	if !ok {

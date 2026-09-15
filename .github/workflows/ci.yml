@@ -50,7 +50,7 @@ jobs:
       # through tee.
       - shell: bash
         run: |
-          GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport -run SaysWhetherTheBinaryHasMLDSA -count=1 -v | tee gofips140.log
-          for name in TestAKeyOperationSaysWhetherTheBinaryHasMLDSA TestAVerifierSaysWhetherTheBinaryHasMLDSA TestReadStatusSaysWhetherTheBinaryHasMLDSA TestDialTargetSaysWhetherTheBinaryHasMLDSA; do
+          GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame -run SaysWhetherTheBinaryHasMLDSA -count=1 -v | tee gofips140.log
+          for name in TestAKeyOperationSaysWhetherTheBinaryHasMLDSA TestAVerifierSaysWhetherTheBinaryHasMLDSA TestReadStatusSaysWhetherTheBinaryHasMLDSA TestDialTargetSaysWhetherTheBinaryHasMLDSA TestASignedFrameVerifierSaysWhetherTheBinaryHasMLDSA; do
             grep -q -- "--- PASS: $name " gofips140.log || { echo "no PASS line for $name"; exit 1; }
           done

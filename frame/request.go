@@ -16,9 +16,9 @@ const (
 )
 
 // RequestSpec is a request as its caller gives it to SignCall or SignStreamOpen
-// (D25). Mode is read by SignStreamOpen only. Token is nil when the request
-// carries none. SourceRoute (nil for none) and RetryBudget (nil for none) are
-// routing fields outside the signature.
+// (D25). Mode is a STREAM_OPEN's stream mode, and nil for a CALL. Token is nil
+// when the request carries none. SourceRoute (nil for none) and RetryBudget (nil
+// for none) are routing fields outside the signature.
 type RequestSpec struct {
 	RequestID   [16]byte
 	Realm       [32]byte
@@ -26,7 +26,7 @@ type RequestSpec struct {
 	Target      [32]byte
 	Deadline    uint64
 	Payload     cbor.Value
-	Mode        StreamMode
+	Mode        *StreamMode
 	Token       []byte
 	SourceRoute []byte
 	RetryBudget *uint64
@@ -34,7 +34,8 @@ type RequestSpec struct {
 
 // VerifiedRequest is a CALL or STREAM_OPEN whose request verified: its fields,
 // the caller's key as carried, and RequestHash, the SHA-384 of its tbs. Mode is
-// a STREAM_OPEN's, and Token is nil when the request carries none.
+// a STREAM_OPEN's, nil for a CALL, and Token is nil when the request carries
+// none.
 type VerifiedRequest struct {
 	FrameType   string
 	Key         []byte
@@ -46,7 +47,7 @@ type VerifiedRequest struct {
 	Target      [32]byte
 	Deadline    uint64
 	Payload     cbor.Value
-	Mode        StreamMode
+	Mode        *StreamMode
 	Token       []byte
 }
 
@@ -55,27 +56,25 @@ var requestRoutes = map[string]fieldRule{"source_route": anyBytes, "retry_budget
 
 // SignCall signs a CALL with the caller's identity key, as macula_frame's
 // call/2 and stream_bytes/2 build one: caller is the key's key id, and the
-// request is a signed object under MACULA-PQ-REQUEST-V1. It refuses a key that
-// is not an identity key (ErrUnsignable), a procedure over 512 bytes
-// (ErrTextTooLong) or not UTF-8 (ErrInvalidText), a payload the wire cannot
-// carry (CheckPayload's refusal), and a deadline or retry budget of 2^53 or more
+// request is a signed object under MACULA-PQ-REQUEST-V1. It checks, in this
+// order, and refuses a key that is not an identity key (ErrUnsignable), a
+// procedure over 512 bytes (ErrTextTooLong) or not UTF-8 (ErrInvalidText), a
+// payload the wire cannot carry (CheckPayload's refusal), and a deadline or
+// retry budget of 2^53 or more or a stream mode, which a CALL does not carry
 // (ErrOutOfRange).
 func SignCall(spec RequestSpec, key *identity.NodeKey) (cbor.Value, error) {
 	return signRequest(frameTypeCall, spec, key)
 }
 
 // SignStreamOpen signs a STREAM_OPEN, which carries spec.Mode, with the
-// caller's identity key, with SignCall's checks and a mode of the three stream
-// modes (ErrOutOfRange).
+// caller's identity key, with SignCall's checks, the last of them refusing a
+// mode that is nil or not one of the three stream modes (ErrOutOfRange).
 func SignStreamOpen(spec RequestSpec, key *identity.NodeKey) (cbor.Value, error) {
-	if spec.Mode != ServerStream && spec.Mode != ClientStream && spec.Mode != Bidi {
-		return cbor.Value{}, fmt.Errorf("%w: stream mode %d", ErrOutOfRange, spec.Mode)
-	}
 	return signRequest(frameTypeStreamOpen, spec, key)
 }
 
 func signRequest(frameType string, spec RequestSpec, key *identity.NodeKey) (cbor.Value, error) {
-	if err := requestBuildable(spec, key); err != nil {
+	if err := requestBuildable(frameType, spec, key); err != nil {
 		return cbor.Value{}, err
 	}
 	caller := key.KeyID()
@@ -89,7 +88,7 @@ func signRequest(frameType string, spec RequestSpec, key *identity.NodeKey) (cbo
 		uintEntry("deadline", spec.Deadline),
 		valueEntry("payload", spec.Payload),
 	}
-	if frameType == frameTypeStreamOpen {
+	if spec.Mode != nil {
 		fields = append(fields, textEntry("mode", spec.Mode.Name()))
 	}
 	if spec.Token != nil {
@@ -114,9 +113,9 @@ func signRequest(frameType string, spec RequestSpec, key *identity.NodeKey) (cbo
 }
 
 // requestBuildable runs a request build's checks in macula's order: the key,
-// the procedure's text, the payload, then the ranges of the deadline and the
-// retry budget.
-func requestBuildable(spec RequestSpec, key *identity.NodeKey) error {
+// the procedure's text, the payload, then the ranges of the deadline, the retry
+// budget and the stream mode.
+func requestBuildable(frameType string, spec RequestSpec, key *identity.NodeKey) error {
 	if err := identitySigner(key); err != nil {
 		return err
 	}
@@ -126,19 +125,29 @@ func requestBuildable(spec RequestSpec, key *identity.NodeKey) error {
 	if err := CheckPayload(spec.Payload); err != nil {
 		return err
 	}
-	if spec.Deadline >= maxProtocolInt || (spec.RetryBudget != nil && *spec.RetryBudget >= maxProtocolInt) {
+	switch {
+	case spec.Deadline >= maxProtocolInt || (spec.RetryBudget != nil && *spec.RetryBudget >= maxProtocolInt):
 		return fmt.Errorf("%w: a deadline or retry budget of 2^53 or more", ErrOutOfRange)
+	case frameType == frameTypeCall && spec.Mode != nil:
+		return fmt.Errorf("%w: a CALL carries no stream mode", ErrOutOfRange)
+	case frameType == frameTypeStreamOpen && (spec.Mode == nil || !knownStreamMode(*spec.Mode)):
+		return fmt.Errorf("%w: a STREAM_OPEN carries one of the three stream modes", ErrOutOfRange)
 	}
 	return nil
+}
+
+func knownStreamMode(mode StreamMode) bool {
+	return mode == ServerStream || mode == ClientStream || mode == Bidi
 }
 
 // VerifyRequest verifies a received CALL or STREAM_OPEN under the connection's
 // profile p, as macula_frame's verify_request/2 does: the frame's shape, the
 // request's signature and fields, and caller as the key id of its key. It
 // refuses with ErrMalformedFrame, identity.ErrObjectSignatureInvalid or
-// ErrKeyIDMismatch. A station checks this before it routes, and a provider
-// before its own checks, which stay with the caller: its node_id as target, the
-// deadline window, replays and tokens.
+// ErrKeyIDMismatch, and in a binary without ML-DSA with
+// identity.ErrPostQuantumUnavailable. A station checks this before it routes,
+// and a provider before its own checks, which stay with the caller: its node_id
+// as target, the deadline window, replays and tokens.
 func VerifyRequest(v cbor.Value, p profile.Profile) (VerifiedRequest, error) {
 	frameType, object, ok := receivedFrame(v, "request", requestRoutes, frameTypeCall, frameTypeStreamOpen)
 	if !ok {
@@ -175,7 +184,10 @@ func verifiedRequest(frameType string, verified identity.VerifiedObject, fields 
 	fixedBytes(request.RequestID[:], fields["request_id"])
 	fixedBytes(request.Realm[:], fields["realm"])
 	fixedBytes(request.Target[:], fields["target"])
-	request.Mode, _ = streamModeFromName(textOf(fields["mode"]))
+	if name, has := fields["mode"]; has {
+		mode, _ := streamModeFromName(textOf(name))
+		request.Mode = &mode
+	}
 	if token, has := fields["token"]; has {
 		b, _ := token.AsBytes()
 		request.Token = append([]byte{}, b...)
