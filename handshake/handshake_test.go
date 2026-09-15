@@ -191,6 +191,19 @@ func withDuplicateKey(t *testing.T, frame []byte, key string) []byte {
 	return append(out, cbor.Encode(f[key])...)
 }
 
+// withIntegerKey is frame with one more entry under an integer key, which no
+// handshake frame has.
+func withIntegerKey(t *testing.T, frame []byte) []byte {
+	t.Helper()
+	f := fields(t, frame)
+	entries := make([]cbor.MapEntry, 0, len(f)+1)
+	for key, v := range f {
+		entries = append(entries, cbor.MapEntry{Key: cbor.Text(key), Val: v})
+	}
+	entries = append(entries, cbor.MapEntry{Key: cbor.Uint64(1), Val: cbor.Null()})
+	return cbor.Encode(cbor.Map(entries))
+}
+
 func frameKeys(t *testing.T, frame []byte) string {
 	t.Helper()
 	keys := make([]string, 0)
@@ -375,6 +388,7 @@ func TestAClientRefusesAChallengeThatDoesNotDecodeExactly(t *testing.T) {
 			{"a station key one byte short", rebuilt(t, challenge, map[string]cbor.Value{"identity_key": cbor.Bytes(stationKey[:len(stationKey)-1])}), ErrMalformedFrame},
 			{"version 2", rebuilt(t, challenge, map[string]cbor.Value{"version": cbor.Int(2)}), ErrUnsupportedVersion},
 			{"the other profile", rebuilt(t, challenge, map[string]cbor.Value{"profile": cbor.Text(string(otherProfile(w.profile)))}), ErrProfileMismatch},
+			{"a non-text map key", withIntegerKey(t, challenge), ErrMalformedFrame},
 		}
 		if w.profile == profile.PQHybrid {
 			garbage := append(bytes.Clone(stationKey[:2592]), bytes.Repeat([]byte{0x30}, len(stationKey)-2592)...)
@@ -421,6 +435,10 @@ func TestAStationRefusesAConnectItCannotTrustWithOneCoarseCode(t *testing.T) {
 			{"version 2", rebuilt(t, connect, map[string]cbor.Value{"version": cbor.Int(2)}), nil, ErrUnsupportedVersion, RefusalUnsupportedVersion},
 			{"bytes that are not CBOR", []byte("not cbor"), nil, ErrMalformedFrame, RefusalNotAccepted},
 			{"an 8-byte proof", rebuilt(t, connect, map[string]cbor.Value{"proof": cbor.Bytes(make([]byte, 8))}), nil, ErrMalformedFrame, RefusalNotAccepted},
+			{"an identity key one byte short", rebuilt(t, connect, map[string]cbor.Value{"identity_key": cbor.Bytes(clientKey[:len(clientKey)-1])}), nil, ErrMalformedFrame, RefusalNotAccepted},
+			{"a CONNECT key one byte short", withConnectKey(connectKey[:len(connectKey)-1]), nil, ErrMalformedFrame, RefusalNotAccepted},
+			{"capabilities at 2^53", rebuilt(t, connect, map[string]cbor.Value{"capabilities": cbor.Int(1 << 53)}), nil, ErrMalformedFrame, RefusalNotAccepted},
+			{"a proof of the right length that does not verify", rebuilt(t, connect, map[string]cbor.Value{"proof": cbor.Bytes(make([]byte, identity.SignatureSize(w.profile)))}), nil, ErrProofInvalid, RefusalNotAccepted},
 		}
 		if w.profile == profile.PQHybrid {
 			cases = append(cases,
@@ -440,7 +458,7 @@ func TestAStationRefusesAConnectItCannotTrustWithOneCoarseCode(t *testing.T) {
 }
 
 // The station checks the puzzle on the client's derived node_id before any
-// signature.
+// signature: before the CONNECT binding, the status statement and the proof.
 func TestAStationChecksThePuzzleBeforeAnySignature(t *testing.T) {
 	forEachWorld(t, func(t *testing.T, w *world) {
 		challenge := w.challenge(t)
@@ -462,6 +480,13 @@ func TestAStationChecksThePuzzleBeforeAnySignature(t *testing.T) {
 		if !errors.Is(err, ErrPuzzleInvalid) {
 			t.Errorf("enforce, unsolved, with a failing proof: %v, want the puzzle refusal first", err)
 		}
+		withStationKey := rebuilt(t, connect, map[string]cbor.Value{"connect_key": cbor.Bytes(w.station.PublicKey())})
+		unsolvedSession := w.stationSession(challenge)
+		unsolvedSession.PuzzleDifficulty = unsolved
+		_, hello, err = AcceptConnect(withStationKey, unsolvedSession)
+		checkRefused(t, "enforce, unsolved, with a CONNECT binding that would fail", hello, err, ErrPuzzleInvalid, RefusalPuzzleInvalid)
+		_, hello, err = accept(PuzzleModeEnforce, unsolved, func(s *StationSession) { s.NowMs = now + 2*hour })
+		checkRefused(t, "enforce, unsolved, with a status statement that has expired", hello, err, ErrPuzzleInvalid, RefusalPuzzleInvalid)
 		for _, c := range []struct {
 			mode       PuzzleMode
 			difficulty int
@@ -542,6 +567,11 @@ func TestStatusFramesRenewAPeersStatement(t *testing.T) {
 		otherPeer.Binding = other
 		if _, err := ReadStatus(frame, otherPeer); !errors.Is(err, identity.ErrStatusBindingMismatch) {
 			t.Errorf("a statement for another binding: %v, want ErrStatusBindingMismatch", err)
+		}
+		early := peer
+		early.NowMs = now + 9*minute
+		if _, err := ReadStatus(frame, early); !errors.Is(err, identity.ErrStatusFutureDated) {
+			t.Errorf("a statement issued more than 5 minutes ahead of the peer: %v, want ErrStatusFutureDated", err)
 		}
 		if _, err := ReadStatus(Opener(), peer); !errors.Is(err, ErrUnexpectedFrame) {
 			t.Errorf("an opener in place of a status frame: %v, want ErrUnexpectedFrame", err)
