@@ -362,12 +362,6 @@ func TestLiveClientStreamReplyRoundTrip(t *testing.T) {
 }
 
 const (
-	milanHost       = "station-it-milan.macula.io"
-	milanPort       = 4433
-	parisHost       = "station-fr-paris.macula.io"
-	parisPort       = 4433
-	stockholmHost   = "station-se-stockholm.macula.io"
-	stockholmPort   = 4433
 	helsinkiHost    = "station-fi-helsinki.macula.io"
 	helsinkiPort    = 4433
 	falkensteinHost = "station-de-falkenstein.macula.io"
@@ -509,17 +503,17 @@ func crossStationStreamingRoundTrip(t *testing.T, providerHost string, providerP
 // independently rediscovered. This test is the live proof the Go port
 // carries the fix correctly, not just that it compiles.
 func TestLiveCrossStationStreamingRoundTrip(t *testing.T) {
-	crossStationStreamingRoundTrip(t, liveStationHost, liveStationPort, "Frankfurt", milanHost, milanPort, "Milan")
+	crossStationStreamingRoundTrip(t, liveStationHost, liveStationPort, "Frankfurt", helsinkiHost, helsinkiPort, "Helsinki")
 }
 
 // TestLiveCrossStationStreamingMultiHop extends
-// TestLiveCrossStationStreamingRoundTrip's single Frankfurt/Milan pair
-// across several more of the fleet's 7 real macula-station-* boxes
-// (frankfurt, paris, milan, stockholm, helsinki, falkenstein,
-// nuremberg), on the request to verify the 2026-08-29 signer-stamping
-// fix isn't a Frankfurt/Milan-specific result -- each pair exercises an
-// independent station-to-station relay path/route lookup, which is
-// exactly the code path the fix touches.
+// TestLiveCrossStationStreamingRoundTrip's single Frankfurt/Helsinki
+// pair across the surviving fleet's real macula-station boxes
+// (frankfurt, helsinki, falkenstein, nuremberg — the Linode nanodes
+// were decommissioned 2026-09-16), on the request to verify the
+// 2026-08-29 signer-stamping fix isn't a single-pair result -- each
+// pair exercises an independent station-to-station relay path/route
+// lookup, which is exactly the code path the fix touches.
 func TestLiveCrossStationStreamingMultiHop(t *testing.T) {
 	pairs := []struct {
 		providerHost, callerHost   string
@@ -527,7 +521,7 @@ func TestLiveCrossStationStreamingMultiHop(t *testing.T) {
 		providerLabel, callerLabel string
 	}{
 		{helsinkiHost, falkensteinHost, helsinkiPort, falkensteinPort, "Helsinki", "Falkenstein"},
-		{parisHost, stockholmHost, parisPort, stockholmPort, "Paris", "Stockholm"},
+		{nurembergHost, falkensteinHost, nurembergPort, falkensteinPort, "Nuremberg", "Falkenstein"},
 		{nurembergHost, liveStationHost, nurembergPort, liveStationPort, "Nuremberg", "Frankfurt"},
 	}
 	for _, p := range pairs {
