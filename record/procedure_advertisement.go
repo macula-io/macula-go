@@ -2,10 +2,16 @@ package record
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"github.com/macula-io/macula-go/cbor"
 )
+
+// ErrAuthorizationFormUnsupported is a provider authorization in a form macula
+// 11.0.0 does not have, a certificate chain among them: its only form is an org
+// directory and a procedure delegation.
+var ErrAuthorizationFormUnsupported = errors.New("record: an authorization in a form macula 11.0.0 does not have")
 
 // AuthorizationForm is the form of a procedure advertisement's provider
 // authorization, as macula_record's read_authorization/1 reads it.
@@ -15,23 +21,24 @@ const (
 	// NoAuthorization is an advertisement that carries none.
 	NoAuthorization AuthorizationForm = iota
 	// DelegationAuthorization is the wire forms of the realm's org directory
-	// and of the org's procedure delegation.
+	// and of the org's procedure delegation, the one form macula 11.0.0 has.
 	DelegationAuthorization
-	// CertificateChainAuthorization is DER certificates, leaf first.
-	CertificateChainAuthorization
-	// MalformedAuthorization is an authorization in neither form.
+	// UnsupportedAuthorization is an authorization map of any other fields, a
+	// certificate chain among them.
+	UnsupportedAuthorization
+	// MalformedAuthorization is an org directory and a procedure delegation
+	// that are not both byte strings, or an authorization that is not a map.
 	MalformedAuthorization
 )
 
 // Authorization is a procedure advertisement's provider authorization, which a
-// procedure with an org namespace carries inside the payload. A storing
-// verifier never parses it. OrgDirectory and ProcedureDelegation hold the
-// delegation form, and CertificateChain the certificate chain form.
+// procedure with an org namespace carries inside the payload: the realm's org
+// directory and the org's procedure delegation, as the records' wire forms. A
+// storing verifier never parses it.
 type Authorization struct {
 	Form                AuthorizationForm
 	OrgDirectory        []byte
 	ProcedureDelegation []byte
-	CertificateChain    [][]byte
 }
 
 // ProcedureAdvertisementOptions are a procedure advertisement's optional
@@ -45,7 +52,9 @@ type ProcedureAdvertisementOptions struct {
 
 // NewProcedureAdvertisement is an unsigned advertisement, by the node
 // advertiserNode, which signs it, of procedure in the realm realmID, served
-// through servingStation. An authorization in neither form is ErrMalformed.
+// through servingStation. It builds no authorization but an org directory and a
+// procedure delegation, as macula_record builds no other: the unsupported form
+// is ErrAuthorizationFormUnsupported, and the malformed form ErrMalformed.
 func NewProcedureAdvertisement(advertiserNode, realmID [32]byte, procedure string, servingStation [32]byte, opts ProcedureAdvertisementOptions) (Record, error) {
 	entries := []cbor.MapEntry{
 		bytesEntry("realm_id", bytes.Clone(realmID[:])),
@@ -60,16 +69,10 @@ func NewProcedureAdvertisement(advertiserNode, realmID [32]byte, procedure strin
 			bytesEntry("org_directory", bytes.Clone(authorization.OrgDirectory)),
 			bytesEntry("procedure_delegation", bytes.Clone(authorization.ProcedureDelegation)),
 		})))
-	case CertificateChainAuthorization:
-		chain := make([]cbor.Value, len(authorization.CertificateChain))
-		for i, der := range authorization.CertificateChain {
-			chain[i] = cbor.Bytes(bytes.Clone(der))
-		}
-		entries = append(entries, valueEntry("authorization", cbor.Map([]cbor.MapEntry{
-			valueEntry("certificate_chain", cbor.List(chain)),
-		})))
+	case UnsupportedAuthorization:
+		return Record{}, ErrAuthorizationFormUnsupported
 	default:
-		return Record{}, fmt.Errorf("%w: an authorization in neither form", ErrMalformed)
+		return Record{}, fmt.Errorf("%w: an authorization in no form", ErrMalformed)
 	}
 	return unsigned(TypeProcedureAdvertisement, cbor.Map(entries), opts.TTLMs)
 }
@@ -101,42 +104,29 @@ func ReadProcedureAdvertisement(r Record) (ProcedureAdvertisement, error) {
 
 // readAuthorization reads an advertisement's authorization as macula_record's
 // read_authorization/1 does: none when it is absent; the delegation form for a
-// map of exactly org_directory and procedure_delegation; the certificate chain
-// form for a map of exactly certificate_chain; and malformed for anything else.
-// Go reads each form's values as bytes, so a form holding another kind reads as
-// malformed.
+// map of exactly org_directory and procedure_delegation, both byte strings;
+// malformed for those two fields when they are not both byte strings, or for a
+// value that is not a map; and the unsupported form for a map of any other
+// fields, a certificate chain among them.
 func readAuthorization(payload cbor.Value) Authorization {
 	value, present := payload.Get("authorization")
 	if !present {
 		return Authorization{}
 	}
-	malformed := Authorization{Form: MalformedAuthorization}
 	entries, isMap := value.AsMap()
+	directoryValue, hasDirectory := value.Get("org_directory")
+	delegationValue, hasDelegation := value.Get("procedure_delegation")
 	switch {
 	case !isMap:
-		return malformed
-	case len(entries) == 2:
-		directory, isDirectory := payloadField(value, "org_directory").AsBytes()
-		delegation, isDelegation := payloadField(value, "procedure_delegation").AsBytes()
-		if !isDirectory || !isDelegation {
-			return malformed
-		}
-		return Authorization{Form: DelegationAuthorization, OrgDirectory: bytes.Clone(directory),
-			ProcedureDelegation: bytes.Clone(delegation)}
-	case len(entries) == 1:
-		items, isList := payloadField(value, "certificate_chain").AsList()
-		if !isList {
-			return malformed
-		}
-		chain := make([][]byte, 0, len(items))
-		for _, item := range items {
-			der, isBytes := item.AsBytes()
-			if !isBytes {
-				return malformed
-			}
-			chain = append(chain, bytes.Clone(der))
-		}
-		return Authorization{Form: CertificateChainAuthorization, CertificateChain: chain}
+		return Authorization{Form: MalformedAuthorization}
+	case len(entries) != 2 || !hasDirectory || !hasDelegation:
+		return Authorization{Form: UnsupportedAuthorization}
 	}
-	return malformed
+	directory, isDirectory := directoryValue.AsBytes()
+	delegation, isDelegation := delegationValue.AsBytes()
+	if !isDirectory || !isDelegation {
+		return Authorization{Form: MalformedAuthorization}
+	}
+	return Authorization{Form: DelegationAuthorization, OrgDirectory: bytes.Clone(directory),
+		ProcedureDelegation: bytes.Clone(delegation)}
 }

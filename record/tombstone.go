@@ -115,14 +115,16 @@ type Tombstone struct {
 }
 
 // ReadTombstone reads a tombstone's payload. A record of another type, and a
-// withdrawn_type outside 0 to 255, which no verifier accepts, are ErrMalformed.
+// withdrawn_type that is not an integer from 1 to 255, which no verifier
+// accepts, are ErrMalformed.
 func ReadTombstone(r Record) (Tombstone, error) {
 	if r.Type != TypeTombstone {
 		return Tombstone{}, fmt.Errorf("%w: a record of type %#02x is not a tombstone", ErrMalformed, uint8(r.Type))
 	}
-	withdrawn, _ := payloadField(r.Payload, "withdrawn_type").AsInt64()
-	if withdrawn < 0 || withdrawn > 0xFF {
-		return Tombstone{}, fmt.Errorf("%w: a withdrawn_type of %d names no record type", ErrMalformed, withdrawn)
+	withdrawnValue, present := r.Payload.Get("withdrawn_type")
+	withdrawn, isInt := withdrawnValue.AsInt64()
+	if !present || !isInt || withdrawn < 1 || withdrawn > 0xFF {
+		return Tombstone{}, fmt.Errorf("%w: a withdrawn_type of %v names no record type", ErrMalformed, withdrawnValue)
 	}
 	text := func(name string) string {
 		s, _ := payloadField(r.Payload, name).AsText()

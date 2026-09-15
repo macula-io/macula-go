@@ -2,7 +2,6 @@ package record
 
 import (
 	"bytes"
-	"slices"
 	"testing"
 
 	"github.com/macula-io/macula-go/cbor"
@@ -10,13 +9,16 @@ import (
 )
 
 // These tests mirror macula's macula_record_advertisement_tests at merge-11.0.0
-// 871986a3 for the advertisement itself: the payload holds realm_id,
-// procedure, advertiser_node, serving_station and, for a procedure with an org
-// namespace, the provider authorization, which a storing verifier never parses.
-// A Go key signs neither an org directory nor a delegation, so the
-// authorization's records are stand-in bytes here. The payload refusals are
-// rows of TestAPayloadItsTypeDoesNotAllowIsMalformed, and procedure_org/1 and
-// verify_authorization/3 come with the authorization port.
+// 2d2c2ecb for the advertisement itself: the payload holds realm_id, procedure,
+// advertiser_node, serving_station and, for a procedure with an org namespace,
+// the provider authorization, an org directory and a procedure delegation,
+// which a storing verifier never parses. macula 11.0.0 has no other form: its
+// builder builds none, and its reader reads any other authorization map, a
+// certificate chain among them, as unsupported. A Go key signs neither an org
+// directory nor a delegation, so the authorization's records are stand-in
+// bytes here. The payload refusals are rows of
+// TestAPayloadItsTypeDoesNotAllowIsMalformed, and procedure_org/1 and
+// verify_authorization/3 are in provider_authorization_test.go.
 
 func TestTheAdvertisementPayloadHoldsRealmIDProcedureAdvertiserAndServingStation(t *testing.T) {
 	r := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "_/posts.get_page", fill(0x77), ProcedureAdvertisementOptions{}))
@@ -27,6 +29,9 @@ func TestTheAdvertisementPayloadHoldsRealmIDProcedureAdvertiserAndServingStation
 	}
 }
 
+// The delegation form travels inside the payload, and the builder builds no
+// other: the unsupported form is ErrAuthorizationFormUnsupported, and the
+// malformed form ErrMalformed.
 func TestTheAuthorizationTravelsInsideThePayload(t *testing.T) {
 	delegation := Authorization{Form: DelegationAuthorization, OrgDirectory: []byte("org directory"), ProcedureDelegation: []byte("delegation")}
 	r := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "acme/get_forecast_v1", fill(0x77),
@@ -36,12 +41,17 @@ func TestTheAuthorizationTravelsInsideThePayload(t *testing.T) {
 	if got, _ := r.Payload.Get("authorization"); !sameValue(got, want) {
 		t.Errorf("the delegation form travels as %v, want %v", got, want)
 	}
-	chain := Authorization{Form: CertificateChainAuthorization, CertificateChain: [][]byte{{1, 2, 3}, {4, 5}}}
-	r = must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", fill(2), ProcedureAdvertisementOptions{Authorization: chain}))
-	want = cbor.Map([]cbor.MapEntry{valueEntry("certificate_chain",
-		cbor.List([]cbor.Value{cbor.Bytes([]byte{1, 2, 3}), cbor.Bytes([]byte{4, 5})}))})
-	if got, _ := r.Payload.Get("authorization"); !sameValue(got, want) {
-		t.Errorf("the certificate chain form travels as %v, want %v", got, want)
+	for _, c := range []struct {
+		name string
+		form AuthorizationForm
+		want error
+	}{
+		{"the unsupported form", UnsupportedAuthorization, ErrAuthorizationFormUnsupported},
+		{"the malformed form", MalformedAuthorization, ErrMalformed},
+	} {
+		_, err := NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", fill(2),
+			ProcedureAdvertisementOptions{Authorization: Authorization{Form: c.form}})
+		wantRefusal(t, "build an advertisement with "+c.name, err, c.want)
 	}
 }
 
@@ -90,11 +100,11 @@ func TestAProcedureAdvertisementDefaultsToItsMaximumLifetime(t *testing.T) {
 	}
 }
 
-// An authorization reads in the form it travels in, as read_authorization/1
-// reads it: exactly org_directory and procedure_delegation, or exactly
-// certificate_chain, and anything else as malformed. Go reads the forms' values
-// as bytes, so a form holding another kind is malformed too. The builder writes
-// no authorization in neither form.
+// An authorization reads in its form as read_authorization/1 reads it: exactly
+// org_directory and procedure_delegation, both byte strings, is the delegation
+// form; those two fields not both byte strings, or a value that is not a map,
+// is malformed; and any other map, a certificate chain among them, is the
+// unsupported form.
 func TestAnAuthorizationReadsInItsForm(t *testing.T) {
 	advertisement := func(authorization cbor.Value) Record {
 		entries, _ := advertisementPayload(fill(1)).AsMap()
@@ -102,7 +112,7 @@ func TestAnAuthorizationReadsInItsForm(t *testing.T) {
 	}
 	directory, delegation := bytesEntry("org_directory", []byte("d")), bytesEntry("procedure_delegation", []byte("p"))
 	chain := valueEntry("certificate_chain", cbor.List([]cbor.Value{cbor.Bytes([]byte{1})}))
-	malformed := Authorization{Form: MalformedAuthorization}
+	unsupported, malformed := Authorization{Form: UnsupportedAuthorization}, Authorization{Form: MalformedAuthorization}
 	for _, c := range []struct {
 		name          string
 		authorization cbor.Value
@@ -110,15 +120,13 @@ func TestAnAuthorizationReadsInItsForm(t *testing.T) {
 	}{
 		{"the delegation form", cbor.Map([]cbor.MapEntry{directory, delegation}),
 			Authorization{Form: DelegationAuthorization, OrgDirectory: []byte("d"), ProcedureDelegation: []byte("p")}},
-		{"the certificate chain form", cbor.Map([]cbor.MapEntry{chain}),
-			Authorization{Form: CertificateChainAuthorization, CertificateChain: [][]byte{{1}}}},
-		{"an empty certificate chain", cbor.Map([]cbor.MapEntry{valueEntry("certificate_chain", cbor.List(nil))}),
-			Authorization{Form: CertificateChainAuthorization}},
-		{"both forms", cbor.Map([]cbor.MapEntry{directory, delegation, chain}), malformed},
-		{"an org directory alone", cbor.Map([]cbor.MapEntry{directory}), malformed},
+		{"a certificate chain", cbor.Map([]cbor.MapEntry{chain}), unsupported},
+		{"an empty certificate chain", cbor.Map([]cbor.MapEntry{valueEntry("certificate_chain", cbor.List(nil))}), unsupported},
+		{"the delegation form and a certificate chain", cbor.Map([]cbor.MapEntry{directory, delegation, chain}), unsupported},
+		{"an org directory alone", cbor.Map([]cbor.MapEntry{directory}), unsupported},
+		{"an org directory beside a certificate chain", cbor.Map([]cbor.MapEntry{directory, chain}), unsupported},
+		{"an empty map", cbor.Map(nil), unsupported},
 		{"a delegation form holding text", cbor.Map([]cbor.MapEntry{textEntry("org_directory", "d"), delegation}), malformed},
-		{"a certificate chain holding text",
-			cbor.Map([]cbor.MapEntry{valueEntry("certificate_chain", cbor.List([]cbor.Value{cbor.Text("pem")}))}), malformed},
 		{"an authorization that is not a map", cbor.List(nil), malformed},
 	} {
 		read := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(advertisement(c.authorization)))
@@ -126,11 +134,8 @@ func TestAnAuthorizationReadsInItsForm(t *testing.T) {
 			t.Errorf("%s reads as %+v, want %+v", c.name, read.Authorization, c.want)
 		}
 	}
-	_, err := NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", fill(2), ProcedureAdvertisementOptions{Authorization: malformed})
-	wantRefusal(t, "build an advertisement with an authorization in neither form", err, ErrMalformed)
 }
 
 func sameAuthorization(a, b Authorization) bool {
-	return a.Form == b.Form && bytes.Equal(a.OrgDirectory, b.OrgDirectory) &&
-		bytes.Equal(a.ProcedureDelegation, b.ProcedureDelegation) && slices.EqualFunc(a.CertificateChain, b.CertificateChain, bytes.Equal)
+	return a.Form == b.Form && bytes.Equal(a.OrgDirectory, b.OrgDirectory) && bytes.Equal(a.ProcedureDelegation, b.ProcedureDelegation)
 }

@@ -66,6 +66,41 @@ func TestRecordsNamedByTheirPayloadMatchTheVectors(t *testing.T) {
 	}
 }
 
+// Records named by their signer match vectors computed with Python's hashlib
+// from the design's formula for a signer whose key id is 0x33 repeated
+// (scratchpad storage_key_vectors.py, which first reproduces the procedure_key
+// vector), so a change of field order or prefix in one stack shows. macula pins
+// the same rows at merge-11.0.0 8af28e04, in
+// records_named_by_their_signer_match_the_vectors_test. The records are marked
+// signed with that key id.
+func TestRecordsNamedByTheirSignerMatchTheVectors(t *testing.T) {
+	signedBy := func(r Record) Record {
+		r.Key, r.KeyID = []byte{1}, fill(0x33)
+		return r
+	}
+	domain := func(subject []byte) Record {
+		return signedBy(must[Record](t)(Envelope(DomainTypeMin, cbor.Map(nil), subject, 0)))
+	}
+	for _, c := range []struct {
+		name string
+		r    Record
+		want string
+	}{
+		{"a foundation seed list", signedBy(unsignedRecord(t, TypeFoundationSeedList)),
+			"76f0c1daf5c481e36fe610398b395a8bca902297e292e1a21e1b161b01007c47"},
+		{"a foundation parameter", signedBy(unsignedRecord(t, TypeFoundationParameter, textEntry("param_name", "max_hops"))),
+			"a5aad8cf95e5bbd30728b699bd8f1ed4434edc6b3cfa7fb508ec18a9a104cc29"},
+		{"a foundation realm trust list", signedBy(unsignedRecord(t, TypeFoundationRealmTrustList)),
+			"7c37bc0dac3384f930fe1c367743b0fb5ebedead7ac8d1e2590cdc94c92d3399"},
+		{"a domain record without a subject", domain(nil), "a860117ee3bbb136d84a9638bb8221945de34588d8fbd2e67b7d9458b2aaffa5"},
+		{"a domain record with subject s1", domain([]byte("s1")), "3ce72b62311244b1a9e502755545360a62bea31f6fc1e22aad680a257e657eab"},
+	} {
+		if got, want := must[[32]byte](t)(StorageKey(c.r)), vector(t, c.want); got != want {
+			t.Errorf("%s is stored under %x, want %x", c.name, got, want)
+		}
+	}
+}
+
 func TestANodeRecordIsStoredUnderItsNodeID(t *testing.T) {
 	keys := keysFor(t)
 	if got := must[[32]byte](t)(StorageKey(signedNodeRecord(t, keys.node))); got != keys.node.KeyID() {

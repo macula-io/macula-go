@@ -186,8 +186,19 @@ func TestReadTombstoneReturnsTheTypedPayload(t *testing.T) {
 	}
 	_, err := ReadTombstone(Record{Type: TypeNodeRecord, Payload: cbor.Map(nil)})
 	wantRefusal(t, "read a node record as a tombstone", err, ErrMalformed)
-	_, err = ReadTombstone(Record{Type: TypeTombstone, Payload: cbor.Map([]cbor.MapEntry{uintEntry("withdrawn_type", 0x100)})})
-	wantRefusal(t, "read a tombstone naming 0x100", err, ErrMalformed)
+	for _, c := range []struct {
+		name      string
+		withdrawn []cbor.MapEntry
+	}{
+		{"no withdrawn_type", nil},
+		{"a withdrawn_type as text", []cbor.MapEntry{textEntry("withdrawn_type", "node_record")}},
+		{"a withdrawn_type of 0", []cbor.MapEntry{uintEntry("withdrawn_type", 0)}},
+		{"a withdrawn_type of 0x100", []cbor.MapEntry{uintEntry("withdrawn_type", 0x100)}},
+		{"a withdrawn_type of 2^63", []cbor.MapEntry{uintEntry("withdrawn_type", 1<<63)}},
+	} {
+		_, err := ReadTombstone(Record{Type: TypeTombstone, Payload: cbor.Map(c.withdrawn)})
+		wantRefusal(t, "read a tombstone with "+c.name, err, ErrMalformed)
+	}
 }
 
 // NewTombstone needs the slot fields of the record it withdraws, which
