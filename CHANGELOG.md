@@ -110,18 +110,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warned about as a `refused_reply` drop, one line per interval as other drops
   are, and the call is not announced on `rpc.replied_v1`, which a provider now
   announces only once the handler's reply is written.
-- `transport.DialTarget` dials a `transport.Target`, a station's host and
-  port with its crypto profile and expected node_id, with the TLS 1.3
-  settings of that profile. It offers only the profile's key exchange group
-  and keeps no session cache, so every connection is a full handshake with no
-  early data. It checks no chain, name or expiry of the self-signed station
-  certificate, whose handshake signature crypto/tls still verifies. It refuses
-  a target without an expected node_id or a known profile before dialing, and
-  a handshake on another group (`ErrWrongKeyExchangeGroup`), on any cipher
-  suite but `TLS_AES_256_GCM_SHA384` (`ErrWrongCipherSuite`), or with anything
-  but one ML-DSA-87 certificate (`ErrStationCertificate`). It returns the
-  leaf DER as it arrived, for the connection handshake. `Dial` and its trust
-  modes stay until the connection moves to the post-quantum handshake.
+- `transport.DialTarget` dials a `transport.Target`, a station's host and port
+  with its crypto profile and expected node_id, with the TLS 1.3 settings of
+  that profile. It offers only the profile's key exchange group and macula's
+  ALPN protocol, and keeps no session cache, so every connection is a full
+  handshake with no early data. It checks no chain, name or expiry of the
+  self-signed station certificate: the completed handshake, whose signature
+  crypto/tls verifies against the leaf, shows that the station holds the
+  leaf's key. It refuses a target without an expected node_id or a known
+  profile before dialing, and a handshake on another group
+  (`ErrWrongKeyExchangeGroup`), on any cipher suite but
+  `TLS_AES_256_GCM_SHA384` (`ErrWrongCipherSuite`), with anything but one
+  certificate with a key of the profile's signature scheme, ML-DSA-87 in both
+  profiles (`ErrStationCertificate`), or with no ALPN protocol or another one.
+  It returns the caller's own copy of the leaf DER as it arrived, for the
+  connection handshake. `Dial` and its trust modes stay until the connection
+  moves to the post-quantum handshake.
 
 ### Fixed
 

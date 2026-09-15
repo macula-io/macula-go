@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"crypto/mldsa"
 	"crypto/tls"
@@ -26,8 +27,9 @@ type Target struct {
 }
 
 // Dialed is a QUIC connection to a station whose TLS handshake passed its
-// profile's checks, with the station's leaf certificate DER exactly as it
-// arrived, which the connection handshake's binding and proof hash.
+// profile's checks, with the caller's own copy of the station's leaf
+// certificate DER exactly as it arrived, which the connection handshake's
+// binding and proof hash.
 type Dialed struct {
 	Conn   *quic.Conn
 	Leaf   []byte
@@ -47,19 +49,25 @@ var (
 	// other than the profile's TLS_AES_256_GCM_SHA384.
 	ErrWrongCipherSuite = errors.New("transport: the TLS handshake used another cipher suite")
 	// ErrStationCertificate is a station that presented anything but exactly
-	// one certificate, with an ML-DSA-87 key.
-	ErrStationCertificate = errors.New("transport: the station did not present one ML-DSA-87 certificate")
+	// one certificate, with a key of the profile's TLS signature scheme
+	// (ML-DSA-87 in both profiles).
+	ErrStationCertificate = errors.New("transport: the station did not present one certificate with a key of the profile's signature scheme")
 )
 
 // DialTarget dials target over QUIC with the TLS 1.3 settings of its profile,
 // the one way a post-quantum station is dialed. The client offers only the
-// profile's key exchange group and keeps no session cache, so every
-// connection is a full handshake with a certificate and no early data. It
-// checks no chain, name, CA or expiry, since station certificates are
-// self-signed; crypto/tls still verifies the handshake signature against the
-// leaf. Before the connection is used, DialTarget refuses a handshake on
-// another group or cipher suite, and a station that presents anything but one
-// ML-DSA-87 leaf.
+// profile's key exchange group and macula's ALPN protocol, and keeps no session
+// cache, so every connection is a full handshake with a certificate and no
+// early data. It checks no chain, name, CA or expiry, since station
+// certificates are self-signed. Before the connection is used, DialTarget
+// refuses a handshake on another group or cipher suite, a station that presents
+// anything but one leaf with a key of the profile's signature scheme, and a
+// station that selects no ALPN protocol or another one.
+//
+// Those checks see the leaf before the station has shown that it holds the
+// leaf's key. What shows it is the completed handshake: crypto/tls verifies the
+// station's CertificateVerify signature against the leaf, and DialTarget
+// returns a connection only once its handshake has completed.
 //
 // A target without an expected node_id, or without a known profile, is refused
 // before anything is dialed. DialTarget does not compare the node_id: the
@@ -81,7 +89,9 @@ func DialTarget(ctx context.Context, target Target) (Dialed, error) {
 			return Dialed{}, fmt.Errorf("transport: dial %s: %w", addr, err)
 		}
 	}
-	leaf := conn.ConnectionState().TLS.PeerCertificates[0].Raw
+	// crypto/tls shares one parsed certificate among the connections that
+	// received the same bytes, so the caller gets a copy of the leaf.
+	leaf := bytes.Clone(conn.ConnectionState().TLS.PeerCertificates[0].Raw)
 	return Dialed{Conn: conn, Leaf: leaf, Target: target}, nil
 }
 
@@ -128,21 +138,29 @@ func profileTLSConfig(serverName string, definition profile.Definition, refused 
 
 // checkProfileConnection refuses a TLS handshake that settled on a group or
 // cipher suite other than the profile's, or whose station presented anything
-// but exactly one certificate with an ML-DSA-87 key.
+// but exactly one certificate with a key of the profile's TLS signature scheme.
 func checkProfileConnection(state tls.ConnectionState, definition profile.Definition) error {
 	switch {
 	case state.CurveID != definition.KeyExchangeGroup:
 		return fmt.Errorf("%w: %s", ErrWrongKeyExchangeGroup, state.CurveID)
 	case state.CipherSuite != definition.TLSCipherSuite:
 		return fmt.Errorf("%w: %s", ErrWrongCipherSuite, tls.CipherSuiteName(state.CipherSuite))
-	case len(state.PeerCertificates) != 1 || !isMLDSA87(state.PeerCertificates[0].PublicKey):
+	case len(state.PeerCertificates) != 1 || !keyOfScheme(state.PeerCertificates[0].PublicKey, definition.TLSSignatureScheme):
 		return ErrStationCertificate
 	}
 	return nil
 }
 
-// isMLDSA87 reports whether key is an ML-DSA-87 public key.
-func isMLDSA87(key any) bool {
-	public, ok := key.(*mldsa.PublicKey)
-	return ok && public.Parameters().String() == mldsa.MLDSA87().String()
+// mldsaSchemes are the ML-DSA parameter sets of the TLS signature schemes.
+var mldsaSchemes = map[tls.SignatureScheme]mldsa.Parameters{
+	tls.MLDSA44: mldsa.MLDSA44(),
+	tls.MLDSA65: mldsa.MLDSA65(),
+	tls.MLDSA87: mldsa.MLDSA87(),
+}
+
+// keyOfScheme reports whether key is a public key of the TLS signature scheme.
+func keyOfScheme(key any, scheme tls.SignatureScheme) bool {
+	public, isMLDSA := key.(*mldsa.PublicKey)
+	parameters, known := mldsaSchemes[scheme]
+	return isMLDSA && known && public.Parameters() == parameters
 }
