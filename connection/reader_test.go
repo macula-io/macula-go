@@ -600,14 +600,13 @@ func TestACallOnASessionThatHasEndedReportsItWasNotSent(t *testing.T) {
 	s, fc, id := readingSession(t)
 	detail := "maintenance"
 	fc.send(t, frame.Goodbye("shutdown", &detail))
-
-	deadline := time.Now().Add(2 * time.Second)
-	var err error
-	for time.Now().Before(deadline) {
-		if err = awaitErr(t, callAsync(s, id, "after.goodbye", 50*time.Millisecond)); errors.Is(err, ErrSessionEnded) {
-			break
-		}
+	select {
+	case <-s.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("Done() did not close after the station said goodbye")
 	}
+
+	err := awaitErr(t, callAsync(s, id, "after.goodbye", 50*time.Millisecond))
 	if !errors.Is(err, ErrSessionEnded) || !errors.Is(err, ErrNotSent) {
 		t.Fatalf("Call after the session ended = %v, want ErrSessionEnded and ErrNotSent", err)
 	}
