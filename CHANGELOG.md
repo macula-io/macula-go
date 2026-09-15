@@ -157,7 +157,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `VerifyTLSBinding`, `VerifyConnectBinding`, `VerifyStatus`, `VerifyObject`
   and `VerifyHeldObject` (and so from the handshake's checks and from
   `frame.VerifyRequest`, `VerifyReply`, `VerifyRelayError`,
-  `VerifyProviderStream` and `VerifyCallerStream`), and
+  `VerifyProviderStream`, `VerifyCallerStream` and `VerifyPublication`), and
   `transport.DialTarget` (before dialing), instead of an error that blames a
   signature or a TLS handshake. Build without `GOFIPS140`, or with
   `GOFIPS140=v1.26.0` or later. CI runs the tests for it under
@@ -221,6 +221,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `identity.ErrObjectSignatureInvalid`, `ErrKeyIDMismatch`,
   `ErrRequestMismatch`, `ErrNotTheTarget` or `ErrSeqMismatch`, and in a
   binary without ML-DSA with `identity.ErrPostQuantumUnavailable`.
+- `frame.SignPublish` and `VerifyPublication`: macula 11.0.0's publications
+  (D17). A PUBLISH carries a signed object under `MACULA-PQ-PUBLICATION-V1`
+  from the publisher's identity key. Its tbs holds no frame type, so the same
+  bytes ride in every EVENT and GOSSIP made from it. `SignPublish` refuses, in
+  macula's order, a key that is not an identity key (`ErrUnsignable`), a topic
+  over 512 bytes or not UTF-8, a payload the wire cannot carry, and a seq or
+  published_at of 2^53 or more or a ttl_ms over one hour (`ErrOutOfRange`).
+  `VerifyPublication` reads a PUBLISH, EVENT or GOSSIP and returns the
+  publication with its hash and `ExpiresAt`. It refuses with
+  `ErrMalformedFrame`, `identity.ErrObjectSignatureInvalid`,
+  `ErrKeyIDMismatch`, or a `FreshnessError` wrapping `ErrNotYetValid`
+  (published more than 5 minutes ahead) or `ErrExpired` (past its ttl_ms, or
+  10 minutes without one, plus 5 minutes), and in a binary without ML-DSA with
+  `identity.ErrPostQuantumUnavailable`.
 
 ### Fixed
 

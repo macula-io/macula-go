@@ -12,13 +12,14 @@ import (
 )
 
 // The labels of the signed objects that requests, replies, relay errors and
-// stream frames carry (D25).
+// stream frames carry (D25), and publications (D17).
 const (
 	requestLabel      = "MACULA-PQ-REQUEST-V1"
 	replyLabel        = "MACULA-PQ-REPLY-V1"
 	relayErrorLabel   = "MACULA-PQ-RELAY-ERROR-V1"
 	streamLabel       = "MACULA-PQ-STREAM-V1"
 	callerStreamLabel = "MACULA-PQ-CALLER-STREAM-V1"
+	publicationLabel  = "MACULA-PQ-PUBLICATION-V1"
 )
 
 // The bounds of a signed frame's fields: a protocol integer stays below 2^53,
@@ -39,9 +40,9 @@ var (
 	// exactly the shape and fields of its type.
 	ErrMalformedFrame = errors.New("frame: malformed frame")
 	// ErrKeyIDMismatch is a signed object whose caller, responded_by,
-	// reported_by or signer is not the key id of the key it verified with, or a
-	// provider's later stream frame that carries a key other than its first
-	// frame's.
+	// reported_by, signer or publisher is not the key id of the key it verified
+	// with, or a provider's later stream frame that carries a key other than its
+	// first frame's.
 	ErrKeyIDMismatch = errors.New("frame: the signer the frame names is not the key it verified with")
 	// ErrRequestMismatch is a reply, relay error or stream frame whose
 	// request_id or request_hash names another request.

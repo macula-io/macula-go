@@ -117,12 +117,13 @@ func TestASignedFrameVerifierSaysWhetherTheBinaryHasMLDSA(t *testing.T) {
 	_, _, providerErr := VerifyProviderStream(crafted(frameTypeStreamData, "stream", object), StreamState{}, profile.PQPure)
 	_, _, callerErr := VerifyCallerStream(crafted(frameTypeStreamData, "caller_stream", held),
 		StreamState{open: VerifiedRequest{Key: carriedKey}}, profile.PQPure)
+	_, publicationErr := VerifyPublication(crafted(frameTypePublish, "publication", object), profile.PQPure, 0)
 	want, notWant := identity.ErrObjectSignatureInvalid, identity.ErrPostQuantumUnavailable
 	if strings.HasPrefix(fips140.Version(), "v1.0.") {
 		want, notWant = identity.ErrPostQuantumUnavailable, identity.ErrObjectSignatureInvalid
 	}
 	for name, err := range map[string]error{"VerifyRequest": requestErr, "VerifyReply": replyErr, "VerifyRelayError": relayErr,
-		"VerifyProviderStream": providerErr, "VerifyCallerStream": callerErr} {
+		"VerifyProviderStream": providerErr, "VerifyCallerStream": callerErr, "VerifyPublication": publicationErr} {
 		if !errors.Is(err, want) || errors.Is(err, notWant) || errors.Is(err, ErrMalformedFrame) {
 			t.Errorf("%s with the module %s: %v, want %v alone, not %v or a malformed frame", name, fips140.Version(), err, want, notWant)
 		}
