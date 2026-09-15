@@ -198,7 +198,7 @@ func TestDecodeMapDedupIsNotQuadratic(t *testing.T) {
 // process-killing DoS found while reviewing the fix above: `count` comes
 // straight off the wire as a head's argument and is never checked against how
 // many bytes actually follow, so a 9-byte frame can claim a map or list
-// of 2^64-1 entries. Before preallocCap, `make([]MapEntry, 0, count)`
+// of 2^64-1 entries. Before the size hint, `make([]MapEntry, 0, count)`
 // (and the sibling list and seen-key allocations) took that count
 // directly as a capacity hint, which panics with "makeslice: cap out of
 // range" -- and nothing between here and the connection goroutine

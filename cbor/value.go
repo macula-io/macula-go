@@ -170,7 +170,7 @@ func (v Value) String() string {
 	case KindUInt:
 		return fmt.Sprintf("%d", v.uintV)
 	case KindNegInt:
-		return fmt.Sprintf("%d", -1-int64(v.uintV))
+		return negativeText(v.uintV)
 	case KindBytes:
 		return fmt.Sprintf("bytes(%d)", len(v.bytesV))
 	case KindText:

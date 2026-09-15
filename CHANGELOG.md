@@ -13,14 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `(Value, error)`. It refuses bytes after the top-level value, map keys other
   than text or integers, duplicate map keys, text that is not valid UTF-8,
   lists and maps nested more than 64 levels, integers below -2^63 or above
-  2^63-1, and floats that are NaN or infinite, each with an error of its own:
+  2^63-1, floats that are NaN or infinite, and input of more than
+  `cbor.MaxElements` (131,072) items, each with an error of its own:
   `ErrTrailingBytes`, `ErrBadKey`, `ErrDuplicateKey`, `ErrInvalidText`,
-  `ErrNestingTooDeep`, `ErrIntegerOutOfRange` and `ErrMalformed`. It accepts
-  lengths in any width, map keys in any order, and half, single and double
-  floats. `cbor.MaxNestingDepth` is 64.
+  `ErrNestingTooDeep`, `ErrIntegerOutOfRange`, `ErrTooManyElements` and
+  `ErrMalformed`. Every item counts once against the budget, map keys and
+  array elements included. It accepts lengths in any width, map keys in any
+  order, and half, single and double floats. `cbor.MaxNestingDepth` is 64. A
+  list or map is given room by the bytes that follow it, not by the count it
+  declares.
 - `frame.CheckPayload` refuses what that rule refuses: byte-string map keys,
-  integers outside -2^63 to 2^63-1, text that is not valid UTF-8, and payloads
-  nested more than `frame.MaxPayloadNesting` (63) levels.
+  integers outside -2^63 to 2^63-1, text that is not valid UTF-8, payloads
+  nested more than `frame.MaxPayloadNesting` (63) levels, and payloads of more
+  than `frame.MaxPayloadElements` items, which leaves
+  `frame.FrameReservedElements` (64) of the budget for the frame's own fields.
 - `identity.Verify` checks a signature by a node key (see Added). The Ed25519
   check it replaces is `identity.VerifyEd25519` for now.
 - macula-go requires Go 1.27.
@@ -72,6 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `cbor.Value.AsInt64` reports -2^63-1 as not fitting an int64, where it
   returned 2^63-1.
+- `cbor.Value.String` prints integers below -2^63 as they are, where it
+  printed a wrapped value.
 
 ## [0.10.0] - 2026-09-14
 

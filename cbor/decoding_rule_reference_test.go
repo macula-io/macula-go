@@ -111,6 +111,7 @@ var referenceRefusals = map[string]error{
 	"invalid_text":         ErrInvalidText,
 	"too_deep":             ErrNestingTooDeep,
 	"integer_out_of_range": ErrIntegerOutOfRange,
+	"too_many_elements":    ErrTooManyElements,
 	"malformed":            ErrMalformed,
 }
 

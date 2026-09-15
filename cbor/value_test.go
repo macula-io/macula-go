@@ -30,3 +30,23 @@ func TestAsInt64FitsExactlyTheInt64Range(t *testing.T) {
 		})
 	}
 }
+
+// String prints every integer a Value can hold, the negative ones beyond
+// int64's range included.
+func TestStringPrintsEveryIntegerAValueCanHold(t *testing.T) {
+	cases := []struct {
+		v    Value
+		want string
+	}{
+		{Uint64(math.MaxUint64), "18446744073709551615"},
+		{NegInt(0), "-1"},
+		{NegInt(math.MaxInt64), "-9223372036854775808"},
+		{NegInt(1 << 63), "-9223372036854775809"},
+		{NegInt(math.MaxUint64), "-18446744073709551616"},
+	}
+	for _, c := range cases {
+		if got := c.v.String(); got != c.want {
+			t.Errorf("String() = %s, want %s", got, c.want)
+		}
+	}
+}

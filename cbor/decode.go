@@ -13,12 +13,11 @@ import (
 // macula's decoding rule.
 const MaxNestingDepth = 64
 
-// MaxElements is how many values one Decode may produce in all: the top-level
-// value and every array item, map key and map value inside it. Each decoded
-// value takes memory of its own however few bytes it took in the input, so
-// this bounds what decoding allocates by the number of values, not by the
-// input's size.
-const MaxElements = 1 << 20
+// MaxElements is how many CBOR items one Decode may read: every item counts
+// once, the top-level value, array elements, map keys and map values included.
+// It is macula's element budget, so an input macula refuses for the items it
+// holds is refused here too.
+const MaxElements = 131072
 
 // The refusals of the decoding rule, one for each reason macula's reference
 // decoder gives, so an input is refused for the same reason in every stack.
@@ -37,15 +36,13 @@ var (
 	ErrNestingTooDeep = errors.New("cbor: decode: arrays and maps nested more than 64 levels")
 	// ErrIntegerOutOfRange is an integer below -2^63 or above 2^63-1.
 	ErrIntegerOutOfRange = errors.New("cbor: decode: an integer below -2^63 or above 2^63-1")
+	// ErrTooManyElements is input that holds more than MaxElements items.
+	ErrTooManyElements = errors.New("cbor: decode: more than 131072 items")
 	// ErrMalformed is input that is not one complete item of what the rule
 	// allows: truncated input, an indefinite length, a tag, a simple value
 	// other than null, or a float that is NaN or infinite.
 	ErrMalformed = errors.New("cbor: decode: malformed")
 )
-
-// ErrTooManyElements is a value that would decode to more than MaxElements
-// values.
-var ErrTooManyElements = errors.New("cbor: decode: more than 1048576 values")
 
 // Decode parses data as exactly one value under macula's post-quantum decoding
 // rule, the rule every stack applies to what a peer sends. It accepts lengths
@@ -65,32 +62,30 @@ func Decode(data []byte) (Value, error) {
 }
 
 // decoder reads one value from data: pos is how far it has read, and budget
-// how many more values it may produce.
+// how many more items it may read.
 type decoder struct {
 	data   []byte
 	pos    int
 	budget int
 }
 
-// item decodes the item at pos, which sits inside depth arrays and maps.
+// item decodes the item at pos, which sits inside depth arrays and maps. As in
+// macula's decoder, an item is counted against the budget once its head and
+// argument have been read, and before its own checks.
 func (d *decoder) item(depth int) (Value, error) {
-	if d.budget <= 0 {
-		return Value{}, ErrTooManyElements
-	}
-	d.budget--
 	head, err := d.take(1)
 	if err != nil {
 		return Value{}, err
 	}
 	major, ai := head[0]>>5, head[0]&0x1F
-	switch major {
-	case majorFloat:
+	if major == majorFloat {
 		return d.simpleOrFloat(ai)
-	case majorTag:
-		return Value{}, fmt.Errorf("%w: a tag", ErrMalformed)
 	}
 	arg, err := d.argument(ai)
 	if err != nil {
+		return Value{}, err
+	}
+	if err := d.count(); err != nil {
 		return Value{}, err
 	}
 	switch major {
@@ -104,9 +99,20 @@ func (d *decoder) item(depth int) (Value, error) {
 		return d.text(arg)
 	case majorList:
 		return d.list(arg, depth)
-	default:
+	case majorMap:
 		return d.mapOf(arg, depth)
+	default:
+		return Value{}, fmt.Errorf("%w: a tag", ErrMalformed)
 	}
+}
+
+// count takes one item from the budget.
+func (d *decoder) count() error {
+	if d.budget == 0 {
+		return ErrTooManyElements
+	}
+	d.budget--
+	return nil
 }
 
 // take is the next n bytes of the input, and moves past them.
@@ -184,19 +190,40 @@ func (d *decoder) text(n uint64) (Value, error) {
 // double float.
 var floatWidths = map[byte]uint64{ai2: 2, ai4: 4, ai8: 8}
 
-// simpleOrFloat decodes major type 7: null, or a finite half, single or double
-// float. Every other simple value, a boolean among them, is malformed, and so
-// is a float that is NaN or infinite.
+// simpleOrFloat decodes major type 7, counting the item once its bytes have
+// been read: null, or a finite half, single or double float. Every other
+// simple value, a boolean among them, is malformed, and so is a float that is
+// NaN or infinite.
 func (d *decoder) simpleOrFloat(ai byte) (Value, error) {
-	if ai == aiNull {
+	width, isFloat := floatWidths[ai]
+	switch {
+	case ai == aiNull:
+		if err := d.count(); err != nil {
+			return Value{}, err
+		}
 		return Null(), nil
-	}
-	width, ok := floatWidths[ai]
-	if !ok {
+	case isFloat:
+		return d.float(width)
+	case ai <= ai1:
+		if _, err := d.argument(ai); err != nil {
+			return Value{}, err
+		}
+		if err := d.count(); err != nil {
+			return Value{}, err
+		}
 		return Value{}, fmt.Errorf("%w: simple value with additional information %d", ErrMalformed, ai)
+	default:
+		return Value{}, fmt.Errorf("%w: additional information %d", ErrMalformed, ai)
 	}
+}
+
+// float is the float in the next width bytes, which must be finite.
+func (d *decoder) float(width uint64) (Value, error) {
 	b, err := d.take(width)
 	if err != nil {
+		return Value{}, err
+	}
+	if err := d.count(); err != nil {
 		return Value{}, err
 	}
 	f := floatFrom(b)
@@ -223,7 +250,7 @@ func (d *decoder) list(count uint64, depth int) (Value, error) {
 	if depth >= MaxNestingDepth {
 		return Value{}, ErrNestingTooDeep
 	}
-	items := make([]Value, 0, preallocCap(count))
+	items := make([]Value, 0, d.sizeHint(count, 1))
 	for i := uint64(0); i < count; i++ {
 		item, err := d.item(depth + 1)
 		if err != nil {
@@ -264,8 +291,8 @@ func (d *decoder) mapOf(count uint64, depth int) (Value, error) {
 	if depth >= MaxNestingDepth {
 		return Value{}, ErrNestingTooDeep
 	}
-	entries := make([]MapEntry, 0, preallocCap(count))
-	seen := make(map[mapKey]struct{}, preallocCap(count))
+	entries := make([]MapEntry, 0, d.sizeHint(count, 2))
+	seen := make(map[mapKey]struct{}, d.sizeHint(count, 2))
 	for i := uint64(0); i < count; i++ {
 		key, err := d.item(depth + 1)
 		if err != nil {
@@ -288,18 +315,21 @@ func (d *decoder) mapOf(count uint64, depth int) (Value, error) {
 	return Map(entries), nil
 }
 
-// maxPreallocHint bounds an element count read from the input before it is
-// used as a slice or map capacity hint. A count is not checked against how
-// many bytes follow it, so it is never trusted as an allocation size. The
-// loop still runs the full count, decoding each element from the bytes that
-// are there, so this bounds only the capacity hint, not correctness.
-const maxPreallocHint = 1024
+// maxSizeHint bounds the room a list or map is given before its elements
+// decode.
+const maxSizeHint = 4
 
-func preallocCap(count uint64) int {
-	if count > maxPreallocHint {
-		return maxPreallocHint
-	}
-	return int(count)
+// sizeHint is the room to give a list or map that declares count elements of
+// at least itemsPerElement items and bytes each. A declared count is not
+// checked against the input, so it is never trusted as an allocation size: the
+// room is at most the count, what the bytes left and the budget left could
+// hold, and maxSizeHint. A list or map then grows as its elements actually
+// decode, so what decoding allocates follows the bytes present, not the counts
+// they declare.
+func (d *decoder) sizeHint(count uint64, itemsPerElement int) int {
+	bytesLeft := uint64((len(d.data) - d.pos) / itemsPerElement)
+	budgetLeft := uint64(d.budget / itemsPerElement)
+	return int(min(count, bytesLeft, budgetLeft, maxSizeHint))
 }
 
 // float16ToFloat64 converts an IEEE 754 binary16 value to float64.

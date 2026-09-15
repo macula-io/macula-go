@@ -15,6 +15,17 @@ import (
 // takes one of the decoding rule's cbor.MaxNestingDepth levels.
 const MaxPayloadNesting = cbor.MaxNestingDepth - 1
 
+// FrameReservedElements is how many of the decoding rule's cbor.MaxElements
+// items a payload leaves for the frame around it. Every frame this package
+// builds with a payload, body or args holds no more items than this besides its
+// payload.
+const FrameReservedElements = 64
+
+// MaxPayloadElements is how many CBOR items a payload may hold, itself
+// included: every list element, map key and map value counts once, as the
+// decoding rule's element budget counts them.
+const MaxPayloadElements = cbor.MaxElements - FrameReservedElements
+
 // CheckPayload reports whether v is admissible as a frame payload, the Go
 // counterpart to macula_frame.erl's check_payload/1. A producer calls it in
 // its own goroutine before a payload reaches a link, so a payload the
@@ -25,15 +36,17 @@ const MaxPayloadNesting = cbor.MaxNestingDepth - 1
 // It refuses what the decoding rule refuses on arrival: a map key that is not
 // text or an integer, two keys of one map that encode to the same bytes, text
 // that is not valid UTF-8, an integer outside -2^63 to 2^63-1, a float that is
-// NaN or infinite, and lists and maps nested more than MaxPayloadNesting
-// levels. It also refuses a payload whose own encoding is over the frame cap.
+// NaN or infinite, lists and maps nested more than MaxPayloadNesting levels,
+// and a payload of more than MaxPayloadElements items. It also refuses a
+// payload whose own encoding is over the frame cap.
 //
 // The size check compares the payload's own encoded bytes with MaxFrameBytes,
 // not the whole frame's, which adds the envelope fields. A payload within a
 // few hundred bytes of the cap can still make a frame that frame.Encode
 // refuses, as the reference's own check also allows.
 func CheckPayload(v cbor.Value) error {
-	if err := walkAndCheck(v, nil); err != nil {
+	var check payloadCheck
+	if err := check.value(v, nil); err != nil {
 		return err
 	}
 	if n := len(cbor.Encode(v)); n > MaxFrameBytes {
@@ -43,9 +56,18 @@ func CheckPayload(v cbor.Value) error {
 	return nil
 }
 
-// walkAndCheck checks v, which sits at path below the payload root, and
-// everything inside it.
-func walkAndCheck(v cbor.Value, path []string) error {
+// payloadCheck walks a payload and counts its items.
+type payloadCheck struct {
+	items int
+}
+
+// value checks v, which sits at path below the payload root, and everything
+// inside it.
+func (c *payloadCheck) value(v cbor.Value, path []string) error {
+	c.items++
+	if c.items > MaxPayloadElements {
+		return fmt.Errorf("frame: payload holds more than %d items, at %s", MaxPayloadElements, pathString(path))
+	}
 	switch v.Kind() {
 	case cbor.KindFloat:
 		return checkFloat(v, path)
@@ -54,9 +76,9 @@ func walkAndCheck(v cbor.Value, path []string) error {
 	case cbor.KindText:
 		return checkText(v, path)
 	case cbor.KindList:
-		return checkList(v, path)
+		return c.list(v, path)
 	case cbor.KindMap:
-		return checkMap(v, path)
+		return c.mapOf(v, path)
 	default:
 		return nil
 	}
@@ -93,29 +115,29 @@ func checkNesting(path []string) error {
 	return nil
 }
 
-func checkList(v cbor.Value, path []string) error {
+func (c *payloadCheck) list(v cbor.Value, path []string) error {
 	if err := checkNesting(path); err != nil {
 		return err
 	}
 	items, _ := v.AsList()
 	for i, item := range items {
-		if err := walkAndCheck(item, append(path, strconv.Itoa(i))); err != nil {
+		if err := c.value(item, append(path, strconv.Itoa(i))); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// checkMap checks a map's keys, which must be admissible and distinct once
+// mapOf checks a map's keys, which must be admissible and distinct once
 // encoded, and its values.
-func checkMap(v cbor.Value, path []string) error {
+func (c *payloadCheck) mapOf(v cbor.Value, path []string) error {
 	if err := checkNesting(path); err != nil {
 		return err
 	}
 	entries, _ := v.AsMap()
 	seen := make(map[string]struct{}, len(entries))
 	for _, e := range entries {
-		if err := checkKey(e.Key, path); err != nil {
+		if err := c.key(e.Key, path); err != nil {
 			return err
 		}
 		keyBytes := string(cbor.Encode(e.Key))
@@ -124,19 +146,19 @@ func checkMap(v cbor.Value, path []string) error {
 				pathString(path))
 		}
 		seen[keyBytes] = struct{}{}
-		if err := walkAndCheck(e.Val, append(path, keyLabel(e.Key))); err != nil {
+		if err := c.value(e.Val, append(path, keyLabel(e.Key))); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// checkKey refuses a map key the decoding rule refuses: one that is not text
-// or an integer, text that is not valid UTF-8, or an integer out of range.
-func checkKey(k cbor.Value, path []string) error {
+// key refuses a map key the decoding rule refuses: one that is not text or an
+// integer, text that is not valid UTF-8, or an integer out of range.
+func (c *payloadCheck) key(k cbor.Value, path []string) error {
 	switch k.Kind() {
 	case cbor.KindText, cbor.KindUInt, cbor.KindNegInt:
-		return walkAndCheck(k, path)
+		return c.value(k, path)
 	default:
 		return fmt.Errorf("frame: map key at %s is not text or an integer", pathString(path))
 	}
