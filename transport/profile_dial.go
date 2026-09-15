@@ -12,6 +12,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
+	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
 )
 
@@ -70,9 +71,10 @@ var (
 // returns a connection only once its handshake has completed.
 //
 // A target without an expected node_id, or without a known profile, is refused
-// before anything is dialed. DialTarget does not compare the node_id: the
-// connection handshake does, against the station's identity key and the leaf
-// this dial returns.
+// before anything is dialed, and so is every target in a binary built with
+// GOFIPS140=v1.0.0, which has no ML-DSA (identity.ErrPostQuantumUnavailable).
+// DialTarget does not compare the node_id: the connection handshake does,
+// against the station's identity key and the leaf this dial returns.
 func DialTarget(ctx context.Context, target Target) (Dialed, error) {
 	definition, err := dialable(target)
 	if err != nil {
@@ -95,9 +97,12 @@ func DialTarget(ctx context.Context, target Target) (Dialed, error) {
 	return Dialed{Conn: conn, Leaf: leaf, Target: target}, nil
 }
 
-// dialable is the definition of target's profile, when target names a known
-// profile and an expected node_id.
+// dialable is the definition of target's profile, when this binary has ML-DSA
+// and target names a known profile and an expected node_id.
 func dialable(target Target) (profile.Definition, error) {
+	if err := identity.CheckPostQuantum(); err != nil {
+		return profile.Definition{}, err
+	}
 	p, err := profile.Parse(string(target.Profile))
 	if err != nil {
 		return profile.Definition{}, err

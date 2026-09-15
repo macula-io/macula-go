@@ -126,6 +126,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It returns the caller's own copy of the leaf DER as it arrived, for the
   connection handshake. `Dial` and its trust modes stay until the connection
   moves to the post-quantum handshake.
+- `identity.ErrPostQuantumUnavailable` and `identity.CheckPostQuantum`. A
+  binary built with `GOFIPS140=v1.0.0` uses the FIPS 140-3 Go Cryptographic
+  Module v1.0.0, which has no ML-DSA, and every profile signs with ML-DSA-87.
+  Such a binary returns `ErrPostQuantumUnavailable` from `GenerateKey`,
+  `GenerateIdentityKey`, `LoadKey` (before reading the file) and
+  `transport.DialTarget` (before dialing), instead of an error from inside a
+  signature or a TLS handshake. Build without `GOFIPS140`, or with
+  `GOFIPS140=v1.26.0` or later. CI runs the tests for it under
+  `GOFIPS140=v1.0.0`.
 
 ### Fixed
 

@@ -174,7 +174,13 @@ func appendHalf(out []byte, tag byte, public, private []byte) []byte {
 // profile, halves that do not fit the profile, a stored public key that differs
 // from the one its private key derives, and a key that fails a sign-and-verify
 // round trip.
+//
+// In a binary without ML-DSA it returns ErrPostQuantumUnavailable before it
+// reads anything.
 func LoadKey(path string, purpose Purpose, p profile.Profile) (*NodeKey, error) {
+	if err := CheckPostQuantum(); err != nil {
+		return nil, err
+	}
 	contents, err := readKeyFile(path)
 	if err != nil {
 		return nil, err

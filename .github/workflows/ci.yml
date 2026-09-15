@@ -43,3 +43,6 @@ jobs:
       # The decoding packages read peer bytes, so their tests also run with a
       # 32-bit int.
       - run: GOARCH=386 CGO_ENABLED=0 go test ./cbor ./frame ./manifest
+      # A binary built with GOFIPS140=v1.0.0 has no ML-DSA. These tests check
+      # that its key operations and dials say so.
+      - run: GOFIPS140=v1.0.0 go test ./identity ./transport -run SaysWhetherTheBinaryHasMLDSA

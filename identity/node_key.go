@@ -71,8 +71,12 @@ type NodeKey struct {
 	rsa     *rsa.PrivateKey
 }
 
-// GenerateKey is a new key for purpose in profile p.
+// GenerateKey is a new key for purpose in profile p. In a binary without ML-DSA
+// it returns ErrPostQuantumUnavailable.
 func GenerateKey(purpose Purpose, p profile.Profile) (*NodeKey, error) {
+	if err := CheckPostQuantum(); err != nil {
+		return nil, err
+	}
 	definition, err := p.Definition()
 	if err != nil {
 		return nil, err
