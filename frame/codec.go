@@ -50,12 +50,9 @@ func Decode(buf []byte) (Decoded, error) {
 	if len(buf) < 4+length {
 		return Decoded{NeedMore: 4 + length - len(buf)}, nil
 	}
-	value, consumed, err := cbor.Decode(buf[4 : 4+length])
+	value, err := cbor.Decode(buf[4 : 4+length])
 	if err != nil {
 		return Decoded{}, fmt.Errorf("frame: decode: %w", err)
-	}
-	if consumed != length {
-		return Decoded{}, fmt.Errorf("frame: decode: cbor consumed %d bytes, frame declared %d", consumed, length)
 	}
 	return Decoded{Frame: value, Consumed: 4 + length, Complete: true}, nil
 }

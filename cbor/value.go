@@ -1,22 +1,24 @@
-// Package cbor implements Macula's deterministic wire encoding — NOT
-// general RFC 8949 canonical CBOR. It is a direct transcription of
-// macula_cbor_nif's pack_deterministic/unpack_deterministic (the actual
-// codec macula_frame.erl uses on the wire, distinct from that NIF's
-// other, non-deterministic ciborium-backed pair), per
-// plans/PLAN_WIRE_PROTOCOL.md §4.
+// Package cbor implements Macula's wire encoding, the codec of macula's
+// macula_record_cbor: deterministic CBOR on the way out, and macula's
+// post-quantum decoding rule on the way in.
 //
-// Every frame's Ed25519 signature is computed over these exact bytes —
-// a generic "canonical CBOR" library that follows RFC 8949's own
-// canonical-form guidance instead of this package's rules produces
-// non-matching, non-verifying bytes. Two deliberate divergences to keep
-// in mind:
-//   - Floats always encode as binary64 (major 7, AI 27), never the
-//     shortest round-tripping width RFC 8949 prefers.
-//   - Map keys sort by the bytewise order of their own ENCODED bytes,
-//     not by their unencoded representation.
+// Encode writes what a signer must: integers and lengths in their shortest
+// form, map keys sorted by the bytewise order of their own encoded bytes, and
+// floats always as binary64, never the shortest width that round-trips.
+// Signatures and content ids are computed over these exact bytes, so a
+// generic canonical CBOR library, which follows RFC 8949's own rules instead,
+// produces bytes that do not match.
 //
-// No external CBOR library is used for this package on purpose — see
-// the package doc above and the Rust port's own README for why.
+// Decode accepts exactly what every stack accepts from a peer. It refuses
+// bytes after the top-level value, indefinite lengths, tags, simple values
+// other than null, text that is not valid UTF-8, map keys other than text or
+// integers, duplicate map keys, nesting deeper than 64 levels, integers
+// outside -2^63 to 2^63-1, and floats that are NaN or infinite. It accepts
+// lengths in any width, map keys in any order, and half, single and double
+// floats.
+//
+// No external CBOR library is used, on purpose: the bytes this package
+// writes and the inputs it refuses are part of the protocol.
 package cbor
 
 import "fmt"
@@ -100,7 +102,7 @@ func (v Value) AsInt64() (int64, bool) {
 		}
 		return int64(v.uintV), true
 	case KindNegInt:
-		if v.uintV > (1 << 63) {
+		if v.uintV >= 1<<63 {
 			return 0, false
 		}
 		return -1 - int64(v.uintV), true

@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking
+
+- `cbor.Decode` decodes under macula 11.0.0's decoding rule and returns
+  `(Value, error)`. It refuses bytes after the top-level value, map keys other
+  than text or integers, duplicate map keys, text that is not valid UTF-8,
+  lists and maps nested more than 64 levels, integers below -2^63 or above
+  2^63-1, and floats that are NaN or infinite, each with an error of its own:
+  `ErrTrailingBytes`, `ErrBadKey`, `ErrDuplicateKey`, `ErrInvalidText`,
+  `ErrNestingTooDeep`, `ErrIntegerOutOfRange` and `ErrMalformed`. It accepts
+  lengths in any width, map keys in any order, and half, single and double
+  floats. `cbor.MaxNestingDepth` is 64.
+- `frame.CheckPayload` refuses what that rule refuses: byte-string map keys,
+  integers outside -2^63 to 2^63-1, text that is not valid UTF-8, and payloads
+  nested more than `frame.MaxPayloadNesting` (63) levels.
+
+### Fixed
+
+- `cbor.Value.AsInt64` reports -2^63-1 as not fitting an int64, where it
+  returned 2^63-1.
+
 ## [0.10.0] - 2026-09-14
 
 ### Breaking

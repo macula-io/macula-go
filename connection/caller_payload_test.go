@@ -3,6 +3,7 @@ package connection
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,9 +13,10 @@ import (
 	"github.com/macula-io/macula-go/ucan"
 )
 
-// servedPayload serves one CALL for "caller.probe" on s, signed by caller and
-// carrying payload, and returns the payload its handler received.
-func servedPayload(t *testing.T, s *Session, fc *fakeControl, id, caller identity.KeyPair, payload cbor.Value) cbor.Value {
+// serveOne serves one CALL for "caller.probe" on s, signed by caller and
+// carrying payload. It returns the channel its handler sends the payload it
+// received on, and what ServeOneCallGated returned.
+func serveOne(t *testing.T, s *Session, fc *fakeControl, id, caller identity.KeyPair, payload cbor.Value) (<-chan cbor.Value, error) {
 	t.Helper()
 	got := make(chan cbor.Value, 1)
 	lookup := func(_ []byte, procedure string) (CallHandler, bool) {
@@ -33,7 +35,15 @@ func servedPayload(t *testing.T, s *Session, fc *fakeControl, id, caller identit
 	}
 	spec := frame.NewCallSpec(callID, "caller.probe", testRealm(), payload, time.Now().Add(time.Second).UnixMilli(), caller.NodeID())
 	fc.send(t, frame.Sign(frame.Call(spec), caller))
-	if err := awaitErr(t, served); err != nil {
+	return got, awaitErr(t, served)
+}
+
+// servedPayload serves one CALL as serveOne does, and returns the payload its
+// handler received.
+func servedPayload(t *testing.T, s *Session, fc *fakeControl, id, caller identity.KeyPair, payload cbor.Value) cbor.Value {
+	t.Helper()
+	got, err := serveOne(t, s, fc, id, caller, payload)
+	if err != nil {
 		t.Fatalf("ServeOneCallGated: %v", err)
 	}
 	select {
@@ -59,34 +69,51 @@ func TestAnInboundCallThreadsItsCallerIntoThePayload(t *testing.T) {
 	}
 }
 
-// A "caller" the sender put in the payload, under a text key or a byte-string
-// key, is replaced: the handler sees exactly one caller, the verified one.
+// A "caller" the sender put in the payload is replaced: the handler sees
+// exactly one caller, the verified one.
 func TestACallerTheSenderPutInThePayloadIsReplacedByTheVerifiedCaller(t *testing.T) {
-	keys := map[string]cbor.Value{"a text key": cbor.Text("caller"), "a byte-string key": cbor.Bytes([]byte("caller"))}
-	for form, key := range keys {
-		s, fc, id := readingSession(t)
-		caller := registryIdentity(t)
-		spoofed := registryIdentity(t)
-		payload := servedPayload(t, s, fc, id, caller, cbor.Map([]cbor.MapEntry{{Key: key, Val: cbor.Bytes(spoofed.NodeID())}}))
+	s, fc, id := readingSession(t)
+	caller := registryIdentity(t)
+	spoofed := registryIdentity(t)
+	payload := servedPayload(t, s, fc, id, caller, cbor.Map([]cbor.MapEntry{{Key: cbor.Text("caller"), Val: cbor.Bytes(spoofed.NodeID())}}))
 
-		got, ok := payload.Get("caller")
-		if b, isBytes := got.AsBytes(); !ok || !isBytes || !bytes.Equal(b, caller.NodeID()) {
-			t.Errorf("%s: payload caller = %v, want the verified caller, not the one the sender wrote", form, got)
-		}
-		if n := callerEntries(payload); n != 1 {
-			t.Errorf("%s: payload has %d caller entries, want only the verified one", form, n)
-		}
+	got, ok := payload.Get("caller")
+	if b, isBytes := got.AsBytes(); !ok || !isBytes || !bytes.Equal(b, caller.NodeID()) {
+		t.Errorf("payload caller = %v, want the verified caller, not the one the sender wrote", got)
+	}
+	if n := callerEntries(payload); n != 1 {
+		t.Errorf("payload has %d caller entries, want only the verified one", n)
 	}
 }
 
-// callerEntries counts payload's entries keyed "caller", as text or as bytes.
+// A CALL whose payload the decoding rule refuses, here one with a "caller"
+// under a byte-string key, never reaches a handler: the frame is malformed,
+// and it ends the session.
+func TestACallWhosePayloadTheDecodingRuleRefusesNeverReachesAHandler(t *testing.T) {
+	s, fc, id := readingSession(t)
+	caller := registryIdentity(t)
+	spoofed := registryIdentity(t)
+	got, err := serveOne(t, s, fc, id, caller, cbor.Map([]cbor.MapEntry{{Key: cbor.Bytes([]byte("caller")), Val: cbor.Bytes(spoofed.NodeID())}}))
+
+	select {
+	case p := <-got:
+		t.Fatalf("the handler ran with %v, want the frame refused before any handler", p)
+	default:
+	}
+	if err == nil {
+		t.Fatal("ServeOneCallGated returned nil, want the session ended by a malformed frame")
+	}
+	if sessionErr := s.Err(); !errors.Is(sessionErr, ErrSessionEnded) || !errors.Is(sessionErr, ErrMalformedFrame) {
+		t.Fatalf("the session ended with %v, want ErrSessionEnded wrapping ErrMalformedFrame", sessionErr)
+	}
+}
+
+// callerEntries counts payload's entries keyed "caller".
 func callerEntries(payload cbor.Value) int {
 	entries, _ := payload.AsMap()
 	n := 0
 	for _, e := range entries {
-		text, isText := e.Key.AsText()
-		raw, isBytes := e.Key.AsBytes()
-		if (isText && text == "caller") || (isBytes && string(raw) == "caller") {
+		if text, isText := e.Key.AsText(); isText && text == "caller" {
 			n++
 		}
 	}

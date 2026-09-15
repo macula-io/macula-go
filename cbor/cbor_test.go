@@ -2,10 +2,8 @@ package cbor
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -102,12 +100,9 @@ func TestRoundTrip(t *testing.T) {
 	})
 	encoded := Encode(original)
 
-	decoded, consumed, err := Decode(encoded)
+	decoded, err := Decode(encoded)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
-	}
-	if consumed != len(encoded) {
-		t.Fatalf("Decode consumed %d bytes, want %d", consumed, len(encoded))
 	}
 
 	// Re-encoding the decoded value must reproduce the exact same bytes --
@@ -128,28 +123,25 @@ func TestRoundTrip(t *testing.T) {
 
 func TestDecodeRejectsTags(t *testing.T) {
 	// Major type 6 (tags) — not supported at all, per §4.
-	_, _, err := Decode([]byte{0xC0, 0x00}) // tag 0, then a 0
-	if err == nil {
-		t.Fatal("Decode: expected an error for major type 6 (tags), got none")
+	_, err := Decode([]byte{0xC0, 0x00}) // tag 0, then a 0
+	if !errors.Is(err, ErrMalformed) {
+		t.Fatalf("Decode: %v for major type 6 (tags), want ErrMalformed", err)
 	}
 }
 
 func TestDecodeRejectsBooleans(t *testing.T) {
 	// Major 7, AI 21 (true) — not supported; only null + 3 float widths.
-	_, _, err := Decode([]byte{0xF5})
-	if err == nil {
-		t.Fatal("Decode: expected an error for a CBOR boolean, got none")
+	_, err := Decode([]byte{0xF5})
+	if !errors.Is(err, ErrMalformed) {
+		t.Fatalf("Decode: %v for a CBOR boolean, want ErrMalformed", err)
 	}
 }
 
 func TestDecodeAcceptsFloat16AndFloat32ForInterop(t *testing.T) {
 	// float16: 1.0 = 0x3C00
-	v, n, err := Decode([]byte{0xF9, 0x3C, 0x00})
+	v, err := Decode([]byte{0xF9, 0x3C, 0x00})
 	if err != nil {
 		t.Fatalf("Decode float16: %v", err)
-	}
-	if n != 3 {
-		t.Errorf("consumed %d, want 3", n)
 	}
 	f, _ := v.AsFloat()
 	if f != 1.0 {
@@ -157,12 +149,9 @@ func TestDecodeAcceptsFloat16AndFloat32ForInterop(t *testing.T) {
 	}
 
 	// float32: 1.0 = 0x3F800000
-	v, n, err = Decode([]byte{0xFA, 0x3F, 0x80, 0x00, 0x00})
+	v, err = Decode([]byte{0xFA, 0x3F, 0x80, 0x00, 0x00})
 	if err != nil {
 		t.Fatalf("Decode float32: %v", err)
-	}
-	if n != 5 {
-		t.Errorf("consumed %d, want 5", n)
 	}
 	f, _ = v.AsFloat()
 	if f != 1.0 {
@@ -170,30 +159,8 @@ func TestDecodeAcceptsFloat16AndFloat32ForInterop(t *testing.T) {
 	}
 }
 
-func TestDuplicateMapKeysLastWriteWins(t *testing.T) {
-	// {"a": 1, "a": 2} on the wire, hand-built since Encode never emits
-	// duplicates itself -- decode must still handle a peer that does.
-	raw := []byte{
-		0xA2,
-		0x61, 0x61, 0x01, // "a": 1
-		0x61, 0x61, 0x02, // "a": 2 (should win)
-	}
-	v, _, err := Decode(raw)
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
-	}
-	got, ok := v.Get("a")
-	if !ok {
-		t.Fatal("key \"a\" missing")
-	}
-	n, _ := got.AsInt64()
-	if n != 2 {
-		t.Errorf("duplicate key: got %d, want 2 (last write)", n)
-	}
-}
-
 // TestDecodeMapDedupIsNotQuadratic guards against a regression to the
-// pre-2026-09-05 linear-scan dedup in decodeOne's majorMap case, which
+// pre-2026-09-05 linear-scan dedup in the map decoder, which
 // made decoding O(n^2) in the key count -- a pre-auth algorithmic-
 // complexity DoS (reachable during frame decode, before any signature
 // check). Measured before the fix: 16,000 distinct keys took ~6.5s and
@@ -210,7 +177,7 @@ func TestDecodeMapDedupIsNotQuadratic(t *testing.T) {
 	wire := Encode(Map(entries))
 
 	start := time.Now()
-	v, _, err := Decode(wire)
+	v, err := Decode(wire)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -229,10 +196,10 @@ func TestDecodeMapDedupIsNotQuadratic(t *testing.T) {
 
 // TestDecodeRejectsHugeClaimedCountWithoutPanicking guards against a
 // process-killing DoS found while reviewing the fix above: `count` comes
-// straight off the wire via readAIValue and is never checked against how
+// straight off the wire as a head's argument and is never checked against how
 // many bytes actually follow, so a 9-byte frame can claim a map or list
 // of 2^64-1 entries. Before preallocCap, `make([]MapEntry, 0, count)`
-// (and the sibling majorList/indexOfKey allocations) took that count
+// (and the sibling list and seen-key allocations) took that count
 // directly as a capacity hint, which panics with "makeslice: cap out of
 // range" -- and nothing between here and the connection goroutine
 // (RecvFrame -> frame.Decode -> cbor.Decode) recovers, so a single
@@ -257,9 +224,9 @@ func TestDecodeRejectsHugeClaimedCountWithoutPanicking(t *testing.T) {
 					t.Fatalf("Decode panicked on attacker-controlled input: %v", r)
 				}
 			}()
-			_, _, err := Decode(tc.raw)
-			if err == nil {
-				t.Fatal("expected a decode error for an under-filled huge-count frame, got nil")
+			_, err := Decode(tc.raw)
+			if !errors.Is(err, ErrMalformed) {
+				t.Fatalf("Decode: %v for an under-filled huge-count frame, want ErrMalformed", err)
 			}
 		})
 	}
@@ -272,13 +239,13 @@ func nestedListPayload(depth int) []byte {
 }
 
 func TestDecodeAcceptsNestingAtTheDepthLimit(t *testing.T) {
-	if _, _, err := Decode(nestedListPayload(MaxNestingDepth)); err != nil {
+	if _, err := Decode(nestedListPayload(MaxNestingDepth)); err != nil {
 		t.Fatalf("Decode at %d levels: %v, want it decoded", MaxNestingDepth, err)
 	}
 }
 
 func TestDecodeRejectsNestingOnePastTheDepthLimit(t *testing.T) {
-	if _, _, err := Decode(nestedListPayload(MaxNestingDepth + 1)); !errors.Is(err, ErrNestingTooDeep) {
+	if _, err := Decode(nestedListPayload(MaxNestingDepth + 1)); !errors.Is(err, ErrNestingTooDeep) {
 		t.Fatalf("Decode at %d levels: %v, want ErrNestingTooDeep", MaxNestingDepth+1, err)
 	}
 }
@@ -286,43 +253,8 @@ func TestDecodeRejectsNestingOnePastTheDepthLimit(t *testing.T) {
 // A million levels is a 1 MB frame, well under the frame cap. A test process
 // that dies here instead of passing or failing means the cap has regressed.
 func TestDecodeRejectsExtremeNestingWithoutCrashing(t *testing.T) {
-	if _, _, err := Decode(nestedListPayload(1_000_000)); !errors.Is(err, ErrNestingTooDeep) {
+	if _, err := Decode(nestedListPayload(1_000_000)); !errors.Is(err, ErrNestingTooDeep) {
 		t.Fatalf("Decode at a million levels: %v, want ErrNestingTooDeep", err)
-	}
-}
-
-// Duplicate map keys merge exactly when their canonical encodings are
-// equal: the wire order of a nested map, a non-minimal head and a nested
-// map's own duplicates don't make keys differ, while element order, kind
-// and type do.
-func TestDecodeMergesDuplicateKeysExactlyWhenTheirEncodingsAreEqual(t *testing.T) {
-	cases := []struct {
-		name    string
-		hex     string
-		entries int
-	}{
-		{"maps with the same entries in another wire order", "A2A2616101616202 01 A2616202616101 02", 1},
-		{"a map whose own duplicate leaves it equal to another", "A2A2616101616102 01 A1616102 02", 1},
-		{"the same uint with a non-minimal head", "A2 1801 01 01 02", 1},
-		{"lists with their elements in another order", "A2 820102 01 820201 02", 2},
-		{"a uint and the equal float", "A2 01 01 FB3FF0000000000000 02", 2},
-		{"bytes and text with the same content", "A2 4161 01 6161 02", 2},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			raw := mustHex(t, tc.hex)
-			v, n, err := Decode(raw)
-			if err != nil || n != len(raw) {
-				t.Fatalf("Decode: consumed %d of %d, err %v", n, len(raw), err)
-			}
-			entries, ok := v.AsMap()
-			if !ok || len(entries) != tc.entries {
-				t.Fatalf("decoded %d entries, want %d", len(entries), tc.entries)
-			}
-			if last, _ := entries[len(entries)-1].Val.AsInt64(); last != 2 {
-				t.Fatalf("the last entry's value is %d, want the later write, 2", last)
-			}
-		})
 	}
 }
 
@@ -333,39 +265,4 @@ func mustHex(t *testing.T, s string) []byte {
 		t.Fatalf("hex %q: %v", s, err)
 	}
 	return b
-}
-
-// A chain of MaxNestingDepth one-entry maps, each keyed by the next, around
-// a 512 KiB byte-string key: each key's identity is worked out once while it
-// decodes, not again at every level above it, so decoding allocates in
-// proportion to the input rather than to its depth squared.
-func TestDecodeMapWithALargeDeeplyNestedKeyIsNotQuadraticInDepth(t *testing.T) {
-	const blobLen = 512 * 1024
-	raw := bytes.Repeat([]byte{0xA1}, MaxNestingDepth)
-	raw = append(raw, 0x5A)
-	raw = binary.BigEndian.AppendUint32(raw, blobLen)
-	raw = append(raw, bytes.Repeat([]byte{0x41}, blobLen)...)
-	raw = append(raw, bytes.Repeat([]byte{0x00}, MaxNestingDepth)...)
-
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	v, n, err := Decode(raw)
-	runtime.ReadMemStats(&after)
-	if err != nil || n != len(raw) {
-		t.Fatalf("Decode: consumed %d of %d, err %v", n, len(raw), err)
-	}
-	for level := 0; level < MaxNestingDepth; level++ {
-		entries, ok := v.AsMap()
-		if !ok || len(entries) != 1 {
-			t.Fatalf("level %d is not a one-entry map", level)
-		}
-		v = entries[0].Key
-	}
-	if blob, ok := v.AsBytes(); !ok || len(blob) != blobLen {
-		t.Fatalf("the innermost key is not the %d-byte string", blobLen)
-	}
-	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 8*uint64(len(raw)) {
-		t.Fatalf("decoding %d bytes allocated %d MiB, want at most 8 times the input", len(raw), allocated>>20)
-	}
 }

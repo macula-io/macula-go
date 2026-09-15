@@ -14,6 +14,7 @@ const (
 	majorText   = 3
 	majorList   = 4
 	majorMap    = 5
+	majorTag    = 6
 	majorFloat  = 7 // also carries Null (AI 22)
 
 	aiNull  = 22
