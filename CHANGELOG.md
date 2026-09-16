@@ -158,7 +158,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `VerifyHeldObject` (and so from the handshake's checks and from
   `frame.VerifyRequest`, `VerifyReply`, `VerifyRelayError`,
   `VerifyProviderStream`, `VerifyCallerStream` and `VerifyPublication`, and
-  from `record.Verify`), and
+  from `record.Verify` and `record.VerifyAuthorization`), and
   `transport.DialTarget` (before dialing), instead of an error that blames a
   signature or a TLS handshake. Build without `GOFIPS140`, or with
   `GOFIPS140=v1.26.0` or later. CI runs the tests for it under
@@ -238,13 +238,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   10 minutes without one, plus 5 minutes), and in a binary without ML-DSA with
   `identity.ErrPostQuantumUnavailable`.
 - `record`: macula 11.0.0's records, the signed object under
-  `MACULA-PQ-RECORD-V1`, as `macula_record` has them at merge-11.0.0
-  81b90d7c. `record.Sign` refuses, in macula's order, a key whose purpose does
-  not fit the type (`ErrKeyPurposeMismatch`; a Go key signs the types an
-  identity key signs), a lifetime that runs backwards or past its type's
-  maximum (`ErrLifetimeReversed`, `ErrLifetimeTooLong`), a payload that names
-  another signer (`ErrKeyIDMismatch`) and a record over 256 KiB
-  (`ErrRecordTooLarge`). `record.Verify` reads a record's wire form in macula's
+  `MACULA-PQ-RECORD-V1`, as `macula_record` has them for 11.0.0.
+  `record.Sign` refuses, in macula's order, a key whose purpose does not fit
+  the type (`ErrKeyPurposeMismatch`; a Go key signs the types an identity key
+  signs), a lifetime that runs backwards or past its type's maximum
+  (`ErrLifetimeReversed`, `ErrLifetimeTooLong`), a payload that names another
+  signer (`ErrKeyIDMismatch`), a tbs or payload a verifier would refuse, an
+  empty subject among them (`ErrMalformed`), and a record over 256 KiB
+  (`ErrRecordTooLarge`), so it signs no record a verifier refuses for anything
+  but its clock.
+  `record.Verify` reads a record's wire form in macula's
   order: its size, its shape, its signature, a tbs of exactly its fields,
   created_at and expires_at within 5 minutes of the verifier's clock
   (`ErrNotYetValid`, `ErrExpired`), the lifetime of its type, its type's
@@ -264,6 +267,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an empty subject (`ErrInvalidSubject`), which a verifier refuses as
   malformed. `Refresh` signs a record again with a new version, and
   `PayloadBounded` checks a payload before signing.
+  `NewProcedureAdvertisement` and `ReadProcedureAdvertisement` build and read
+  procedure advertisements, whose provider authorization, an org directory and
+  a procedure delegation, travels in the payload and is never parsed by a
+  storing verifier. macula 11.0.0 has no other form: the builder builds none,
+  and the reader reads any other authorization map, a certificate chain among
+  them, as unsupported (`ErrAuthorizationFormUnsupported`).
+  `NewContentAnnouncement` and `ReadContentAnnouncement`,
+  `NewStationEndpoint` and `ReadStationEndpoint`, and `NewTombstone` and
+  `ReadTombstone` build and read those records; a tombstone takes the slot of
+  the record it withdraws and outlives it by the clock tolerance, and
+  `ReadTombstone` refuses a withdrawn type outside 1 to 255. `StorageKey`
+  derives a record's DHT storage key, and `ProcedureKey`, `ContentKey`,
+  `StationEndpointKey`, `OrgDirectoryKey` and `ProcedureDelegationKey` derive
+  the keys a lookup needs.
+  `VerifyAuthorization` checks a verified procedure advertisement's provider
+  authorization against a caller's `Trust`, the realm key, as `macula_record`'s
+  `verify_authorization` does. `ProcedureOrg` reads the procedure's org
+  namespace. The org directory, signed by the realm key, must name the
+  advertisement's realm and the procedure's org, and the procedure delegation,
+  signed by the org key the directory names, must name the advertiser
+  (`ReadOrgDirectory`, `ReadProcedureDelegation`); the advertisement expires
+  no later than either. An authorization in any other form is
+  `ErrAuthorizationFormUnsupported`, and each refusal has its own error, from
+  `ErrNoAuthorization` to `ErrAuthorizationOutlived`.
 
 ### Fixed
 

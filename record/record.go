@@ -172,20 +172,17 @@ func Envelope(t Type, payload cbor.Value, subject []byte, ttlMs uint64) (Record,
 }
 
 // Sign signs r with key, as macula_record's sign/2 does, and returns it with its
-// key, key id, alg, tbs and signature. It refuses an empty subject first
-// (ErrInvalidSubject), since every reader refuses one, and then checks, in
-// macula's order, and refuses a key whose purpose does not fit r's type
-// (ErrKeyPurposeMismatch); a lifetime that runs backwards (ErrLifetimeReversed)
-// or past its type's maximum (ErrLifetimeTooLong); a payload that names a
-// signer other than key (ErrKeyIDMismatch); and a record over 256 KiB
+// key, key id, alg, tbs and signature. It refuses, in macula's order, a key
+// whose purpose does not fit r's type (ErrKeyPurposeMismatch); a lifetime that
+// runs backwards (ErrLifetimeReversed) or past its type's maximum
+// (ErrLifetimeTooLong); a payload that names a signer other than key
+// (ErrKeyIDMismatch); a tbs or payload a verifier would refuse, an empty
+// subject among them (ErrMalformed); and a record over 256 KiB
 // (ErrRecordTooLarge).
 func Sign(r Record, key *identity.NodeKey) (Record, error) {
 	carried := key.PublicKey()
 	if carried == nil {
 		return Record{}, identity.ErrEmptyNodeKey
-	}
-	if r.Subject != nil && len(r.Subject) == 0 {
-		return Record{}, ErrInvalidSubject
 	}
 	p := key.Profile()
 	if !slices.Contains(signerPurposes(int64(r.Type), r.Payload), key.Purpose()) {
@@ -198,7 +195,15 @@ func Sign(r Record, key *identity.NodeKey) (Record, error) {
 	if !namedSigner(r.Type, r.Payload, keyID) {
 		return Record{}, fmt.Errorf("%w: type %#02x", ErrKeyIDMismatch, uint8(r.Type))
 	}
+	definition, err := p.Definition()
+	if err != nil {
+		return Record{}, err
+	}
 	fields := tbsFields(r)
+	withAlg := append(slices.Clone(fields), textEntry("alg", definition.SigAlg))
+	if _, readable := readTBS(cbor.Map(withAlg)); !readable || !payloadOK(r.Type, r.Payload) {
+		return Record{}, fmt.Errorf("%w: a record of type %#02x that a verifier would refuse", ErrMalformed, uint8(r.Type))
+	}
 	if size := len(cbor.Encode(cbor.Map(fields))) + len(carried) + identity.SignatureSize(p); size > MaxRecordBytes {
 		return Record{}, fmt.Errorf("%w: %d bytes before signing", ErrRecordTooLarge, size)
 	}
@@ -208,10 +213,6 @@ func Sign(r Record, key *identity.NodeKey) (Record, error) {
 	}
 	if size := len(cbor.Encode(object.Value())); size > MaxRecordBytes {
 		return Record{}, fmt.Errorf("%w: %d bytes signed", ErrRecordTooLarge, size)
-	}
-	definition, err := p.Definition()
-	if err != nil {
-		return Record{}, err
 	}
 	r.Key, r.KeyID, r.Alg, r.TBS, r.Signature = carried, keyID, definition.SigAlg, object.TBS, object.Signature
 	return r, nil

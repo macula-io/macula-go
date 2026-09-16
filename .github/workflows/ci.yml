@@ -51,6 +51,6 @@ jobs:
       - shell: bash
         run: |
           GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record -run SaysWhetherTheBinaryHasMLDSA -count=1 -v | tee gofips140.log
-          for name in TestAKeyOperationSaysWhetherTheBinaryHasMLDSA TestAVerifierSaysWhetherTheBinaryHasMLDSA TestReadStatusSaysWhetherTheBinaryHasMLDSA TestDialTargetSaysWhetherTheBinaryHasMLDSA TestASignedFrameVerifierSaysWhetherTheBinaryHasMLDSA TestARecordVerifierSaysWhetherTheBinaryHasMLDSA; do
+          for name in TestAKeyOperationSaysWhetherTheBinaryHasMLDSA TestAVerifierSaysWhetherTheBinaryHasMLDSA TestReadStatusSaysWhetherTheBinaryHasMLDSA TestDialTargetSaysWhetherTheBinaryHasMLDSA TestASignedFrameVerifierSaysWhetherTheBinaryHasMLDSA TestARecordVerifierSaysWhetherTheBinaryHasMLDSA TestAnAuthorizationVerifierSaysWhetherTheBinaryHasMLDSA; do
             grep -q -- "--- PASS: $name " gofips140.log || { echo "no PASS line for $name"; exit 1; }
           done
