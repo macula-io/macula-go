@@ -91,7 +91,7 @@ func TestReadContentAnnouncementReturnsTheTypedPayload(t *testing.T) {
 	size, chunks := uint64(10), uint64(1)
 	full := must[Record](t)(NewContentAnnouncement(nodeID, testContentID(), "quic://h:1",
 		ContentAnnouncementOptions{Name: "a.bin", Size: &size, ChunkCount: &chunks}))
-	verified := must[Record](t)(Verify(wireOf(t, must[Record](t)(Sign(full, keys.node))), profile.PQPure, nowMs()))
+	verified := must[Verified](t)(Verify(wireOf(t, must[Record](t)(Sign(full, keys.node))), profile.PQPure, nowMs())).Record()
 	read := must[ContentAnnouncement](t)(ReadContentAnnouncement(verified))
 	switch {
 	case read.AnnouncerNode != nodeID || !bytes.Equal(read.MCID, testContentID()) || read.Endpoint != "quic://h:1":

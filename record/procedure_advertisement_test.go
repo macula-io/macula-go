@@ -61,7 +61,7 @@ func TestReadProcedureAdvertisementReturnsTheTypedPayload(t *testing.T) {
 	delegation := Authorization{Form: DelegationAuthorization, OrgDirectory: []byte("org directory"), ProcedureDelegation: []byte("delegation")}
 	built := must[Record](t)(NewProcedureAdvertisement(nodeID, fill(0x11), "acme/get_forecast_v1", fill(0x77),
 		ProcedureAdvertisementOptions{Authorization: delegation}))
-	verified := must[Record](t)(Verify(wireOf(t, must[Record](t)(Sign(built, keys.node))), profile.PQPure, nowMs()))
+	verified := must[Verified](t)(Verify(wireOf(t, must[Record](t)(Sign(built, keys.node))), profile.PQPure, nowMs())).Record()
 	read := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(verified))
 	if read.RealmID != fill(0x11) || read.Procedure != "acme/get_forecast_v1" || read.AdvertiserNode != nodeID ||
 		read.ServingStation != fill(0x77) || !sameAuthorization(read.Authorization, delegation) {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
 )
 
@@ -67,9 +66,12 @@ func ProcedureOrg(procedure string) (org string, hasOrg bool, err error) {
 // VerifyAuthorization is the caller's check of a verified procedure
 // advertisement's provider authorization against the realm it trusts, as
 // macula_record's verify_authorization/3 does for 11.0.0, with nowMs the
-// caller's clock in Unix milliseconds. A procedure with an org namespace needs
-// an authorization (ErrNoAuthorization), and one without carries none, in any
-// form (ErrAuthorizationNotAllowed).
+// caller's clock in Unix milliseconds. It takes a Verified, a record Verify
+// returned, so the advertiser node it checks is the one the advertisement's
+// signature covers; the zero Verified, like any record that is not a procedure
+// advertisement, is ErrMalformed. A procedure with an org namespace needs an
+// authorization (ErrNoAuthorization), and one without carries none, in any form
+// (ErrAuthorizationNotAllowed).
 //
 // The authorization is an org directory and a procedure delegation, and needs
 // Trust.RealmKey (ErrNoRealmKey). The org directory must verify as one at nowMs
@@ -81,16 +83,13 @@ func ProcedureOrg(procedure string) (org string, hasOrg bool, err error) {
 // than either (ErrAuthorizationOutlived). An authorization in any other form, a
 // certificate chain among them, is ErrAuthorizationFormUnsupported, and an org
 // directory and a procedure delegation that are not both byte strings are
-// ErrMalformed. A binary without ML-DSA refuses with
-// identity.ErrPostQuantumUnavailable.
-func VerifyAuthorization(advertisement Record, trust Trust, nowMs int64) error {
-	if advertisement.Type != TypeProcedureAdvertisement {
-		return fmt.Errorf("%w: a record of type %#02x is not a procedure advertisement", ErrMalformed, uint8(advertisement.Type))
+// ErrMalformed.
+func VerifyAuthorization(advertisement Verified, trust Trust, nowMs int64) error {
+	r := advertisement.held
+	if r.Type != TypeProcedureAdvertisement {
+		return fmt.Errorf("%w: a record of type %#02x is not a procedure advertisement", ErrMalformed, uint8(r.Type))
 	}
-	if err := identity.CheckPostQuantum(); err != nil {
-		return err
-	}
-	read, err := ReadProcedureAdvertisement(advertisement)
+	read, err := ReadProcedureAdvertisement(r)
 	if err != nil {
 		return err
 	}
@@ -106,7 +105,7 @@ func VerifyAuthorization(advertisement Record, trust Trust, nowMs int64) error {
 	case form == NoAuthorization:
 		return ErrNoAuthorization
 	case form == DelegationAuthorization:
-		return delegationPath(advertisement, read, org, trust, nowMs)
+		return delegationPath(r, read, org, trust, nowMs)
 	case form == UnsupportedAuthorization:
 		return ErrAuthorizationFormUnsupported
 	}
@@ -119,10 +118,11 @@ func delegationPath(advertisement Record, read ProcedureAdvertisement, org strin
 	if trust.RealmKey == nil {
 		return ErrNoRealmKey
 	}
-	directory, err := Verify(read.Authorization.OrgDirectory, trust.Profile, nowMs)
+	verifiedDirectory, err := Verify(read.Authorization.OrgDirectory, trust.Profile, nowMs)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrOrgDirectoryInvalid, err)
 	}
+	directory := verifiedDirectory.held
 	named, err := ReadOrgDirectory(directory)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrOrgDirectoryInvalid, err)
@@ -133,10 +133,11 @@ func delegationPath(advertisement Record, read ProcedureAdvertisement, org strin
 	case named.OrgName != org:
 		return ErrOrgDirectoryWrongOrg
 	}
-	delegation, err := Verify(read.Authorization.ProcedureDelegation, trust.Profile, nowMs)
+	verifiedDelegation, err := Verify(read.Authorization.ProcedureDelegation, trust.Profile, nowMs)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrDelegationInvalid, err)
 	}
+	delegation := verifiedDelegation.held
 	granted, err := ReadProcedureDelegation(delegation)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrDelegationInvalid, err)

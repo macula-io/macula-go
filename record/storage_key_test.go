@@ -219,5 +219,5 @@ func unsignedRecord(t *testing.T, recordType Type, fields ...cbor.MapEntry) Reco
 func verifiedByHand(t *testing.T, recordType Type, payload cbor.Value, lifetimeMs int64, key *identity.NodeKey) Record {
 	t.Helper()
 	now := nowMs()
-	return must[Record](t)(Verify(signedByHand(t, label, recordFields(t, recordType, payload, now, lifetimeMs), key), profile.PQPure, now))
+	return must[Verified](t)(Verify(signedByHand(t, label, recordFields(t, recordType, payload, now, lifetimeMs), key), profile.PQPure, now)).Record()
 }

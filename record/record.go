@@ -261,38 +261,86 @@ func Encode(r Record) ([]byte, error) {
 // within its type's maximum (ErrLifetimeReversed, ErrLifetimeTooLong); its
 // type's payload rules (ErrMalformed); and a payload that names its signer by
 // the key's id (ErrKeyIDMismatch). A binary without ML-DSA refuses with
-// identity.ErrPostQuantumUnavailable. Refusals are returned, never raised.
-func Verify(wire []byte, p profile.Profile, nowMs int64) (Record, error) {
+// identity.ErrPostQuantumUnavailable. Refusals are returned, never raised. It
+// returns the record as a Verified, which shares no memory with wire: the
+// decoder copies every byte string out of its input, and the key and tbs are
+// copies too.
+func Verify(wire []byte, p profile.Profile, nowMs int64) (Verified, error) {
 	if len(wire) > MaxRecordBytes {
-		return Record{}, ErrRecordTooLarge
+		return Verified{}, ErrRecordTooLarge
 	}
 	object, err := identity.DecodeObject(wire)
 	if err != nil {
-		return Record{}, fmt.Errorf("%w: %w", ErrMalformed, err)
+		return Verified{}, fmt.Errorf("%w: %w", ErrMalformed, err)
 	}
 	verified, err := identity.VerifyObject(label, object.Value(), p)
 	if err != nil {
-		return Record{}, objectRefusal(err)
+		return Verified{}, objectRefusal(err)
 	}
 	r, ok := readTBS(verified.Fields)
 	if !ok {
-		return Record{}, ErrMalformed
+		return Verified{}, ErrMalformed
 	}
 	r.Key, r.TBS, r.Signature = verified.Key, verified.TBS, bytes.Clone(object.Signature)
 	if err := clock(r, nowMs); err != nil {
-		return Record{}, err
+		return Verified{}, err
 	}
 	if err := lifetime(r); err != nil {
-		return Record{}, err
+		return Verified{}, err
 	}
 	if !payloadOK(r.Type, r.Payload) {
-		return Record{}, ErrMalformed
+		return Verified{}, ErrMalformed
 	}
 	r.KeyID = keyIDOf(signerKind(int64(r.Type), r.Payload), r.Key, p)
 	if !namedSigner(r.Type, r.Payload, r.KeyID) {
-		return Record{}, ErrKeyIDMismatch
+		return Verified{}, ErrKeyIDMismatch
 	}
-	return r, nil
+	return Verified{held: r}, nil
+}
+
+// Verified is a record Verify returned. Only Verify makes one, and it holds
+// memory no caller shares, so nothing a caller does after Verify returns changes
+// the record it holds. The zero Verified holds no record.
+type Verified struct {
+	held Record
+}
+
+// Record is a copy of the verified record, sharing no memory with it.
+func (v Verified) Record() Record {
+	return v.held.clone()
+}
+
+// clone is r with its byte slices and its payload copied.
+func (r Record) clone() Record {
+	r.Key, r.TBS = bytes.Clone(r.Key), bytes.Clone(r.TBS)
+	r.Signature, r.Subject = bytes.Clone(r.Signature), bytes.Clone(r.Subject)
+	r.Payload = cloneValue(r.Payload)
+	return r
+}
+
+// cloneValue is v with every byte string, list and map copied. Text, integers
+// and floats carry no memory to share.
+func cloneValue(v cbor.Value) cbor.Value {
+	switch v.Kind() {
+	case cbor.KindBytes:
+		b, _ := v.AsBytes()
+		return cbor.Bytes(bytes.Clone(b))
+	case cbor.KindList:
+		items, _ := v.AsList()
+		copied := make([]cbor.Value, len(items))
+		for i, item := range items {
+			copied[i] = cloneValue(item)
+		}
+		return cbor.List(copied)
+	case cbor.KindMap:
+		entries, _ := v.AsMap()
+		copied := make([]cbor.MapEntry, len(entries))
+		for i, e := range entries {
+			copied[i] = cbor.MapEntry{Key: cloneValue(e.Key), Val: cloneValue(e.Val)}
+		}
+		return cbor.Map(copied)
+	}
+	return v
 }
 
 // objectRefusal is the refusal of a record whose signed object did not verify:

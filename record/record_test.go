@@ -272,7 +272,7 @@ func TestSignRefusesARecordLargerThan256KiB(t *testing.T) {
 func TestARecordVerifiesFromItsWireForm(t *testing.T) {
 	keys := keysFor(t)
 	r := signedNodeRecord(t, keys.node)
-	v := must[Record](t)(Verify(wireOf(t, r), profile.PQPure, nowMs()))
+	v := must[Verified](t)(Verify(wireOf(t, r), profile.PQPure, nowMs())).Record()
 	if v.Type != r.Type || v.Version != r.Version || v.CreatedAt != r.CreatedAt || v.ExpiresAt != r.ExpiresAt ||
 		v.KeyID != r.KeyID || v.Alg != r.Alg || !bytes.Equal(v.Key, r.Key) || !bytes.Equal(v.TBS, r.TBS) ||
 		!bytes.Equal(v.Signature, r.Signature) || !sameValue(v.Payload, r.Payload) {
@@ -701,7 +701,7 @@ func TestADomainRecordIsNamedByTheKeyIDEvenForAnIdentityKey(t *testing.T) {
 	if r.KeyID != keyID || keyID == keys.node.KeyID() {
 		t.Errorf("a domain record's key id %x, want the key id %x, which is not the node_id", r.KeyID, keyID)
 	}
-	if v := must[Record](t)(Verify(wireOf(t, r), profile.PQPure, nowMs())); v.KeyID != keyID {
+	if v := must[Verified](t)(Verify(wireOf(t, r), profile.PQPure, nowMs())).Record(); v.KeyID != keyID {
 		t.Errorf("the verified domain record's key id %x, want %x", v.KeyID, keyID)
 	}
 }
@@ -713,7 +713,7 @@ func TestADomainRecordCarriesItsSubjectInTBS(t *testing.T) {
 	if b, _ := subject.AsBytes(); string(b) != "station-1" {
 		t.Errorf("the tbs's subject: %v, want station-1", subject)
 	}
-	if v := must[Record](t)(Verify(wireOf(t, r), profile.PQPure, nowMs())); string(v.Subject) != "station-1" {
+	if v := must[Verified](t)(Verify(wireOf(t, r), profile.PQPure, nowMs())).Record(); string(v.Subject) != "station-1" {
 		t.Errorf("the verified subject: %q, want station-1", v.Subject)
 	}
 }
@@ -756,7 +756,7 @@ func TestANodeRecordCarriesItsPayloadAndReadsBack(t *testing.T) {
 	opts := NodeRecordOptions{StationID: &station, Kind: "station", Hostname: "beam00", Lat: &lat, Lng: &lng,
 		Peers: [][32]byte{fill(7), fill(6), fill(7)}, DisplayName: "Beam 00"}
 	r := must[Record](t)(Sign(must[Record](t)(NewNodeRecord(nodeID, [][32]byte{fill(0x11)}, 3, opts)), keys.node))
-	v := must[Record](t)(Verify(wireOf(t, r), profile.PQPure, nowMs()))
+	v := must[Verified](t)(Verify(wireOf(t, r), profile.PQPure, nowMs())).Record()
 	latText, _ := v.Payload.Get("lat")
 	lngText, _ := v.Payload.Get("lng")
 	if a, _ := latText.AsText(); a != "50.8" {

@@ -158,7 +158,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `VerifyHeldObject` (and so from the handshake's checks and from
   `frame.VerifyRequest`, `VerifyReply`, `VerifyRelayError`,
   `VerifyProviderStream`, `VerifyCallerStream` and `VerifyPublication`, and
-  from `record.Verify` and `record.VerifyAuthorization`), and
+  from `record.Verify`), and
   `transport.DialTarget` (before dialing), instead of an error that blames a
   signature or a TLS handshake. Build without `GOFIPS140`, or with
   `GOFIPS140=v1.26.0` or later. CI runs the tests for it under
@@ -252,7 +252,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order: its size, its shape, its signature, a tbs of exactly its fields,
   created_at and expires_at within 5 minutes of the verifier's clock
   (`ErrNotYetValid`, `ErrExpired`), the lifetime of its type, its type's
-  payload rules (`ErrMalformed`) and its named signer. A type lives at most 48
+  payload rules (`ErrMalformed`) and its named signer. It returns a
+  `record.Verified`, which only `Verify` makes and whose `Record` method hands
+  out a copy, so nothing a caller does afterwards changes the record it holds.
+  A type lives at most 48
   hours for a node record or content announcement, 5 minutes for a procedure
   advertisement or station endpoint, 6 hours for realm stations, an org
   directory or a procedure delegation, 30 days for a realm member endorsement,
@@ -283,9 +286,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   derives a record's DHT storage key, and `ProcedureKey`, `ContentKey`,
   `StationEndpointKey`, `OrgDirectoryKey` and `ProcedureDelegationKey` derive
   the keys a lookup needs.
-  `VerifyAuthorization` checks a verified procedure advertisement's provider
+  `VerifyAuthorization` checks a procedure advertisement's provider
   authorization against a caller's `Trust`, the realm key, as `macula_record`'s
-  `verify_authorization` does. `ProcedureOrg` reads the procedure's org
+  `verify_authorization` does. It takes a `record.Verified`, so only a record
+  `Verify` returned reaches it. `ProcedureOrg` reads the procedure's org
   namespace. The org directory, signed by the realm key, must name the
   advertisement's realm and the procedure's org, and the procedure delegation,
   signed by the org key the directory names, must name the advertiser

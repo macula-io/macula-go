@@ -16,7 +16,7 @@ import (
 func TestAStationEndpointCarriesItsPayloadAndReadsBack(t *testing.T) {
 	keys := keysFor(t)
 	built := must[Record](t)(NewStationEndpoint(4433, StationEndpointOptions{HostAdvertised: []string{"beam00.lab"}}))
-	verified := must[Record](t)(Verify(wireOf(t, must[Record](t)(Sign(built, keys.node))), profile.PQPure, nowMs()))
+	verified := must[Verified](t)(Verify(wireOf(t, must[Record](t)(Sign(built, keys.node))), profile.PQPure, nowMs())).Record()
 	endpoint := must[StationEndpoint](t)(ReadStationEndpoint(verified))
 	if endpoint.QUICPort != 4433 || !slices.Equal(endpoint.HostAdvertised, []string{"beam00.lab"}) {
 		t.Errorf("read port %d and hosts %q, want 4433 and beam00.lab", endpoint.QUICPort, endpoint.HostAdvertised)

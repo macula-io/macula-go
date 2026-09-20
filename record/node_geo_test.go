@@ -109,7 +109,7 @@ func TestWhatTheBuilderWritesReadsBack(t *testing.T) {
 	keys := keysFor(t)
 	lat, lng := 90.0, -179.123456
 	built := must[Record](t)(NewNodeRecord(keys.node.KeyID(), nil, 0, NodeRecordOptions{Lat: &lat, Lng: &lng}))
-	verified := must[Record](t)(Verify(wireOf(t, must[Record](t)(Sign(built, keys.node))), profile.PQPure, nowMs()))
+	verified := must[Verified](t)(Verify(wireOf(t, must[Record](t)(Sign(built, keys.node))), profile.PQPure, nowMs())).Record()
 	node := must[NodeRecord](t)(ReadNodeRecord(verified))
 	if !sameCoordinate(node.Lat, &lat) || !sameCoordinate(node.Lng, &lng) {
 		t.Errorf("lat 90 and lng -179.123456 read back as %s and %s", showCoordinate(node.Lat), showCoordinate(node.Lng))
@@ -144,7 +144,7 @@ func readGeo(t *testing.T, key *identity.NodeKey, lat, lng cbor.Value) (*float64
 	node := must[Record](t)(NewNodeRecord(key.KeyID(), nil, 0, NodeRecordOptions{}))
 	entries, _ := node.Payload.AsMap()
 	node.Payload = cbor.Map(withEntry(withEntry(entries, "lat", lat), "lng", lng))
-	verified := must[Record](t)(Verify(wireOf(t, must[Record](t)(Sign(node, key))), profile.PQPure, nowMs()))
+	verified := must[Verified](t)(Verify(wireOf(t, must[Record](t)(Sign(node, key))), profile.PQPure, nowMs())).Record()
 	read := must[NodeRecord](t)(ReadNodeRecord(verified))
 	return read.Lat, read.Lng
 }

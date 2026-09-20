@@ -160,7 +160,7 @@ func TestTombstonesShareTheSlotAndKeyIDOfWhatTheyWithdraw(t *testing.T) {
 		tombstone := must[Record](t)(NewTombstone(c.withdrawn, ReasonRevoked, TombstoneOptions{}))
 		verified := verifyTombstoneByHand(t, tombstone, keys.node)
 		if c.signable {
-			verified = must[Record](t)(Verify(wireOf(t, must[Record](t)(Sign(tombstone, keys.node))), profile.PQPure, nowMs()))
+			verified = must[Verified](t)(Verify(wireOf(t, must[Record](t)(Sign(tombstone, keys.node))), profile.PQPure, nowMs())).Record()
 		}
 		if must[[32]byte](t)(StorageKey(verified)) != must[[32]byte](t)(StorageKey(c.withdrawn)) || verified.KeyID != c.withdrawn.KeyID {
 			t.Errorf("%s's tombstone does not take its slot and key id", c.name)
@@ -223,5 +223,5 @@ func TestNewTombstoneNeedsTheWithdrawnRecordsSlotFields(t *testing.T) {
 // verifyTombstoneByHand signs tombstone's tbs by hand with key and verifies it.
 func verifyTombstoneByHand(t *testing.T, tombstone Record, key *identity.NodeKey) Record {
 	t.Helper()
-	return must[Record](t)(Verify(signedByHand(t, label, tbsFields(tombstone), key), profile.PQPure, nowMs()))
+	return must[Verified](t)(Verify(signedByHand(t, label, tbsFields(tombstone), key), profile.PQPure, nowMs())).Record()
 }

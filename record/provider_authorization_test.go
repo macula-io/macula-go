@@ -3,11 +3,9 @@ package record
 import (
 	"bytes"
 	"cmp"
-	"crypto/fips140"
 	"errors"
 	"reflect"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 
@@ -21,12 +19,13 @@ import (
 // an_authorization_in_another_form_is_unsupported_test, and the org directory
 // and procedure delegation cases in macula_record_tests. A provider's
 // authorization has one form, an org directory and a procedure delegation; any
-// other form is unsupported. A procedure without an org namespace is not pinned
-// here while its rule awaits a design decision (org_namespace_required). A Go
-// key signs no org directory or delegation, so the realm and org keys here are
-// identity keys that sign those records by hand, which a verifier accepts since
-// it does not check a key's purpose. The certificate chain that no longer
-// authorizes is in certificate_form_test.go.
+// other form is unsupported. VerifyAuthorization takes a Verified, so every
+// advertisement here is signed and verified first. A procedure without an org
+// namespace is not pinned here while its rule awaits the namespace change
+// (procedure_namespace_required). A Go key signs no org directory or delegation,
+// so the realm and org keys here are identity keys that sign those records by
+// hand, which a verifier accepts since it does not check a key's purpose. The
+// certificate chain that no longer authorizes is in certificate_form_test.go.
 
 type authorizationTestKeys struct {
 	realm, org, strangerRealm, strangerOrg *identity.NodeKey
@@ -61,10 +60,11 @@ type delegationOverrides struct {
 	swapDirectoryAndGrant bool
 }
 
-// delegationBundle is keys.node's advertisement of procedure carrying the
-// realm-signed org directory and the org-signed delegation, as macula's
-// delegation_bundle/2 builds it, and the trust its caller holds.
-func delegationBundle(t *testing.T, procedure string, o delegationOverrides) (Record, Trust) {
+// delegationBundleWire is the wire form of keys.node's advertisement of
+// procedure carrying the realm-signed org directory and the org-signed
+// delegation, as macula's delegation_bundle/2 builds it, and the trust its
+// caller holds.
+func delegationBundleWire(t *testing.T, procedure string, o delegationOverrides) ([]byte, Trust) {
 	t.Helper()
 	keys, authorization := keysFor(t), authorizationKeysFor(t)
 	now := nowMs()
@@ -97,26 +97,32 @@ func delegationBundle(t *testing.T, procedure string, o delegationOverrides) (Re
 		Authorization: Authorization{Form: DelegationAuthorization, OrgDirectory: directory, ProcedureDelegation: delegation},
 		TTLMs:         uint64(5 * testMinute),
 	}))
-	advertisement := must[Record](t)(Verify(wireOf(t, must[Record](t)(Sign(built, keys.node))), profile.PQPure, nowMs()))
-	return advertisement, Trust{Profile: profile.PQPure, RealmKey: authorization.realm.PublicKey()}
+	return wireOf(t, must[Record](t)(Sign(built, keys.node))), Trust{Profile: profile.PQPure, RealmKey: authorization.realm.PublicKey()}
 }
 
-// signedAdvertisement is key's verified advertisement of procedure.
-func signedAdvertisement(t *testing.T, key *identity.NodeKey, procedure string, opts ProcedureAdvertisementOptions) Record {
+// delegationBundle is that advertisement as Verify returns it, with the trust.
+func delegationBundle(t *testing.T, procedure string, o delegationOverrides) (Verified, Trust) {
+	t.Helper()
+	wire, trust := delegationBundleWire(t, procedure, o)
+	return must[Verified](t)(Verify(wire, profile.PQPure, nowMs())), trust
+}
+
+// signedAdvertisement is key's advertisement of procedure, as Verify returns it.
+func signedAdvertisement(t *testing.T, key *identity.NodeKey, procedure string, opts ProcedureAdvertisementOptions) Verified {
 	t.Helper()
 	built := must[Record](t)(NewProcedureAdvertisement(key.KeyID(), fill(0x11), procedure, fill(2), opts))
-	return must[Record](t)(Verify(wireOf(t, must[Record](t)(Sign(built, key))), key.Profile(), nowMs()))
+	return must[Verified](t)(Verify(wireOf(t, must[Record](t)(Sign(built, key))), key.Profile(), nowMs()))
 }
 
-// signedAdvertisementCarrying is key's verified advertisement of procedure
-// carrying authorization as it is, whatever its form, built by hand since the
-// builder builds only the delegation form.
-func signedAdvertisementCarrying(t *testing.T, key *identity.NodeKey, procedure string, authorization cbor.Value) Record {
+// signedAdvertisementCarrying is key's advertisement of procedure carrying
+// authorization as it is, whatever its form, built by hand since the builder
+// builds only the delegation form, and returned as Verify returns it.
+func signedAdvertisementCarrying(t *testing.T, key *identity.NodeKey, procedure string, authorization cbor.Value) Verified {
 	t.Helper()
 	built := must[Record](t)(NewProcedureAdvertisement(key.KeyID(), fill(0x11), procedure, fill(2), ProcedureAdvertisementOptions{}))
 	entries, _ := built.Payload.AsMap()
 	built.Payload = cbor.Map(withEntry(entries, "authorization", authorization))
-	return must[Record](t)(Verify(wireOf(t, must[Record](t)(Sign(built, key))), key.Profile(), nowMs()))
+	return must[Verified](t)(Verify(wireOf(t, must[Record](t)(Sign(built, key))), key.Profile(), nowMs()))
 }
 
 func TestTheOrgNamespaceIsTheTextBeforeTheFirstSlash(t *testing.T) {
@@ -176,7 +182,7 @@ func TestADelegationWithABrokenLinkIsRefused(t *testing.T) {
 // too, refused as an invalid delegation once the directory itself holds.
 func TestAnOrgDirectoryWhereTheDelegationGoesIsAnInvalidDelegation(t *testing.T) {
 	advertisement, trust := delegationBundle(t, "acme/get_forecast_v1", delegationOverrides{})
-	read := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(advertisement))
+	read := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(advertisement.Record()))
 	keys := keysFor(t)
 	twice := signedAdvertisement(t, keys.node, "acme/get_forecast_v1", ProcedureAdvertisementOptions{
 		Authorization: Authorization{Form: DelegationAuthorization, OrgDirectory: read.Authorization.OrgDirectory,
@@ -205,12 +211,14 @@ func TestAProcedureNameStartingWithASlashIsMalformed(t *testing.T) {
 
 // An authorization of any other form, a certificate chain among them, is
 // unsupported, as verify_authorization/3 refuses it for 11.0.0; an org directory
-// and a procedure delegation that are not both byte strings are malformed; and
-// so is a record that is not a procedure advertisement.
+// and a procedure delegation that are not both byte strings are malformed; and so
+// is a record that is not a procedure advertisement, the zero Verified among
+// them. An authorization that is not a map never reaches VerifyAuthorization,
+// since Verify refuses the record that carries it.
 func TestAnAuthorizationOfAnotherFormIsUnsupported(t *testing.T) {
 	keys := keysFor(t)
 	bundle, trust := delegationBundle(t, "acme/x", delegationOverrides{})
-	read := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(bundle))
+	read := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(bundle.Record()))
 	directory := bytesEntry("org_directory", read.Authorization.OrgDirectory)
 	delegation := bytesEntry("procedure_delegation", read.Authorization.ProcedureDelegation)
 	chain := valueEntry("certificate_chain", cbor.List([]cbor.Value{cbor.Bytes([]byte{1})}))
@@ -230,9 +238,13 @@ func TestAnAuthorizationOfAnotherFormIsUnsupported(t *testing.T) {
 		wantRefusal(t, c.name, VerifyAuthorization(carrying, trust, nowMs()), c.want)
 	}
 	entries, _ := advertisementPayload(keys.node.KeyID()).AsMap()
-	notAMap := Record{Type: TypeProcedureAdvertisement, Payload: cbor.Map(withEntry(entries, "authorization", cbor.List(nil)))}
-	wantRefusal(t, "an authorization that is not a map, on a record no verifier would accept", VerifyAuthorization(notAMap, trust, nowMs()), ErrMalformed)
-	wantRefusal(t, "a node record", VerifyAuthorization(signedNodeRecord(t, keys.node), trust, nowMs()), ErrMalformed)
+	notAMap := recordFields(t, TypeProcedureAdvertisement, cbor.Map(withEntry(entries, "authorization", cbor.List(nil))),
+		nowMs(), 5*testMinute)
+	_, err := Verify(signedByHand(t, label, notAMap, keys.node), profile.PQPure, nowMs())
+	wantRefusal(t, "an authorization that is not a map, which Verify refuses first", err, ErrMalformed)
+	node := must[Verified](t)(Verify(wireOf(t, signedNodeRecord(t, keys.node)), profile.PQPure, nowMs()))
+	wantRefusal(t, "a node record", VerifyAuthorization(node, trust, nowMs()), ErrMalformed)
+	wantRefusal(t, "the zero Verified", VerifyAuthorization(Verified{}, trust, nowMs()), ErrMalformed)
 }
 
 // A caller trusts its realm for a provider's authorization by the realm key
@@ -273,25 +285,6 @@ func TestAProcedureDelegationNamesItsOrgKeyAndAdvertiser(t *testing.T) {
 		bytesEntry("advertiser", idBytes(8))}), nowMs(), testHour)
 	_, err = Verify(signedByHand(t, label, fields, authorization.org), profile.PQPure, nowMs())
 	wantRefusal(t, "a delegation whose org key is not its signer", err, ErrKeyIDMismatch)
-}
-
-// A binary built with GOFIPS140=v1.0.0 cannot check an authorization's records,
-// so VerifyAuthorization says so with identity.ErrPostQuantumUnavailable alone.
-// In any other binary the same advertisement reaches its org directory, which
-// does not verify. Which way a run goes is read from crypto/fips140. CI runs
-// this test both ways.
-func TestAnAuthorizationVerifierSaysWhetherTheBinaryHasMLDSA(t *testing.T) {
-	advertisement := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", fill(2), ProcedureAdvertisementOptions{
-		Authorization: Authorization{Form: DelegationAuthorization, OrgDirectory: []byte("not a record"), ProcedureDelegation: []byte("d")},
-	}))
-	err := VerifyAuthorization(advertisement, Trust{Profile: profile.PQPure, RealmKey: make([]byte, 2592)}, nowMs())
-	want, notWant := ErrOrgDirectoryInvalid, identity.ErrPostQuantumUnavailable
-	if strings.HasPrefix(fips140.Version(), "v1.0.") {
-		want, notWant = identity.ErrPostQuantumUnavailable, ErrOrgDirectoryInvalid
-	}
-	if !errors.Is(err, want) || errors.Is(err, notWant) {
-		t.Errorf("VerifyAuthorization with the module %s: %v, want %v alone, not %v", fips140.Version(), err, want, notWant)
-	}
 }
 
 // realmTrust is a trust holding the authorization tests' realm key.
