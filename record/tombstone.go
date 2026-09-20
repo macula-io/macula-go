@@ -123,8 +123,13 @@ func ReadTombstone(r Record) (Tombstone, error) {
 	}
 	withdrawnValue, present := r.Payload.Get("withdrawn_type")
 	withdrawn, isInt := withdrawnValue.AsInt64()
-	if !present || !isInt || withdrawn < 1 || withdrawn > 0xFF {
-		return Tombstone{}, fmt.Errorf("%w: a withdrawn_type of %v names no record type", ErrMalformed, withdrawnValue)
+	switch {
+	case !present:
+		return Tombstone{}, fmt.Errorf("%w: a tombstone that names no withdrawn_type", ErrMalformed)
+	case !isInt:
+		return Tombstone{}, fmt.Errorf("%w: a withdrawn_type that is not an integer from 1 to 255", ErrMalformed)
+	case withdrawn < 1 || withdrawn > 0xFF:
+		return Tombstone{}, fmt.Errorf("%w: a withdrawn_type of %d, which names no record type", ErrMalformed, withdrawn)
 	}
 	text := func(name string) string {
 		s, _ := payloadField(r.Payload, name).AsText()

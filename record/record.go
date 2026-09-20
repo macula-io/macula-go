@@ -176,8 +176,10 @@ func Envelope(t Type, payload cbor.Value, subject []byte, ttlMs uint64) (Record,
 // whose purpose does not fit r's type (ErrKeyPurposeMismatch); a lifetime that
 // runs backwards (ErrLifetimeReversed) or past its type's maximum
 // (ErrLifetimeTooLong); a payload that names a signer other than key
-// (ErrKeyIDMismatch); a tbs or payload a verifier would refuse, an empty
-// subject among them (ErrMalformed); and a record over 256 KiB
+// (ErrKeyIDMismatch); a tbs or payload a verifier would refuse (ErrMalformed),
+// read from the tbs decoded under the decoding rule as a verifier decodes it, so
+// that an empty subject, a payload nested past the rule's depth and a duplicate
+// or byte-string map key at any depth are among them; and a record over 256 KiB
 // (ErrRecordTooLarge).
 func Sign(r Record, key *identity.NodeKey) (Record, error) {
 	carried := key.PublicKey()
@@ -201,7 +203,11 @@ func Sign(r Record, key *identity.NodeKey) (Record, error) {
 	}
 	fields := tbsFields(r)
 	withAlg := append(slices.Clone(fields), textEntry("alg", definition.SigAlg))
-	if _, readable := readTBS(cbor.Map(withAlg)); !readable || !payloadOK(r.Type, r.Payload) {
+	tbs, err := cbor.Decode(cbor.Encode(cbor.Map(withAlg)))
+	if err != nil {
+		return Record{}, fmt.Errorf("%w: a record of type %#02x whose tbs the decoding rule refuses: %w", ErrMalformed, uint8(r.Type), err)
+	}
+	if read, readable := readTBS(tbs); !readable || !payloadOK(read.Type, read.Payload) {
 		return Record{}, fmt.Errorf("%w: a record of type %#02x that a verifier would refuse", ErrMalformed, uint8(r.Type))
 	}
 	if size := len(cbor.Encode(cbor.Map(fields))) + len(carried) + identity.SignatureSize(p); size > MaxRecordBytes {

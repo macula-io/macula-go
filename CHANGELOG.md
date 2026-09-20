@@ -243,10 +243,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the type (`ErrKeyPurposeMismatch`; a Go key signs the types an identity key
   signs), a lifetime that runs backwards or past its type's maximum
   (`ErrLifetimeReversed`, `ErrLifetimeTooLong`), a payload that names another
-  signer (`ErrKeyIDMismatch`), a tbs or payload a verifier would refuse, an
-  empty subject among them (`ErrMalformed`), and a record over 256 KiB
-  (`ErrRecordTooLarge`), so it signs no record a verifier refuses for anything
-  but its clock.
+  signer (`ErrKeyIDMismatch`), a tbs or payload a verifier would refuse, read
+  from the tbs decoded under the decoding rule, so among them an empty subject,
+  a payload nested too deep and a duplicate or byte-string map key at any
+  depth (`ErrMalformed`), and a record over 256 KiB (`ErrRecordTooLarge`), so
+  it signs no record a verifier refuses for anything but its clock.
   `record.Verify` reads a record's wire form in macula's
   order: its size, its shape, its signature, a tbs of exactly its fields,
   created_at and expires_at within 5 minutes of the verifier's clock
@@ -270,9 +271,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NewProcedureAdvertisement` and `ReadProcedureAdvertisement` build and read
   procedure advertisements, whose provider authorization, an org directory and
   a procedure delegation, travels in the payload and is never parsed by a
-  storing verifier. macula 11.0.0 has no other form: the builder builds none,
-  and the reader reads any other authorization map, a certificate chain among
-  them, as unsupported (`ErrAuthorizationFormUnsupported`).
+  storing verifier. macula 11.0.0 has no other form: the builder refuses to
+  build one (`ErrAuthorizationFormUnsupported`), and the reader reports any
+  other authorization map, a certificate chain among them, as the
+  `UnsupportedAuthorization` form, which `VerifyAuthorization` refuses.
   `NewContentAnnouncement` and `ReadContentAnnouncement`,
   `NewStationEndpoint` and `ReadStationEndpoint`, and `NewTombstone` and
   `ReadTombstone` build and read those records; a tombstone takes the slot of
