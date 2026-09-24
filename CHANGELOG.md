@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   direction. Checked against the LAMPS draft's own vector, a composite macula
   12.1.0 signed, and macula 12.1.0 verifying macula-go's keys (26 checks) and
   bindings (40 checks); the bindings fixture is rewritten by macula 12.1.0.
+- Neighbour signatures (D17), as macula 12 signs and reads them:
+  `frame.SignNeighbour` and `frame.VerifyNeighbour` wrap a control frame as
+  `{version, frame_type, neighbour}` in `pq_hybrid`, a held object under
+  `MACULA-PQ-NEIGHBOUR-V1` over the frame's fields, the connection hash and a
+  per-direction seq, and leave it as it is in `pq_pure`. The control frames a
+  client link sends in macula 12 have builders of their own:
+  `AdvertiseFrame` and `UnadvertiseFrame` (a signed record), `SubscribeFrame`,
+  `UnsubscribeFrame` and `GoodbyeFrame`. macula 12.1.0 verifies all five as
+  macula-go signs them (12 checks), and macula-go reads macula's
+  (`frame/testdata/erlang_neighbour.json`), refusing both at the wrong seq or
+  on another connection. The connection runtime still sends the earlier
+  frames; moving it onto these is the next step.
 - A request carries its delegation chain's proofs (`RequestSpec.Proofs`,
   `VerifiedRequest.Proofs`) in its signed part, as macula 12 does: at most
   `MaxProofs` (8) distinct byte strings of at most `MaxProofsBytes` (256 KiB)

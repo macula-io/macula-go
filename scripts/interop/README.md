@@ -15,6 +15,11 @@ These scripts check macula-go's post-quantum identity against a compiled macula,
   `gohandshake`). The frames macula made go to `handshake/testdata/erlang_handshake.json`, which
   `handshake/erlang_interop_test.go` checks in every `go test`.
 
+- macula's `macula_frame` verifies the control frames a client link sends (ADVERTISE, UNADVERTISE, SUBSCRIBE,
+  UNSUBSCRIBE, GOODBYE) as macula-go neighbour-signs them in `pq_hybrid` and sends them in `pq_pure`, and refuses one
+  read at the wrong seq (`goneighbour` into `erlang_neighbour.escript verify`). macula's own frames go to
+  `frame/testdata/erlang_neighbour.json` for `frame/neighbour_test.go`.
+
 `emit_erlang_composite.escript` writes a `pq_hybrid` composite that macula's `macula_node_keys` signed into
 `identity/testdata/lamps_mldsa87_rsa4096_pss_sha512/` (`otp_message.bin`, `otp_pk.bin`, `otp_sig.bin`), for
 `identity/node_key_test.go` to verify:

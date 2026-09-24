@@ -49,6 +49,13 @@ escript "$here/erlang_handshake.escript" answer "$lib/ebin" "$work/erlang_challe
 if [ -n "$fixtures" ]; then
   cp "$work/erlang_handshake.json" "$root/handshake/testdata/erlang_handshake.json"
 fi
+# Neighbour-signed control frames (D17): macula verifies the ones macula-go signs, and with a fixtures file writes its
+# own to frame/testdata/erlang_neighbour.json for frame/neighbour_test.go.
+(cd "$root" && go run ./scripts/interop/goneighbour "$work/go_neighbour.json")
+escript "$here/erlang_neighbour.escript" verify "$lib/ebin" "$work/go_neighbour.json" || status=1
+if [ -n "$fixtures" ]; then
+  escript "$here/erlang_neighbour.escript" emit "$lib/ebin" "$root/frame/testdata/erlang_neighbour.json"
+fi
 if [ -n "$fixtures" ]; then
   escript "$here/emit_erlang_bindings.escript" "$lib/ebin" "$fixtures" "${revision:0:7}"
 fi
