@@ -14,12 +14,13 @@ import (
 type Profile string
 
 const (
-	// PQPure is the CNSA 2.0 profile: ML-KEM-1024 key exchange and ML-DSA-87
-	// signatures, with no classical half.
+	// PQPure is the CNSA 2.0 profile: ML-DSA-87 signatures, with no classical
+	// half. Its connections negotiate transport.KeyExchangeGroups, as every
+	// macula 12 node's do.
 	PQPure Profile = "pq_pure"
-	// PQHybrid is the hybrid profile: SecP384r1MLKEM1024 key exchange,
-	// ML-DSA-87 alone in TLS, and every other signature Macula's composite
-	// ML-DSA-87-PS384, valid only if both halves verify.
+	// PQHybrid is the hybrid profile: ML-DSA-87 alone in TLS, and every other
+	// signature the LAMPS composite id-MLDSA87-RSA4096-PSS-SHA512, valid only
+	// if both halves verify.
 	PQHybrid Profile = "pq_hybrid"
 )
 
@@ -32,14 +33,9 @@ var (
 
 // Definition is what a profile uses.
 type Definition struct {
-	// KeyExchangeGroup is the one TLS key exchange group a node offers and
-	// accepts.
-	KeyExchangeGroup tls.CurveID
 	// TLSSignatureScheme is the signature scheme of a station's TLS leaf,
 	// ML-DSA-87 in both profiles.
 	TLSSignatureScheme tls.SignatureScheme
-	// TLSCipherSuite is the one TLS 1.3 cipher suite.
-	TLSCipherSuite uint16
 	// Hybrid reports whether identity, CONNECT and status signatures pair
 	// ML-DSA-87 with RSA-PSS-4096.
 	Hybrid bool
@@ -65,16 +61,12 @@ func (p Profile) Definition() (Definition, error) {
 	switch p {
 	case PQPure:
 		return Definition{
-			KeyExchangeGroup:   tls.MLKEM1024,
 			TLSSignatureScheme: tls.MLDSA87,
-			TLSCipherSuite:     tls.TLS_AES_256_GCM_SHA384,
 			SigAlg:             "ML-DSA-87",
 		}, nil
 	case PQHybrid:
 		return Definition{
-			KeyExchangeGroup:   tls.SecP384r1MLKEM1024,
 			TLSSignatureScheme: tls.MLDSA87,
-			TLSCipherSuite:     tls.TLS_AES_256_GCM_SHA384,
 			Hybrid:             true,
 			SigAlg:             "ML-DSA-87-PS384",
 		}, nil

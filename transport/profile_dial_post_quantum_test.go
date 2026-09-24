@@ -3,7 +3,6 @@ package transport
 import (
 	"context"
 	"crypto/fips140"
-	"crypto/tls"
 	"errors"
 	"strings"
 	"testing"
@@ -33,7 +32,7 @@ func TestDialTargetSaysWhetherTheBinaryHasMLDSA(t *testing.T) {
 		}
 		return
 	}
-	station := startStation(t, stationSpec{groups: []tls.CurveID{tls.MLKEM1024}, key: mldsa87Key(t), aes256: true})
+	station := startStation(t, stationSpec{groups: KeyExchangeGroups[:1], key: mldsa87Key(t)})
 	if _, err := dialWithin(t, targetFor(station, profile.PQPure)); err != nil {
 		t.Fatalf("DialTarget with the module %s: %v, want the station reached", fips140.Version(), err)
 	}

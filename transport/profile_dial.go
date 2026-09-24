@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 
 	"github.com/quic-go/quic-go"
@@ -46,9 +47,6 @@ var (
 	// ErrWrongKeyExchangeGroup is a TLS handshake that settled on a key
 	// exchange group other than the profile's.
 	ErrWrongKeyExchangeGroup = errors.New("transport: the TLS handshake used another key exchange group")
-	// ErrWrongCipherSuite is a TLS handshake that settled on a cipher suite
-	// other than the profile's TLS_AES_256_GCM_SHA384.
-	ErrWrongCipherSuite = errors.New("transport: the TLS handshake used another cipher suite")
 	// ErrStationCertificate is a station that presented anything but exactly
 	// one certificate, with a key of the profile's TLS signature scheme
 	// (ML-DSA-87 in both profiles).
@@ -113,6 +111,12 @@ func dialable(target Target) (profile.Definition, error) {
 	return p.Definition()
 }
 
+// KeyExchangeGroups are the TLS key exchange groups a dial offers and accepts,
+// in order: macula-pqc's, the crate every macula 12 station builds its TLS
+// from, whatever a node's profile. Nothing classical. A profile's own group is
+// a declared target in macula and not what a connection negotiates.
+var KeyExchangeGroups = []tls.CurveID{tls.SecP384r1MLKEM1024, tls.SecP256r1MLKEM768}
+
 // profileTLSConfig is a profile's TLS 1.3 client configuration. It holds no
 // session cache and disables session tickets, so no connection resumes, and
 // offers only macula's ALPN protocol, which crypto/tls requires a QUIC server
@@ -125,7 +129,7 @@ func profileTLSConfig(serverName string, definition profile.Definition, refused 
 		NextProtos:             []string{ALPN},
 		MinVersion:             tls.VersionTLS13,
 		MaxVersion:             tls.VersionTLS13,
-		CurvePreferences:       []tls.CurveID{definition.KeyExchangeGroup},
+		CurvePreferences:       slices.Clone(KeyExchangeGroups),
 		SessionTicketsDisabled: true,
 		InsecureSkipVerify:     true, // self-signed station certificates: VerifyConnection checks the profile instead
 		VerifyConnection: func(state tls.ConnectionState) error {
@@ -141,15 +145,15 @@ func profileTLSConfig(serverName string, definition profile.Definition, refused 
 	}
 }
 
-// checkProfileConnection refuses a TLS handshake that settled on a group or
-// cipher suite other than the profile's, or whose station presented anything
-// but exactly one certificate with a key of the profile's TLS signature scheme.
+// checkProfileConnection refuses a TLS handshake that settled on a group
+// outside KeyExchangeGroups, or whose station presented anything but exactly
+// one certificate with a key of the profile's TLS signature scheme. The TLS 1.3
+// cipher suite is not checked: macula's stations take rustls' default suites
+// and pin none, and Go orders its client's suites itself.
 func checkProfileConnection(state tls.ConnectionState, definition profile.Definition) error {
 	switch {
-	case state.CurveID != definition.KeyExchangeGroup:
+	case !slices.Contains(KeyExchangeGroups, state.CurveID):
 		return fmt.Errorf("%w: %s", ErrWrongKeyExchangeGroup, state.CurveID)
-	case state.CipherSuite != definition.TLSCipherSuite:
-		return fmt.Errorf("%w: %s", ErrWrongCipherSuite, tls.CipherSuiteName(state.CipherSuite))
 	case len(state.PeerCertificates) != 1 || !keyOfScheme(state.PeerCertificates[0].PublicKey, definition.TLSSignatureScheme):
 		return ErrStationCertificate
 	}

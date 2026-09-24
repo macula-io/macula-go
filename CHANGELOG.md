@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   direction. Checked against the LAMPS draft's own vector, a composite macula
   12.1.0 signed, and macula 12.1.0 verifying macula-go's keys (26 checks) and
   bindings (40 checks); the bindings fixture is rewritten by macula 12.1.0.
+- A profile dial offers and accepts macula-pqc's key exchange groups,
+  `transport.KeyExchangeGroups` (SecP384r1MLKEM1024, then SecP256r1MLKEM768),
+  whatever the node's profile, as every macula 12 station does, and checks no
+  cipher suite. `ErrWrongCipherSuite` is gone, as are `profile.Definition`'s
+  `KeyExchangeGroup` and `TLSCipherSuite`. `pq_pure` no longer offers
+  ML-KEM-1024 alone, which no macula 12 station accepts.
 
 - `cbor.Decode` decodes under macula 11.0.0's decoding rule and returns
   `(Value, error)`. It refuses bytes after the top-level value, map keys other
@@ -148,9 +154,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   self-signed station certificate: the completed handshake, whose signature
   crypto/tls verifies against the leaf, shows that the station holds the
   leaf's key. It refuses a target without an expected node_id or a known
-  profile before dialing, and a handshake on another group
-  (`ErrWrongKeyExchangeGroup`), on any cipher suite but
-  `TLS_AES_256_GCM_SHA384` (`ErrWrongCipherSuite`), with anything but one
+  profile before dialing, and a handshake on a group outside
+  `transport.KeyExchangeGroups` (`ErrWrongKeyExchangeGroup`), with anything but one
   certificate with a key of the profile's signature scheme, ML-DSA-87 in both
   profiles (`ErrStationCertificate`), or with no ALPN protocol or another one.
   It returns the caller's own copy of the leaf DER as it arrived, for the

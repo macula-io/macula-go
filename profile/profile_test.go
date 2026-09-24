@@ -36,20 +36,18 @@ func TestParseRefusesEveryOtherValue(t *testing.T) {
 func TestEachProfileUsesItsLevel5Algorithms(t *testing.T) {
 	cases := []struct {
 		p      Profile
-		group  tls.CurveID
 		hybrid bool
 		sigAlg string
 	}{
-		{PQPure, tls.MLKEM1024, false, "ML-DSA-87"},
-		{PQHybrid, tls.SecP384r1MLKEM1024, true, "ML-DSA-87-PS384"},
+		{PQPure, false, "ML-DSA-87"},
+		{PQHybrid, true, "ML-DSA-87-PS384"},
 	}
 	for _, c := range cases {
 		d, err := c.p.Definition()
 		if err != nil {
 			t.Fatalf("%s: %v", c.p, err)
 		}
-		if d.KeyExchangeGroup != c.group || d.TLSSignatureScheme != tls.MLDSA87 ||
-			d.TLSCipherSuite != tls.TLS_AES_256_GCM_SHA384 || d.Hybrid != c.hybrid || d.SigAlg != c.sigAlg {
+		if d.TLSSignatureScheme != tls.MLDSA87 || d.Hybrid != c.hybrid || d.SigAlg != c.sigAlg {
 			t.Errorf("%s: definition %+v", c.p, d)
 		}
 	}
