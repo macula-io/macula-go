@@ -18,6 +18,7 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
+	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/transport"
 )
@@ -72,17 +73,11 @@ func run(host string, port uint16, profileName, node string, hold time.Duration)
 	fmt.Printf("tls: group %s, suite %s, leaf %s, resumed %t\n",
 		state.CurveID, tls.CipherSuiteName(state.CipherSuite), leaf.PublicKeyAlgorithm, state.DidResume)
 	fmt.Printf("station: node_id %x, capabilities %d\n", link.StationNodeID(), link.StationCapabilities())
-	for _, c := range []struct {
-		name string
-		call stationlink.Call
-	}{
-		{"_macula.ping", stationlink.Call{Procedure: "_macula.ping", Payload: cbor.Map(nil)}},
-		{"_dht.find_records_by_type node_record", stationlink.Call{Procedure: "_dht.find_records_by_type",
-			Payload: cbor.Map([]cbor.MapEntry{{Key: cbor.Text("type"), Val: cbor.Uint64(0x01)}})}},
-	} {
-		callStarted := time.Now()
-		result, err := link.Call(ctx, c.call)
-		fmt.Printf("call %s: %s in %s\n", c.name, describe(result, err), time.Since(callStarted).Round(time.Millisecond))
+	callStarted := time.Now()
+	_, err = link.Call(ctx, stationlink.Call{Procedure: "_macula.ping", Payload: cbor.Map(nil)})
+	fmt.Printf("call _macula.ping: %v in %s\n", outcome(err), time.Since(callStarted).Round(time.Millisecond))
+	if err := dhtChecks(ctx, link, key, nodeID); err != nil {
+		return err
 	}
 	select {
 	case <-time.After(hold):
@@ -93,16 +88,49 @@ func run(host string, port uint16, profileName, node string, hold time.Duration)
 	return link.Close("client_stop")
 }
 
-// describe is a call's outcome in one line: the result's shape, or the error.
-func describe(result cbor.Value, err error) string {
+// outcome is a call's error in one line, or "RESULT".
+func outcome(err error) string {
 	if err != nil {
 		return "error " + err.Error()
 	}
-	if list, isList := result.AsList(); isList {
-		return fmt.Sprintf("RESULT, a list of %d", len(list))
+	return "RESULT"
+}
+
+// dhtChecks reads the station's own records from its DHT, verified, then puts
+// a node record this client signs and finds it again.
+func dhtChecks(ctx context.Context, link *stationlink.Link, key *identity.NodeKey, station [32]byte) error {
+	started := time.Now()
+	nodes, dropped, err := link.FindRecordsByType(ctx, record.TypeNodeRecord)
+	fmt.Printf("dht find_records_by_type node_record: %d verified, %d dropped, %v in %s\n",
+		len(nodes), dropped, outcome(err), time.Since(started).Round(time.Millisecond))
+	started = time.Now()
+	endpoint, err := link.FindRecord(ctx, record.StationEndpointKey(station))
+	fmt.Printf("dht find_record station_endpoint: type %#x, %v in %s\n",
+		uint8(endpoint.Record().Type), outcome(err), time.Since(started).Round(time.Millisecond))
+	nodeID, err := key.NodeID()
+	if err != nil {
+		return err
 	}
-	if text, isText := result.AsText(); isText {
-		return fmt.Sprintf("RESULT %q", text)
+	unsigned, err := record.NewNodeRecord(nodeID, nil, 0, record.NodeRecordOptions{DisplayName: "golivelink"})
+	if err != nil {
+		return err
 	}
-	return fmt.Sprintf("RESULT %v", result)
+	signed, err := record.Sign(unsigned, key)
+	if err != nil {
+		return err
+	}
+	wire, err := record.Encode(signed)
+	if err != nil {
+		return err
+	}
+	started = time.Now()
+	err = link.PutRecord(ctx, wire)
+	fmt.Printf("dht put_record own node_record (%d bytes): %v in %s\n", len(wire), outcome(err), time.Since(started).Round(time.Millisecond))
+	storageKey, err := record.StorageKey(signed)
+	if err != nil {
+		return err
+	}
+	found, err := link.FindRecord(ctx, storageKey)
+	fmt.Printf("dht find_record own node_record: type %#x, %v\n", uint8(found.Record().Type), outcome(err))
+	return nil
 }

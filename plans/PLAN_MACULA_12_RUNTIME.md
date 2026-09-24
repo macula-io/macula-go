@@ -59,7 +59,7 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
   side.
 - [x] B2 CALL on the link: signed requests, reply and relay-error
   verification, the liveness probe.
-- [ ] B3 DHT on the link: record bytes, verification, storage keys.
+- [x] B3 DHT on the link: record bytes, verification, storage keys.
 - [ ] B4 PubSub on the link: PUBLISH, SUBSCRIBE, EVENT verification, dedup.
 - [ ] B5 Serving: ADVERTISE with the org directory and delegation chain,
   inbound CALL handling, RESULT signing, withdrawal.
@@ -92,6 +92,13 @@ answered with the station's own signed relay error `unknown_next_peer` in
 20 ms, which macula's link counts as alive; `_dht.find_records_by_type`
 {type: node_record} is answered with a verified RESULT, a list of one (the
 station's own record), in 17 ms; nothing unrouted.
+
+**2026-09-24, B3 against the same lab station:** find_records_by_type
+node_record: 1 verified, 0 dropped, 17 ms; find_record of the station's
+station_endpoint key: a verified 0x12 record, 17 ms; put_record of a node
+record macula-go signed in pq_hybrid (8,518 bytes, the LAMPS composite):
+accepted by the station, which verifies every put, 23 ms; find_record of
+its storage key: the same record back, verified.
 
 ## Found in macula while reading it (reported, not fixed here)
 

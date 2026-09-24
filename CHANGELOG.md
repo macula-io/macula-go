@@ -29,7 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns the RESULT payload, a `*ProviderError` or a `*RelayError`, each
   verified for its request; a reply that does not verify is counted and
   ignored. The link probes `_macula.ping` every 30 s and ends after two
-  misses. The runtime moves onto it chunk by chunk
+  misses. `PutRecord`, `FindRecord`, `FindRecords` and `FindRecordsByType`
+  reach the station's DHT as macula's facade does (station calls on the zero
+  realm carrying record wire bytes); every record found is verified before it
+  is handed on, and one that does not verify is dropped and counted. The
+  runtime moves onto it chunk by chunk
   (`plans/PLAN_MACULA_12_RUNTIME.md`).
 - Neighbour signatures (D17), as macula 12 signs and reads them:
   `frame.SignNeighbour` and `frame.VerifyNeighbour` wrap a control frame as
