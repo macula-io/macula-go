@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   direction. Checked against the LAMPS draft's own vector, a composite macula
   12.1.0 signed, and macula 12.1.0 verifying macula-go's keys (26 checks) and
   bindings (40 checks); the bindings fixture is rewritten by macula 12.1.0.
+- A request carries its delegation chain's proofs (`RequestSpec.Proofs`,
+  `VerifiedRequest.Proofs`) in its signed part, as macula 12 does: at most
+  `MaxProofs` (8) distinct byte strings of at most `MaxProofsBytes` (256 KiB)
+  in all. `SignCall` refuses a set outside that with `ErrProofsOutOfBound`,
+  and a verifier refuses it as a malformed frame. The shared decoding-rule
+  vectors are macula v12.1.0's (59 entries); the five read "via"
+  request_fields run in `frame`'s `TestRequestFieldVectors`.
 - The post-quantum handshake is version 4, as macula 12's: CONNECT always
   carries `member_endorsement`, empty when the node holds none
   (`ClientSession.MemberEndorsement`), outside the proof, and the station is

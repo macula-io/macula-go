@@ -39,6 +39,10 @@ var (
 	// ErrMalformedFrame is a frame, or the signed object it carries, without
 	// exactly the shape and fields of its type.
 	ErrMalformedFrame = errors.New("frame: malformed frame")
+	// ErrProofsOutOfBound is a request whose delegation chain proofs every
+	// reader would refuse: more than MaxProofs, more than MaxProofsBytes in
+	// all, or one repeated.
+	ErrProofsOutOfBound = errors.New("frame: the request's proofs are outside the bound")
 	// ErrKeyIDMismatch is a signed object whose caller, responded_by,
 	// reported_by, signer or publisher is not the key id of the key it verified
 	// with, or a provider's later stream frame that carries a key other than its

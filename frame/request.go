@@ -20,17 +20,28 @@ const (
 // when the request carries none. SourceRoute (nil for none) and RetryBudget (nil
 // for none) are routing fields outside the signature.
 type RequestSpec struct {
-	RequestID   [16]byte
-	Realm       [32]byte
-	Procedure   string
-	Target      [32]byte
-	Deadline    uint64
-	Payload     cbor.Value
-	Mode        *StreamMode
-	Token       []byte
+	RequestID [16]byte
+	Realm     [32]byte
+	Procedure string
+	Target    [32]byte
+	Deadline  uint64
+	Payload   cbor.Value
+	Mode      *StreamMode
+	Token     []byte
+	// Proofs are the tokens of the delegation chain Token rests on, carried in
+	// the signed request and found by content id: at most MaxProofs distinct
+	// byte strings of at most MaxProofsBytes in all. None: no proofs field.
+	Proofs      [][]byte
 	SourceRoute []byte
 	RetryBudget *uint64
 }
+
+// The bound on a request's proofs, as macula 12's request table reads them
+// (D7, chain transport): eight tokens, 256 KiB in all, none repeated.
+const (
+	MaxProofs      = 8
+	MaxProofsBytes = 256 * 1024
+)
 
 // VerifiedRequest is a CALL or STREAM_OPEN whose request verified: its fields,
 // the caller's key as carried, and RequestHash, the SHA-384 of its tbs. Mode is
@@ -49,6 +60,9 @@ type VerifiedRequest struct {
 	Payload     cbor.Value
 	Mode        *StreamMode
 	Token       []byte
+	// Proofs are the request's delegation chain proofs, nil when it carries
+	// none.
+	Proofs [][]byte
 }
 
 // requestRoutes are the routing fields a CALL or STREAM_OPEN may carry.
@@ -77,6 +91,9 @@ func signRequest(frameType string, spec RequestSpec, key *identity.NodeKey) (cbo
 	if err := requestBuildable(frameType, spec, key); err != nil {
 		return cbor.Value{}, err
 	}
+	if !proofsWithinBound(proofsValue(spec.Proofs)) {
+		return cbor.Value{}, ErrProofsOutOfBound
+	}
 	caller := key.KeyID()
 	fields := []cbor.MapEntry{
 		textEntry("frame_type", frameType),
@@ -93,6 +110,9 @@ func signRequest(frameType string, spec RequestSpec, key *identity.NodeKey) (cbo
 	}
 	if spec.Token != nil {
 		fields = append(fields, bytesEntry("token", spec.Token))
+	}
+	if len(spec.Proofs) > 0 {
+		fields = append(fields, valueEntry("proofs", proofsValue(spec.Proofs)))
 	}
 	request, err := identity.SignObject(requestLabel, fields, key)
 	if err != nil {
@@ -192,7 +212,46 @@ func verifiedRequest(frameType string, verified identity.VerifiedObject, fields 
 		b, _ := token.AsBytes()
 		request.Token = append([]byte{}, b...)
 	}
+	if proofs, has := fields["proofs"]; has {
+		entries, _ := proofs.AsList()
+		for _, e := range entries {
+			b, _ := e.AsBytes()
+			request.Proofs = append(request.Proofs, append([]byte{}, b...))
+		}
+	}
 	return request
+}
+
+func proofsValue(proofs [][]byte) cbor.Value {
+	entries := make([]cbor.Value, len(proofs))
+	for i, p := range proofs {
+		entries[i] = cbor.Bytes(p)
+	}
+	return cbor.List(entries)
+}
+
+// proofsWithinBound is macula's bytes_set rule for proofs: a list of at most
+// MaxProofs byte strings, MaxProofsBytes in all, no entry repeated (the set is
+// read by content id, so a repeat says nothing and only adds bytes).
+func proofsWithinBound(v cbor.Value) bool {
+	entries, isList := v.AsList()
+	if !isList || len(entries) > MaxProofs {
+		return false
+	}
+	seen := make(map[string]struct{}, len(entries))
+	total := 0
+	for _, e := range entries {
+		b, isBytes := e.AsBytes()
+		if !isBytes {
+			return false
+		}
+		if _, repeated := seen[string(b)]; repeated {
+			return false
+		}
+		seen[string(b)] = struct{}{}
+		total += len(b)
+	}
+	return total <= MaxProofsBytes
 }
 
 func requestTable(frameType string) map[string]fieldRule {
@@ -208,5 +267,6 @@ func requestTable(frameType string) map[string]fieldRule {
 		"payload":    anyValue,
 		"mode":       textIn(ServerStream.Name(), ClientStream.Name(), Bidi.Name()),
 		"token":      anyBytes,
+		"proofs":     proofsWithinBound,
 	}
 }
