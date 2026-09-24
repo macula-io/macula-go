@@ -160,13 +160,12 @@ func (l *Link) evented(v cbor.Value) {
 	via, _ := fieldOf(v, "delivered_via").AsText()
 	event := Event{Publisher: publication.Publisher, Realm: publication.Realm, Topic: publication.Topic,
 		Seq: publication.Seq, PublishedAt: publication.PublishedAt, Payload: publication.Payload, DeliveredVia: via}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if _, seen := l.seen[publication.PublicationHash]; seen {
-		l.unrouted["event_duplicate"]++
+	if !l.dedup.first(publication.PublicationHash, publication.ExpiresAt, now) {
+		l.count("event_duplicate")
 		return
 	}
-	l.remember(publication.PublicationHash, publication.ExpiresAt, now)
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	subs := l.subs[topicKey{realm: publication.Realm, topic: publication.Topic}]
 	if len(subs) == 0 {
 		l.unrouted["event_unsubscribed"]++
@@ -179,17 +178,6 @@ func (l *Link) evented(v cbor.Value) {
 			l.unrouted["event_overflow"]++
 		}
 	}
-}
-
-// remember keeps a delivered publication's hash until it expires, and lets go
-// of the hashes that already have. Called with l.mu held.
-func (l *Link) remember(hash [48]byte, expiresAt uint64, nowMs int64) {
-	for seen, until := range l.seen {
-		if until < uint64(nowMs) {
-			delete(l.seen, seen)
-		}
-	}
-	l.seen[hash] = expiresAt
 }
 
 // closeSubscriptions ends every subscription when the link ends.

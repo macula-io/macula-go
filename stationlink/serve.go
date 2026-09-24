@@ -338,7 +338,7 @@ func (l *Link) called(v cbor.Value) {
 		l.count("call_for_another_node")
 		return
 	}
-	verdict := l.admission.admit(request, time.Now().UnixMilli())
+	verdict := l.admission.admit(request, l.share, time.Now().UnixMilli())
 	switch {
 	case verdict.refusal != "":
 		l.sendReply(l.providerError(request, verdict.refusal, nil))

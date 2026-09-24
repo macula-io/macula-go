@@ -38,9 +38,17 @@ func newClient(t *testing.T, p profile.Profile) clientFor {
 
 func dial(t *testing.T, s *testStation, c clientFor) (*Link, error) {
 	t.Helper()
+	return dialWith(t, s, c, func(*Config) {})
+}
+
+// dialWith dials s as c, with shape changing the Config first.
+func dialWith(t *testing.T, s *testStation, c clientFor, shape func(*Config)) (*Link, error) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	link, err := Dial(ctx, Config{Target: s.target(), IdentityKey: c.key, Issuer: c.issuer})
+	cfg := Config{Target: s.target(), IdentityKey: c.key, Issuer: c.issuer}
+	shape(&cfg)
+	link, err := Dial(ctx, cfg)
 	if err == nil {
 		t.Cleanup(func() { _ = link.Close("test_done") })
 	}

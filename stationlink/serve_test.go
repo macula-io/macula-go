@@ -88,7 +88,17 @@ type servingStation struct {
 
 func startServing(t *testing.T, p profile.Profile) (*Link, *servingStation, realmFixture) {
 	t.Helper()
-	link, s := linkWithStation(t, p)
+	return startServingWith(t, p, func(*Config) {})
+}
+
+// startServingWith is startServing with the link's Config shaped first.
+func startServingWith(t *testing.T, p profile.Profile, shape func(*Config)) (*Link, *servingStation, realmFixture) {
+	t.Helper()
+	s := startTestStation(t, p, "")
+	link, err := dialWith(t, s, newClient(t, p), shape)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
 	fixture := newRealmFixture(t, p, link.NodeID())
 	d := &dhtStation{byKey: map[[32]byte][][]byte{}, byType: map[record.Type][][]byte{}}
 	orgKeyID := identity.KeyIDOf(fixture.org.PublicKey(), p)

@@ -17,6 +17,8 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -74,6 +76,15 @@ type Config struct {
 	// its own. Links of one identity key share one.
 	PublicationSeq    *PublicationSeq
 	MemberEndorsement []byte
+	// Admission judges the CALLs this link receives; nil gives the link its
+	// own, with DefaultAdmissionLimits. Links of one node share one.
+	Admission *Admission
+	// Share is this link's place in the admission: the station it dialed,
+	// host:port, when empty.
+	Share string
+	// Dedup delivers each publication once; nil gives the link its own.
+	// Links of one node share one.
+	Dedup *EventDedup
 }
 
 // Link is a handshaked link to one station.
@@ -98,9 +109,10 @@ type Link struct {
 	unrouted     map[string]uint64
 	pending      map[[16]byte]*pendingCall
 	subs         map[topicKey][]*Subscription
-	seen         map[[48]byte]uint64
+	dedup        *EventDedup
 	served       map[servedKey]*Served
-	admission    *admission
+	admission    *Admission
+	share        string
 	self         [32]byte
 	seq          *PublicationSeq
 	done         chan struct{}
@@ -114,6 +126,11 @@ type Link struct {
 func Dial(ctx context.Context, cfg Config) (*Link, error) {
 	if cfg.IdentityKey == nil || cfg.Issuer == nil || cfg.IdentityKey.Profile() != cfg.Target.Profile {
 		return nil, ErrInvalidConfig
+	}
+	if cfg.Admission != nil {
+		if err := cfg.Admission.limits.Validate(); err != nil {
+			return nil, errors.Join(ErrInvalidConfig, err)
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, HandshakeTimeout)
 	defer cancel()
@@ -178,6 +195,18 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 	if seq == nil {
 		seq = &PublicationSeq{}
 	}
+	admission := cfg.Admission
+	if admission == nil {
+		admission = NewAdmission(DefaultAdmissionLimits())
+	}
+	share := cfg.Share
+	if share == "" {
+		share = net.JoinHostPort(cfg.Target.Host, strconv.Itoa(int(cfg.Target.Port)))
+	}
+	dedup := cfg.Dedup
+	if dedup == nil {
+		dedup = NewEventDedup()
+	}
 	statements, unsubscribe, err := cfg.Issuer.Subscribe(sha512.Sum384(material.Binding.TBS))
 	if err != nil {
 		return nil, err
@@ -186,8 +215,8 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		conn: dialed.Conn, stream: stream, writer: writer, profile: cfg.Target.Profile, key: cfg.IdentityKey,
 		station: station, stationCap: capabilities, connection: sha512.Sum384(challenge),
 		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, pending: map[[16]byte]*pendingCall{},
-		subs: map[topicKey][]*Subscription{}, seen: map[[48]byte]uint64{}, self: self, seq: seq,
-		served: map[servedKey]*Served{}, admission: newAdmission(),
+		subs: map[topicKey][]*Subscription{}, dedup: dedup, self: self, seq: seq,
+		served: map[servedKey]*Served{}, admission: admission, share: share,
 		done: make(chan struct{}),
 	}
 	link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })
