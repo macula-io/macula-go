@@ -60,7 +60,7 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
 - [x] B2 CALL on the link: signed requests, reply and relay-error
   verification, the liveness probe.
 - [x] B3 DHT on the link: record bytes, verification, storage keys.
-- [ ] B4 PubSub on the link: PUBLISH, SUBSCRIBE, EVENT verification, dedup.
+- [x] B4 PubSub on the link: PUBLISH, SUBSCRIBE, EVENT verification, dedup.
 - [ ] B5 Serving: ADVERTISE with the org directory and delegation chain,
   inbound CALL handling, RESULT signing, withdrawal.
 - [ ] B6 Pool and direct dial on `stationlink`: seeds with expected node ids,
@@ -99,6 +99,10 @@ station_endpoint key: a verified 0x12 record, 17 ms; put_record of a node
 record macula-go signed in pq_hybrid (8,518 bytes, the LAMPS composite):
 accepted by the station, which verifies every put, 23 ms; find_record of
 its storage key: the same record back, verified.
+
+**2026-09-24, B4 against the same lab station:** SUBSCRIBE, then PUBLISH
+of a publication signed in pq_hybrid; the station delivered it back as a
+verified EVENT (`delivered_via` direct) in 9 ms; nothing unrouted.
 
 ## Found in macula while reading it (reported, not fixed here)
 

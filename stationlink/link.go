@@ -67,9 +67,12 @@ func (e *GoodbyeError) Error() string { return "stationlink: the station said go
 // identity key, the statement issuer that holds its CONNECT key and statements,
 // and the realm membership endorsement to present, or none.
 type Config struct {
-	Target            transport.Target
-	IdentityKey       *identity.NodeKey
-	Issuer            *identity.StatementIssuer
+	Target      transport.Target
+	IdentityKey *identity.NodeKey
+	Issuer      *identity.StatementIssuer
+	// PublicationSeq numbers this identity\'s publications; nil gives the link
+	// its own. Links of one identity key share one.
+	PublicationSeq    *PublicationSeq
 	MemberEndorsement []byte
 }
 
@@ -94,6 +97,10 @@ type Link struct {
 	unsubscribe  func()
 	unrouted     map[string]uint64
 	pending      map[[16]byte]*pendingCall
+	subs         map[topicKey][]*Subscription
+	seen         map[[48]byte]uint64
+	self         [32]byte
+	seq          *PublicationSeq
 	done         chan struct{}
 	err          error
 	endOnce      sync.Once
@@ -161,6 +168,14 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		return nil, err
 	}
 	_ = stream.SetReadDeadline(time.Time{})
+	self, err := cfg.IdentityKey.NodeID()
+	if err != nil {
+		return nil, err
+	}
+	seq := cfg.PublicationSeq
+	if seq == nil {
+		seq = &PublicationSeq{}
+	}
 	statements, unsubscribe, err := cfg.Issuer.Subscribe(sha512.Sum384(material.Binding.TBS))
 	if err != nil {
 		return nil, err
@@ -169,6 +184,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		conn: dialed.Conn, stream: stream, writer: writer, profile: cfg.Target.Profile, key: cfg.IdentityKey,
 		station: station, stationCap: capabilities, connection: sha512.Sum384(challenge),
 		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, pending: map[[16]byte]*pendingCall{},
+		subs: map[topicKey][]*Subscription{}, seen: map[[48]byte]uint64{}, self: self, seq: seq,
 		done: make(chan struct{}),
 	}
 	link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })
@@ -315,6 +331,9 @@ func (l *Link) received(payload []byte) error {
 		l.recvSeq++
 	}
 	switch frameType {
+	case "event":
+		l.evented(opened)
+		return nil
 	case "result", "error":
 		l.replied(opened)
 		return nil
@@ -357,6 +376,7 @@ func (l *Link) end(err error) {
 		}
 		l.mu.Unlock()
 		l.unsubscribe()
+		l.closeSubscriptions()
 		_ = l.conn.CloseWithError(0, "link ended")
 		close(l.done)
 	})

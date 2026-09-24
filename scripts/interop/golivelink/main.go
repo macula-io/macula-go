@@ -79,6 +79,9 @@ func run(host string, port uint16, profileName, node string, hold time.Duration)
 	if err := dhtChecks(ctx, link, key, nodeID); err != nil {
 		return err
 	}
+	if err := pubsubCheck(link); err != nil {
+		return err
+	}
 	select {
 	case <-time.After(hold):
 		fmt.Printf("held %s: still up, unrouted %v\n", hold, link.Unrouted())
@@ -86,6 +89,32 @@ func run(host string, port uint16, profileName, node string, hold time.Duration)
 		return fmt.Errorf("the link ended while held: %w", link.Err())
 	}
 	return link.Close("client_stop")
+}
+
+// pubsubCheck subscribes to a topic, publishes on it, and waits for the
+// station to deliver the publication back as a verified event.
+func pubsubCheck(link *stationlink.Link) error {
+	realm := [32]byte{0x6c}
+	topic := "io.macula/golivelink/live/check/publication_heard_v1"
+	sub, err := link.Subscribe(realm, topic)
+	if err != nil {
+		return err
+	}
+	defer sub.Unsubscribe()
+	time.Sleep(200 * time.Millisecond)
+	started := time.Now()
+	if err := link.Publish(stationlink.Publication{Realm: realm, Topic: topic, Payload: cbor.Text("heard")}); err != nil {
+		return err
+	}
+	select {
+	case event := <-sub.Events():
+		text, _ := event.Payload.AsText()
+		fmt.Printf("pubsub: event %q from %x via %s in %s\n", text, event.Publisher[:4], event.DeliveredVia,
+			time.Since(started).Round(time.Millisecond))
+	case <-time.After(5 * time.Second):
+		fmt.Printf("pubsub: no event within 5s; unrouted %v\n", link.Unrouted())
+	}
+	return nil
 }
 
 // outcome is a call's error in one line, or "RESULT".

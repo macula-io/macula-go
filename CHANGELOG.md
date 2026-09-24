@@ -32,8 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   misses. `PutRecord`, `FindRecord`, `FindRecords` and `FindRecordsByType`
   reach the station's DHT as macula's facade does (station calls on the zero
   realm carrying record wire bytes); every record found is verified before it
-  is handed on, and one that does not verify is dropped and counted. The
-  runtime moves onto it chunk by chunk
+  is handed on, and one that does not verify is dropped and counted.
+  `Publish` sends a publication signed with the link's identity key, its seq
+  from a `PublicationSeq` (wall-clock microseconds, then counting up, shared
+  by the links of one key); `Subscribe` sends SUBSCRIBE and delivers each
+  EVENT whose publication verifies, once, until it expires; `Unsubscribe`
+  sends UNSUBSCRIBE when the last subscription to a realm and topic ends.
+  The runtime moves onto it chunk by chunk
   (`plans/PLAN_MACULA_12_RUNTIME.md`).
 - Neighbour signatures (D17), as macula 12 signs and reads them:
   `frame.SignNeighbour` and `frame.VerifyNeighbour` wrap a control frame as
