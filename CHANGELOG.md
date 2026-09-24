@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   direction. Checked against the LAMPS draft's own vector, a composite macula
   12.1.0 signed, and macula 12.1.0 verifying macula-go's keys (26 checks) and
   bindings (40 checks); the bindings fixture is rewritten by macula 12.1.0.
+- `stationlink`, a client's link to one macula 12 station, as macula's
+  `macula_station_link`: `Dial` dials the target through
+  `transport.DialTarget`, runs the v4 handshake on one control stream with
+  the CONNECT material of an `identity.StatementIssuer`, and keeps the link:
+  it sends its status statement at every reissue, ends when the station's
+  statement lapses five minutes past expiry or its TLS binding reaches
+  not_after, neighbour-signs control frames with a seq per direction (and
+  ends on one out of sequence), ends on the station's GOODBYE, and sends its
+  own on `Close`. The runtime moves onto it chunk by chunk
+  (`plans/PLAN_MACULA_12_RUNTIME.md`).
 - Neighbour signatures (D17), as macula 12 signs and reads them:
   `frame.SignNeighbour` and `frame.VerifyNeighbour` wrap a control frame as
   `{version, frame_type, neighbour}` in `pq_hybrid`, a held object under
