@@ -61,8 +61,14 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
   verification, the liveness probe.
 - [x] B3 DHT on the link: record bytes, verification, storage keys.
 - [x] B4 PubSub on the link: PUBLISH, SUBSCRIBE, EVENT verification, dedup.
-- [ ] B5 Serving: ADVERTISE with the org directory and delegation chain,
-  inbound CALL handling, RESULT signing, withdrawal.
+- [x] B5 Serving: ADVERTISE with the org directory and delegation chain
+  resolved from the DHT and checked against the pinned realm key, the
+  connected station as serving station, renewal at half the advertisement's
+  lifetime (at most 5 minutes, never past the chain), inbound CALL admission
+  as macula_request_admission judges it (per link until B6 gives the pool
+  one), handler_error / temporary_relay_failure / unknown_next_peer, and
+  UNADVERTISE with a tombstone. Open procedures only: a gated one is refused
+  with ErrGatedUnsupported until the PQ UCAN verifier (macula-go#2).
 - [ ] B6 Pool and direct dial on `stationlink`: seeds with expected node ids,
   realm_trust, reconnect and replay.
 - [ ] B7 content and stream onto the link; delete the 10.x path; examples and
@@ -111,6 +117,9 @@ verified EVENT (`delivered_via` direct) in 9 ms; nothing unrouted.
 - The facade's ADVERTISE sets `serving_station` to the provider's own node_id;
   the design and `macula_direct_dial` use the connected station's:
   macula-io/macula#29.
+- macula's link runs the request admission for STREAM_OPEN only; a unary
+  CALL goes straight to its handler, so a copy runs twice. macula-go admits
+  both, as the design says.
 
 ## Success criteria
 

@@ -99,6 +99,8 @@ type Link struct {
 	pending      map[[16]byte]*pendingCall
 	subs         map[topicKey][]*Subscription
 	seen         map[[48]byte]uint64
+	served       map[servedKey]*Served
+	admission    *admission
 	self         [32]byte
 	seq          *PublicationSeq
 	done         chan struct{}
@@ -185,6 +187,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		station: station, stationCap: capabilities, connection: sha512.Sum384(challenge),
 		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, pending: map[[16]byte]*pendingCall{},
 		subs: map[topicKey][]*Subscription{}, seen: map[[48]byte]uint64{}, self: self, seq: seq,
+		served: map[servedKey]*Served{}, admission: newAdmission(),
 		done: make(chan struct{}),
 	}
 	link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })
@@ -337,6 +340,9 @@ func (l *Link) received(payload []byte) error {
 	case "result", "error":
 		l.replied(opened)
 		return nil
+	case "call":
+		l.called(opened)
+		return nil
 	case "goodbye":
 		reason, _ := fieldOf(opened, "reason").AsText()
 		return &GoodbyeError{Reason: reason}
@@ -377,6 +383,7 @@ func (l *Link) end(err error) {
 		l.mu.Unlock()
 		l.unsubscribe()
 		l.closeSubscriptions()
+		l.endServed(err)
 		_ = l.conn.CloseWithError(0, "link ended")
 		close(l.done)
 	})
