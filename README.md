@@ -174,10 +174,11 @@ GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record -ru
   ([#2](https://github.com/macula-io/macula-go/issues/2)). A call can carry a
   token and its proofs (`pool.Call.Token`, `Proofs`), but macula-go cannot yet
   mint one.
-- **A macula provider cannot be reached by direct dial until macula 12.3.0.**
-  Before it, macula names the provider itself as the serving station in its
-  advertisement ([macula#29](https://github.com/macula-io/macula/issues/29)).
-  Go providers name their station and are reachable.
+- **Direct dial finds a provider only through the DHT.** A provider is
+  reachable from `pool.Call` when it puts its advertisement there, as
+  macula's `advertise_direct` (and so every mcl-* service, through mcl_om)
+  and Go's `Serve` do. A macula provider that only sends ADVERTISE to its
+  station is routed by that station, not found by direct dial.
 - **No station discovery beyond the seeds.** macula's discovery calls a
   directory the fleet no longer serves
   ([macula#31](https://github.com/macula-io/macula/issues/31)); both SDKs

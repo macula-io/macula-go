@@ -193,9 +193,13 @@ TS until `cabi` moves to this API.** Where each export lands:
   macula 12.2.1.
 - The facade's ADVERTISE sets `serving_station` to the provider's own node_id;
   the design and `macula_direct_dial` use the connected station's:
-  macula-io/macula#29, being fixed per link for 12.3.0. Until then a Go
-  caller cannot direct-dial a macula provider: its advertisement names the
-  provider, which has no station_endpoint of its own.
+  macula-io/macula#29, fixed per link in macula 12.3.0 (eb84b5ea). It
+  affected only the ADVERTISE a station routes by: the DHT record direct
+  dial resolves, from `macula_direct_dial:publish_advertisement` (reached by
+  `advertise_direct`, so by mcl_om), has named the connected station all
+  along (v12.2.1 `macula_direct_dial.erl:406,431`), so a Go caller can
+  direct-dial mcl-* providers. The earlier note here said otherwise; it was
+  read from the facade alone.
 - macula-io/macula#30 (unary CALL admission) was read against a checkout 103
   commits behind; the admission has been in since macula 12.0.0
   (`on_call_admission/3`). Closed.
