@@ -14,6 +14,7 @@ package stationlink
 import (
 	"context"
 	"crypto/sha512"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"sync"
@@ -186,6 +187,10 @@ func untilMs(atMs int64, grace time.Duration) time.Duration {
 
 // StationNodeID is the node_id of the station the link reached.
 func (l *Link) StationNodeID() [32]byte { return l.station.NodeID }
+
+// TLSState is the TLS state of the link's QUIC connection: the key exchange
+// group and cipher suite it settled on, and the station's leaf.
+func (l *Link) TLSState() tls.ConnectionState { return l.conn.ConnectionState().TLS }
 
 // StationCapabilities are the capability bits the station's HELLO announced.
 func (l *Link) StationCapabilities() uint64 { return l.stationCap }

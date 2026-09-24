@@ -70,12 +70,30 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
 - [ ] C(i) live against a macula 12.1 lab station on host00; C(ii) one fleet
   station (amsterdam, canary).
 
+## Measured live
+
+**2026-09-24, C(i) early, B1 against a lab station** (macula-station 0.6.1,
+`ghcr.io/macula-io/macula-station@sha256:92aa889a…`, build e07ca30, pq_hybrid,
+puzzle enforced, loopback on host00, no peers), with
+`scripts/interop/golivelink`:
+
+- identity: a puzzle-solved pq_hybrid key in 1.6 s;
+- handshake: HELLO accepted in 48 ms; the station logged the client
+  connecting and, after `Close`, disconnecting; the link held 10 s with
+  nothing unrouted;
+- TLS: group **SecP256r1MLKEM768**, suite **TLS_AES_128_GCM_SHA256**, an
+  ML-DSA leaf, no resumption. The suite is the one the removed cipher-suite
+  pin would have refused. The group is macula-pqc's second: two macula nodes
+  settle on SecP384r1MLKEM1024, but Go's crypto/tls chooses which key shares
+  to send whatever CurvePreferences' order, and the station accepts either.
+
 ## Found in macula while reading it (reported, not fixed here)
 
 - A handler's `{error, R}` goes out with provider code `unknown_error`, while
-  the caller unwraps only `handler_error`.
+  the caller unwraps only `handler_error`: macula-io/macula#28.
 - The facade's ADVERTISE sets `serving_station` to the provider's own node_id;
-  the design and `macula_direct_dial` use the connected station's.
+  the design and `macula_direct_dial` use the connected station's:
+  macula-io/macula#29.
 
 ## Success criteria
 
