@@ -15,6 +15,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/stationlink"
@@ -71,6 +72,18 @@ func run(host string, port uint16, profileName, node string, hold time.Duration)
 	fmt.Printf("tls: group %s, suite %s, leaf %s, resumed %t\n",
 		state.CurveID, tls.CipherSuiteName(state.CipherSuite), leaf.PublicKeyAlgorithm, state.DidResume)
 	fmt.Printf("station: node_id %x, capabilities %d\n", link.StationNodeID(), link.StationCapabilities())
+	for _, c := range []struct {
+		name string
+		call stationlink.Call
+	}{
+		{"_macula.ping", stationlink.Call{Procedure: "_macula.ping", Payload: cbor.Map(nil)}},
+		{"_dht.find_records_by_type node_record", stationlink.Call{Procedure: "_dht.find_records_by_type",
+			Payload: cbor.Map([]cbor.MapEntry{{Key: cbor.Text("type"), Val: cbor.Uint64(0x01)}})}},
+	} {
+		callStarted := time.Now()
+		result, err := link.Call(ctx, c.call)
+		fmt.Printf("call %s: %s in %s\n", c.name, describe(result, err), time.Since(callStarted).Round(time.Millisecond))
+	}
 	select {
 	case <-time.After(hold):
 		fmt.Printf("held %s: still up, unrouted %v\n", hold, link.Unrouted())
@@ -78,4 +91,18 @@ func run(host string, port uint16, profileName, node string, hold time.Duration)
 		return fmt.Errorf("the link ended while held: %w", link.Err())
 	}
 	return link.Close("client_stop")
+}
+
+// describe is a call's outcome in one line: the result's shape, or the error.
+func describe(result cbor.Value, err error) string {
+	if err != nil {
+		return "error " + err.Error()
+	}
+	if list, isList := result.AsList(); isList {
+		return fmt.Sprintf("RESULT, a list of %d", len(list))
+	}
+	if text, isText := result.AsText(); isText {
+		return fmt.Sprintf("RESULT %q", text)
+	}
+	return fmt.Sprintf("RESULT %v", result)
 }

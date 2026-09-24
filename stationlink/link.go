@@ -93,6 +93,7 @@ type Link struct {
 	bindingTimer *time.Timer
 	unsubscribe  func()
 	unrouted     map[string]uint64
+	pending      map[[16]byte]*pendingCall
 	done         chan struct{}
 	err          error
 	endOnce      sync.Once
@@ -167,12 +168,14 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 	link := &Link{
 		conn: dialed.Conn, stream: stream, writer: writer, profile: cfg.Target.Profile, key: cfg.IdentityKey,
 		station: station, stationCap: capabilities, connection: sha512.Sum384(challenge),
-		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, done: make(chan struct{}),
+		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, pending: map[[16]byte]*pendingCall{},
+		done: make(chan struct{}),
 	}
 	link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })
 	link.bindingTimer = time.AfterFunc(untilMs(station.BindingNotAfter, 0), func() { link.end(ErrBindingExpired) })
 	go link.sendStatements(statements)
 	go link.read(reader)
+	go link.probe()
 	go func() {
 		<-dialed.Conn.Context().Done()
 		link.end(context.Cause(dialed.Conn.Context()))
@@ -312,6 +315,9 @@ func (l *Link) received(payload []byte) error {
 		l.recvSeq++
 	}
 	switch frameType {
+	case "result", "error":
+		l.replied(opened)
+		return nil
 	case "goodbye":
 		reason, _ := fieldOf(opened, "reason").AsText()
 		return &GoodbyeError{Reason: reason}

@@ -24,7 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   statement lapses five minutes past expiry or its TLS binding reaches
   not_after, neighbour-signs control frames with a seq per direction (and
   ends on one out of sequence), ends on the station's GOODBYE, and sends its
-  own on `Close`. The runtime moves onto it chunk by chunk
+  own on `Close`. `Link.Call` sends a signed CALL (to the station itself for
+  `_dht.*` and `_macula.ping`, to the provider for an org procedure) and
+  returns the RESULT payload, a `*ProviderError` or a `*RelayError`, each
+  verified for its request; a reply that does not verify is counted and
+  ignored. The link probes `_macula.ping` every 30 s and ends after two
+  misses. The runtime moves onto it chunk by chunk
   (`plans/PLAN_MACULA_12_RUNTIME.md`).
 - Neighbour signatures (D17), as macula 12 signs and reads them:
   `frame.SignNeighbour` and `frame.VerifyNeighbour` wrap a control frame as

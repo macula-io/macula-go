@@ -18,6 +18,7 @@ import (
 	"github.com/quic-go/quic-go"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/handshake"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
@@ -223,4 +224,48 @@ func (s *testStation) send(frame []byte) {
 	if err := writer.write(frame, MaxFrameBytes); err != nil {
 		s.t.Fatalf("send: %v", err)
 	}
+}
+
+// answerCalls answers every CALL the client sends with what answer returns for
+// its verified request (a signed RESULT, ERROR or relay error), or nothing when
+// it returns an empty value; any other frame goes to others.
+func (s *testStation) answerCalls(answer func(frame.VerifiedRequest) (cbor.Value, bool)) (others chan []byte) {
+	s.t.Helper()
+	s.waitAccepted()
+	others = make(chan []byte, 64)
+	go func() {
+		for raw := range s.received {
+			v, err := cbor.Decode(raw)
+			if err != nil {
+				continue
+			}
+			if name, _ := fieldOfTest(v, "frame_type").AsText(); name != "call" {
+				others <- raw
+				continue
+			}
+			request, err := frame.VerifyRequest(v, s.profile)
+			if err != nil {
+				s.t.Errorf("station: the client's CALL does not verify: %v", err)
+				continue
+			}
+			if reply, ok := answer(request); ok {
+				s.mu.Lock()
+				writer := s.writer
+				s.mu.Unlock()
+				_ = writer.write(cbor.Encode(reply), MaxFrameBytes)
+			}
+		}
+		close(others)
+	}()
+	return others
+}
+
+func fieldOfTest(v cbor.Value, name string) cbor.Value {
+	entries, _ := v.AsMap()
+	for _, e := range entries {
+		if k, _ := e.Key.AsText(); k == name {
+			return e.Val
+		}
+	}
+	return cbor.Null()
 }
