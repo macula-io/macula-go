@@ -59,8 +59,9 @@ var (
 	ErrGatedUnsupported = errors.New("stationlink: gated procedures need a post-quantum UCAN verifier (macula-io/macula-go#2)")
 	// ErrAlreadyServed is a procedure this link already serves in the realm.
 	ErrAlreadyServed = errors.New("stationlink: the procedure is already served on this link")
-	// ErrInvalidOffer is an offer without a handler or a realm key.
-	ErrInvalidOffer = errors.New("stationlink: an offer needs a handler and the realm key")
+	// ErrInvalidOffer is an offer without exactly one of a handler and a
+	// stream handler, or without a realm key.
+	ErrInvalidOffer = errors.New("stationlink: an offer needs one handler, unary or streaming, and the realm key")
 	// ErrStopped is a served procedure withdrawn by Stop.
 	ErrStopped = errors.New("stationlink: the procedure was withdrawn")
 )
@@ -89,9 +90,26 @@ type Offer struct {
 	Realm     [32]byte
 	Procedure string
 	Handler   Handler
-	RealmKey  []byte
-	Gated     bool
+	// Stream serves the procedure as a streaming one instead: exactly one of
+	// Handler and Stream is set.
+	Stream   *StreamOffer
+	RealmKey []byte
+	Gated    bool
 }
+
+// StreamOffer is a streaming procedure's mode and handler. The advertisement
+// is the one a unary procedure sends, which names no mode: a STREAM_OPEN of
+// another mode is refused mode_mismatch.
+type StreamOffer struct {
+	Mode    frame.StreamMode
+	Handler StreamHandler
+}
+
+// StreamHandler serves one streaming session. Its context ends with the
+// stream. When it returns nil and has not ended the stream, the stream is
+// closed on both sides; an error or a panic aborts it with code error and the
+// error's text, as macula aborts a stream whose handler failed.
+type StreamHandler func(ctx context.Context, s *Stream) error
 
 type servedKey struct {
 	realm     [32]byte
@@ -124,7 +142,7 @@ type Served struct {
 // before sending it in an ADVERTISE and putting it in the DHT. The
 // advertisement is renewed at half its lifetime.
 func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
-	if o.Handler == nil || len(o.RealmKey) == 0 {
+	if (o.Handler == nil) == (o.Stream == nil || o.Stream.Handler == nil) || len(o.RealmKey) == 0 {
 		return nil, ErrInvalidOffer
 	}
 	if o.Gated {
@@ -378,7 +396,7 @@ func (l *Link) answer(request frame.VerifiedRequest) {
 	served := l.served[servedKey{request.Realm, request.Procedure}]
 	l.mu.Unlock()
 	var reply cbor.Value
-	if served == nil {
+	if served == nil || served.offer.Handler == nil {
 		reply = l.providerError(request, codeUnknownProcedure, nil)
 	} else {
 		reply = l.handled(served.offer.Handler, request)

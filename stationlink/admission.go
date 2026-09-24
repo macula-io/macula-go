@@ -25,30 +25,48 @@ const (
 	keptPastDeadlineMs      = 5 * 60_000
 )
 
-// AdmissionLimits are an Admission's bounds.
+// AdmissionLimits are an Admission's bounds. The last four bound the
+// streaming sessions a node serves, as macula_stream_sessions does: sessions at
+// once per caller and in all, and the bytes their inboxes hold per caller and
+// in all.
 type AdmissionLimits struct {
 	CallerQuota     int
 	Share           int
 	Cap             int
 	ReplyBytes      int
 	ReplyBytesTotal int
+
+	SessionsPerCaller   int
+	Sessions            int
+	InboxBytesPerCaller int
+	InboxBytes          int
 }
+
+// The streaming session bounds DefaultAdmissionLimits gives, macula 12.3.0's.
+var (
+	defaultSessionsPerCaller = 16
+	defaultSessions          = 1000
+)
 
 // DefaultAdmissionLimits are macula's defaults, with Cap one share's worth:
 // the bound of an admission a single link holds. A pool sets Cap to Share
 // times the most links it holds.
 func DefaultAdmissionLimits() AdmissionLimits {
-	return AdmissionLimits{CallerQuota: 256, Share: 1024, Cap: 1024, ReplyBytes: 256 * 1024, ReplyBytesTotal: 16 * 1024 * 1024}
+	return AdmissionLimits{CallerQuota: 256, Share: 1024, Cap: 1024, ReplyBytes: 256 * 1024, ReplyBytesTotal: 16 * 1024 * 1024,
+		SessionsPerCaller: defaultSessionsPerCaller, Sessions: defaultSessions,
+		InboxBytesPerCaller: 16 * 1024 * 1024, InboxBytes: 256 * 1024 * 1024}
 }
 
 // ErrInvalidAdmissionLimits is a bound that is not positive, or a caller quota
 // over the share or a caller's reply bytes over the total, as macula refuses.
-var ErrInvalidAdmissionLimits = errors.New("stationlink: admission limits must be positive, with caller quota <= share and reply bytes <= total")
+var ErrInvalidAdmissionLimits = errors.New("stationlink: admission limits must be positive, each per-caller bound within its total")
 
 // Validate reports whether the limits are ones macula would start with.
 func (l AdmissionLimits) Validate() error {
 	if l.CallerQuota <= 0 || l.Share <= 0 || l.Cap <= 0 || l.ReplyBytes <= 0 || l.ReplyBytesTotal <= 0 ||
-		l.CallerQuota > l.Share || l.ReplyBytes > l.ReplyBytesTotal {
+		l.CallerQuota > l.Share || l.ReplyBytes > l.ReplyBytesTotal ||
+		l.SessionsPerCaller <= 0 || l.Sessions < l.SessionsPerCaller ||
+		l.InboxBytesPerCaller <= 0 || l.InboxBytes < l.InboxBytesPerCaller {
 		return ErrInvalidAdmissionLimits
 	}
 	return nil
@@ -84,13 +102,18 @@ type Admission struct {
 	shares     map[string]int
 	replyBytes map[[32]byte]int
 	replyTotal int
+
+	sessions      map[[32]byte]int
+	sessionsTotal int
+	inbox         map[[32]byte]int
+	inboxTotal    int
 }
 
 // NewAdmission is an empty admission with limits, which must Validate; a link
 // given limits that do not is refused at Dial.
 func NewAdmission(limits AdmissionLimits) *Admission {
 	return &Admission{limits: limits, entries: map[admissionKey]*admissionEntry{}, callers: map[[32]byte]int{},
-		shares: map[string]int{}, replyBytes: map[[32]byte]int{}}
+		shares: map[string]int{}, replyBytes: map[[32]byte]int{}, sessions: map[[32]byte]int{}, inbox: map[[32]byte]int{}}
 }
 
 // admit judges request arriving on share at nowMs, sweeping the entries that
@@ -170,4 +193,41 @@ func decrement[K comparable](m map[K]int, k K, n int) {
 	if m[k] <= 0 {
 		delete(m, k)
 	}
+}
+
+// openSession takes a streaming session's place for caller, or reports that
+// the per-caller or node bound is full; the release gives the place back.
+func (a *Admission) openSession(caller [32]byte) (release func(), full bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.sessions[caller] >= a.limits.SessionsPerCaller || a.sessionsTotal >= a.limits.Sessions {
+		return nil, true
+	}
+	a.sessions[caller]++
+	a.sessionsTotal++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			decrement(a.sessions, caller, 1)
+			a.sessionsTotal--
+		})
+	}, false
+}
+
+// chargeInbox counts n more bytes, or n fewer when negative, that caller's
+// served streams hold unread, refusing a charge past either bound.
+func (a *Admission) chargeInbox(caller [32]byte, n int) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if n > 0 && (a.inbox[caller]+n > a.limits.InboxBytesPerCaller || a.inboxTotal+n > a.limits.InboxBytes) {
+		return false
+	}
+	a.inbox[caller] += n
+	a.inboxTotal += n
+	if a.inbox[caller] <= 0 {
+		delete(a.inbox, caller)
+	}
+	return true
 }

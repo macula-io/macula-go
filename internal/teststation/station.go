@@ -65,7 +65,11 @@ type Station struct {
 	dht      *dht
 	accepted chan [32]byte
 	listener *quic.Listener
-	stopped  bool
+	// relayed counts the dedicated streams relayed now, each until both its
+	// directions have finished: a client that never releases a stream keeps
+	// it counted.
+	relayed int
+	stopped bool
 }
 
 type routeKey struct {
@@ -361,6 +365,7 @@ func (s *Station) serve(ctx context.Context, qconn *quic.Conn) {
 		_ = previous.qconn.CloseWithError(0, "superseded")
 	}
 	s.accepted <- c.nodeID
+	go s.relayStreams(ctx, c)
 	for {
 		payload, err := r.read(maxFrameBytes)
 		if err != nil {
@@ -656,4 +661,171 @@ func (f *writer) write(payload []byte, max int) error {
 	defer f.mu.Unlock()
 	_, err := f.w.Write(framed)
 	return err
+}
+
+// streamOpenBytes and streamOpenWait bound a dedicated stream's first frame,
+// as macula's link bounds it: 1 MiB, within 10 seconds.
+const (
+	streamOpenBytes = 1024 * 1024
+	streamOpenWait  = 10 * time.Second
+)
+
+// Relayed is how many dedicated streams the station relays now: each is
+// counted until both its directions finished, so a client that does not
+// release a stream it is done with keeps it counted.
+func (s *Station) Relayed() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.relayed
+}
+
+// relayStreams relays each dedicated stream client c opens: a STREAM_OPEN for
+// a procedure a connected node advertised goes to that node on a stream the
+// station opens, and the two are joined until both directions finish; any
+// other opens a relay STREAM_ERROR unknown_next_peer, or is closed.
+func (s *Station) relayStreams(ctx context.Context, c *conn) {
+	for {
+		stream, err := c.qconn.AcceptStream(ctx)
+		if err != nil {
+			return
+		}
+		go s.relayStream(ctx, c, stream)
+	}
+}
+
+func (s *Station) relayStream(ctx context.Context, c *conn, from *quic.Stream) {
+	_ = from.SetReadDeadline(time.Now().Add(streamOpenWait))
+	open, err := (&reader{r: from}).read(streamOpenBytes)
+	_ = from.SetReadDeadline(time.Time{})
+	if err != nil {
+		release(from)
+		return
+	}
+	v, err := cbor.Decode(open)
+	if err != nil {
+		release(from)
+		return
+	}
+	request, err := frame.VerifyRequest(v, s.Profile)
+	if err != nil || request.FrameType != "stream_open" {
+		release(from)
+		return
+	}
+	s.mu.Lock()
+	provider := s.routes[routeKey{request.Realm, request.Procedure}]
+	s.mu.Unlock()
+	if provider == nil || provider.nodeID != request.Target {
+		reply, err := frame.SignRelayError(frame.RelayErrorSpec{FrameType: "stream_error", Request: request, Code: "unknown_next_peer"}, s.Key)
+		if err == nil {
+			_ = (&writer{w: from}).write(cbor.Encode(reply), maxFrameBytes)
+		}
+		_ = from.Close()
+		s.count(from, nil)
+		return
+	}
+	to, err := provider.qconn.OpenStreamSync(ctx)
+	if err != nil {
+		release(from)
+		return
+	}
+	if err := (&writer{w: to}).write(open, streamOpenBytes); err != nil {
+		release(from)
+		release(to)
+		return
+	}
+	s.count(from, to)
+}
+
+// count joins from and to, when there is a to, and counts the relay until
+// both directions have finished; each direction's end closes the other's
+// write side, and a reset on either resets the other.
+func (s *Station) count(from, to *quic.Stream) {
+	s.mu.Lock()
+	s.relayed++
+	s.mu.Unlock()
+	done := make(chan struct{}, 2)
+	pipe := func(dst, src *quic.Stream) {
+		_, err := io.Copy(dst, src)
+		if err != nil {
+			release(dst)
+			release(src)
+		} else {
+			_ = dst.Close()
+		}
+		done <- struct{}{}
+	}
+	if to == nil {
+		go func() {
+			_, _ = io.Copy(io.Discard, from)
+			done <- struct{}{}
+			done <- struct{}{}
+		}()
+	} else {
+		go pipe(to, from)
+		go pipe(from, to)
+	}
+	go func() {
+		<-done
+		<-done
+		s.mu.Lock()
+		s.relayed--
+		s.mu.Unlock()
+	}()
+}
+
+// release abandons a stream in both directions.
+func release(stream *quic.Stream) {
+	stream.CancelRead(0)
+	stream.CancelWrite(0)
+}
+
+// RawStream opens a dedicated stream to the client node_id and writes raw on
+// it as is. Its Released reports whether the client has released the stream:
+// it read EOF or a reset from the client.
+func (s *Station) RawStream(ctx context.Context, nodeID [32]byte, raw []byte) (*Raw, error) {
+	s.mu.Lock()
+	c := s.conns[nodeID]
+	s.mu.Unlock()
+	if c == nil {
+		return nil, io.ErrClosedPipe
+	}
+	stream, err := c.qconn.OpenStreamSync(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > 0 {
+		if _, err := stream.Write(raw); err != nil {
+			return nil, err
+		}
+	}
+	r := &Raw{stream: stream, released: make(chan struct{})}
+	go func() {
+		_, _ = io.Copy(io.Discard, stream)
+		close(r.released)
+	}()
+	return r, nil
+}
+
+// Raw is a stream a test opened with RawStream.
+type Raw struct {
+	stream   *quic.Stream
+	released chan struct{}
+}
+
+// Released is closed once the client has released the stream.
+func (r *Raw) Released() <-chan struct{} { return r.released }
+
+// KeepWriting writes to the stream until a write fails, as it does once the
+// client stops reading it (STOP_SENDING), and reports whether that happened
+// before timeout.
+func (r *Raw) KeepWriting(timeout time.Duration) bool {
+	chunk := make([]byte, 16*1024)
+	deadline := time.Now().Add(timeout)
+	_ = r.stream.SetWriteDeadline(deadline)
+	for time.Now().Before(deadline) {
+		if _, err := r.stream.Write(chunk); err != nil {
+			return time.Now().Before(deadline)
+		}
+	}
+	return false
 }

@@ -113,6 +113,8 @@ type Link struct {
 	subs         map[topicKey][]*Subscription
 	dedup        *EventDedup
 	served       map[servedKey]*Served
+	streams      map[*Stream]struct{}
+	openWait     time.Duration // streamOpenWait when the link was dialed
 	admission    *Admission
 	share        string
 	self         [32]byte
@@ -218,13 +220,14 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		station: station, stationCap: capabilities, connection: sha512.Sum384(challenge),
 		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, pending: map[[16]byte]*pendingCall{},
 		subs: map[topicKey][]*Subscription{}, dedup: dedup, self: self, seq: seq,
-		served: map[servedKey]*Served{}, admission: admission, share: share,
+		served: map[servedKey]*Served{}, streams: map[*Stream]struct{}{}, openWait: streamOpenWait, admission: admission, share: share,
 		done: make(chan struct{}),
 	}
 	link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })
 	link.bindingTimer = time.AfterFunc(untilMs(station.BindingNotAfter, 0), func() { link.end(ErrBindingExpired) })
 	go link.sendStatements(statements)
 	go link.read(reader)
+	go link.acceptStreams()
 	go link.probe()
 	go func() {
 		<-dialed.Conn.Context().Done()
@@ -415,6 +418,7 @@ func (l *Link) end(err error) {
 		l.unsubscribe()
 		l.closeSubscriptions()
 		l.endServed(err)
+		l.endStreams(err)
 		_ = l.conn.CloseWithError(0, "link ended")
 		close(l.done)
 	})
