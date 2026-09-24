@@ -1,10 +1,11 @@
 // Package manifest implements fixed-size chunking, Merkle-root
 // computation, and manifest construction for content larger than one
-// storage block — see plans/PLAN_WIRE_PROTOCOL.md §12.2. Mirrors the
-// reference (and macula-rust's own port) byte-for-byte: same MCID
-// format, same default chunk size (256 KiB), same Merkle fold
-// (including the odd-leaf-count rule — pair the last hash with
-// itself), same canonical-CBOR MCID derivation.
+// storage block, in the PRE-12 format: BLAKE3 hashes and a 34-byte MCID
+// tagged 1. macula 12 uses SHA-384 and a 50-byte MCID tagged 2
+// (macula_manifest), so nothing built here interoperates with a macula 12
+// station yet; the package is ported with content transfer (plans/
+// PLAN_MACULA_12_RUNTIME.md, B7c). The chunk size (256 KiB) and the Merkle
+// fold (pair an odd last hash with itself) are the same in both.
 //
 // Two different wire representations of name, both handled separately,
 // not confused with each other: computeMcid's canonical hash input

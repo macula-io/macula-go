@@ -6,7 +6,7 @@
 
 ## End goal
 
-> So macula-go's lifecycle bugs (see `PLAN_RESOURCE_LEAK_HARDENING.md`)
+> So macula-go's lifecycle bugs (the leak survey, retired on 2026-09-24 with the 10.x code it surveyed; its lessons carry into `PLAN_MACULA_12_RUNTIME.md` B7b/B7c)
 > are fixed by supervision discipline — not one patch at a time — while
 > its public API stays plain Go and its consumers never see a framework.
 
@@ -81,7 +81,7 @@ gateway wraps the plain-Go API; after the port it *is* the pool.
 | File | Purpose | Status |
 |------|---------|--------|
 | `internal/` internals | actor-based pool/session/subscription internals | Not started |
-| `plans/PLAN_RESOURCE_LEAK_HARDENING.md` | survey findings re-targeted at actor fixes | Survey complete |
+| (leak survey) | survey findings re-targeted at actor fixes | Retired 2026-09-24 with the 10.x code (B7a); lessons in `PLAN_MACULA_12_RUNTIME.md` |
 | `EXPLORATION_ACTOR_MODELS_SDK_FAMILY.md` (macula-architecture) | Go row: gates fired | Updated 2026-09-12 |
 
 ## Success Criteria

@@ -319,3 +319,56 @@ func TestAnUnreachedDirectStationIsNotKept(t *testing.T) {
 		}
 	}
 }
+
+// Unsubscribe ends a subscription on every link: its events close, and each
+// station stops routing the topic to the node.
+func TestUnsubscribeEndsTheSubscriptionEverywhere(t *testing.T) {
+	a := teststation.Start(t, profile.PQPure, "unsubscribe a")
+	b := teststation.Start(t, profile.PQPure, "unsubscribe b")
+	realm := teststation.NewRealm(t, profile.PQPure, "unsubscribe", org)
+	p := connect(t, "unsubscriber", realm, a, b)
+	eventually(t, "both links up", func() bool { return a.Connected(p.NodeID()) && b.Connected(p.NodeID()) })
+	sub, err := p.Subscribe(realm.ID, topic)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	eventually(t, "subscribed at both stations", func() bool {
+		return a.Subscribed(p.NodeID(), realm.ID, topic) && b.Subscribed(p.NodeID(), realm.ID, topic)
+	})
+	if err := sub.Unsubscribe(); err != nil {
+		t.Fatalf("Unsubscribe: %v", err)
+	}
+	if _, open := <-sub.Events(); open {
+		t.Error("the subscription's events are still open")
+	}
+	eventually(t, "unsubscribed at both stations", func() bool {
+		return !a.Subscribed(p.NodeID(), realm.ID, topic) && !b.Subscribed(p.NodeID(), realm.ID, topic)
+	})
+}
+
+// A record put through the pool is found by its type through the pool,
+// verified.
+func TestARecordPutThroughThePoolIsFoundByType(t *testing.T) {
+	s := teststation.Start(t, profile.PQPure, "records")
+	realm := teststation.NewRealm(t, profile.PQPure, "records", org)
+	p := connect(t, "recorder", realm, s)
+	unsigned, err := record.NewNodeRecord(p.NodeID(), nil, 0, record.NodeRecordOptions{DisplayName: "recorder"})
+	if err != nil {
+		t.Fatalf("node record: %v", err)
+	}
+	signed, err := record.Sign(unsigned, teststation.Key(t, profile.PQPure, "recorder"))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	wire, err := record.Encode(signed)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := p.PutRecord(t.Context(), wire); err != nil {
+		t.Fatalf("PutRecord: %v", err)
+	}
+	found, dropped, err := p.FindRecordsByType(t.Context(), record.TypeNodeRecord)
+	if err != nil || dropped != 0 || len(found) != 1 || found[0].Record().KeyID != p.NodeID() {
+		t.Errorf("FindRecordsByType: %d found, %d dropped, %v", len(found), dropped, err)
+	}
+}

@@ -1,4 +1,4 @@
-// Package record signs and verifies macula 11.0.0's records, as macula_record
+// Package record signs and verifies macula 12's records, as macula_record
 // does (DESIGN_PQ_SIGNED_FRAMES_AND_RECORDS.md). A record is the signed object
 // {key, tbs, signature} under MACULA-PQ-RECORD-V1. Its tbs holds type, alg,
 // version, created_at, expires_at and payload, and subject only on a domain type
@@ -50,7 +50,7 @@ const (
 // Type is a record's type tag.
 type Type uint8
 
-// The record types macula 11.0.0 defines. Tags from DomainTypeMin to 0xFF are
+// The record types macula 12 defines. Tags from DomainTypeMin to 0xFF are
 // domain types, whose owners set their payload rules.
 const (
 	TypeNodeRecord               Type = 0x01

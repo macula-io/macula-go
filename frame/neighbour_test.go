@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/macula-io/macula-go/cbor"
@@ -140,5 +141,25 @@ func TestControlFramesRoundTrip(t *testing.T) {
 			})
 			seq++
 		}
+	}
+}
+
+// A SUBSCRIBE's and an UNSUBSCRIBE's topic is UTF-8 bytes of at most 512, as a
+// station's receive rule reads it: both builders refuse a longer topic and one
+// that is not UTF-8.
+func TestASubscribeTopicIsUTF8OfAtMost512Bytes(t *testing.T) {
+	realm, subscriber := [32]byte{1}, [32]byte{2}
+	builds := map[string]func([]byte, [32]byte, [32]byte) (cbor.Value, error){
+		"SUBSCRIBE": SubscribeFrame, "UNSUBSCRIBE": UnsubscribeFrame,
+	}
+	long := strings.Repeat("t", 512)
+	for name, build := range builds {
+		if _, err := build([]byte(long), realm, subscriber); err != nil {
+			t.Errorf("%s with a 512-byte topic: %v, want it built", name, err)
+		}
+		_, err := build([]byte(long+"t"), realm, subscriber)
+		wantRefusal(t, name+" with a 513-byte topic", err, ErrTextTooLong)
+		_, err = build([]byte("\xff"), realm, subscriber)
+		wantRefusal(t, name+" with a topic that is not UTF-8", err, ErrInvalidText)
 	}
 }

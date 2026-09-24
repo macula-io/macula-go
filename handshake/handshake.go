@@ -1,4 +1,4 @@
-// Package handshake builds and checks macula 11.0.0's post-quantum connection
+// Package handshake builds and checks macula 12's post-quantum connection
 // handshake, the Go counterpart of macula's macula_handshake: the opener,
 // challenge, CONNECT, HELLO and status frames of DESIGN_PQ_HANDSHAKE_FRAMES.md
 // (D16 and D22), as CBOR bytes without the length prefix.

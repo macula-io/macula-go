@@ -127,7 +127,7 @@ func publicationBuildable(spec PublicationSpec, key *identity.NodeKey) error {
 	if spec.Seq >= maxProtocolInt || spec.PublishedAt >= maxProtocolInt {
 		return fmt.Errorf("%w: a seq or published_at of 2^53 or more", ErrOutOfRange)
 	}
-	if err := CheckPublication(spec.Realm[:], spec.Topic); err != nil {
+	if err := boundedText("topic", spec.Topic, maxTopicBytes); err != nil {
 		return err
 	}
 	if err := CheckPayload(spec.Payload); err != nil {
@@ -138,6 +138,11 @@ func publicationBuildable(spec PublicationSpec, key *identity.NodeKey) error {
 	}
 	return nil
 }
+
+// maxTopicBytes is the bound of a topic, UTF-8 bytes on the wire, as a
+// station's receive rule reads a SUBSCRIBE's and an UNSUBSCRIBE's and its
+// publication table reads a publication's.
+const maxTopicBytes = 512
 
 // publicationFrameFields are the fields each frame that carries a publication
 // has besides version, frame_type and publication: an EVENT's delivered_via and

@@ -14,318 +14,152 @@
 </p>
 
 <p align="center">
-  <strong>Go port of the Macula SDK wire protocol</strong>
+  <strong>Go port of the Macula SDK, on the macula 12 post-quantum wire</strong>
 </p>
 
 ---
 
-> **Status, 2026-08-30:** the FULL wire protocol is built and
-> **live-verified against the production station fleet**
-> (`station-de-frankfurt.macula.io`) — handshake, unary RPC (both caller
-> AND provider), PubSub, content transfer, and streaming RPC, every
-> primitive in both caller and provider roles where the protocol has
-> one. Beyond the base protocol: **direct-dial** (resolve a service via
-> the mesh DHT and dial it in one hop, no dependency on inter-station
-> routing gossip having propagated — covers RPC, streaming, and content
-> transfer, plain and cert-chain-authorized), **periodic re-advertise**,
-> a **supervised PubSub pair**, **UCAN** capability tokens (mint/verify/
-> introspect, policy-gated serving), and automatic **RPC telemetry
-> facts**. The frame layer is cross-checked byte-for-byte — including
-> the Ed25519 signature itself — against
-> [`macula-rust`](https://github.com/macula-io/macula-rust)'s own
-> fixed reference vector. See [Status](#status) for the full picture.
+> **Status, 2026-09-24:** master speaks the **macula 12** wire and nothing
+> older. Handshake, calls, publish/subscribe, the DHT and serving procedures
+> work against a live macula-station 0.6.1, including a call by direct dial
+> from one node to another's provider. **Streaming RPC and content transfer
+> are not on master yet**: the 10.x implementations were removed because they
+> cannot reach a macula 12 station, and their macula 12 ports are in progress
+> (see [Status](#status)). The last release, v0.10.0, speaks the retired 10.x
+> wire and cannot reach the current fleet.
 
 ## What is this?
 
-A Go implementation of the client half of Macula's wire protocol — the
-same protocol [`macula-io/macula`](https://github.com/macula-io/macula)
-(the Erlang/OTP SDK) speaks, and the same protocol
-[`macula-rust`](https://github.com/macula-io/macula-rust) already
-ports, tracked in the same spec
-([`plans/PLAN_WIRE_PROTOCOL.md`](plans/PLAN_WIRE_PROTOCOL.md), carried
-over rather than re-derived — the wire protocol isn't language-specific).
-Macula is a federated mesh for sovereign, end-to-end-encrypted
-application networks; a **station** is the relay/DHT node, and this
-module is what a **leaf** — anything that isn't itself a station — uses
-to join it.
+A Go implementation of a Macula **node**: anything that joins the mesh
+without being a station itself. It speaks the same protocol as
+[`macula-io/macula`](https://github.com/macula-io/macula), the Erlang/OTP
+reference SDK, version 12. Macula is a federated mesh for sovereign
+application networks: a **station** routes and holds the DHT, a **realm**
+admits orgs, and an org's providers serve procedures that any node in the
+realm can call.
 
-## Why a third implementation matters
+Everything on the wire is post-quantum:
 
-Three independent implementations (Erlang reference, Rust, now Go)
-producing bit-identical wire bytes for the same input is a much stronger
-correctness claim than any one of them alone: `frame/reference_vector_test.go`
-builds the exact same signed CONNECT frame as `macula-rust`'s own
-test, from the exact same fixed identity/frame_id/timestamp, and asserts
-the Ed25519 signature — not just the frame shape — matches byte for
-byte. If Go's canonical CBOR encoder or signing domain diverged from the
-other two anywhere, this would fail; it doesn't.
+- **Transport:** QUIC with the ALPN `macula`, key exchange on macula-pqc's
+  hybrid ML-KEM groups only (SecP384r1MLKEM1024, SecP256r1MLKEM768).
+- **Identity:** an ML-DSA-87 key (`pq_pure`) or the LAMPS composite
+  ML-DSA-87 + RSA-4096-PSS (`pq_hybrid`), whose node_id solves the admission
+  puzzle.
+- **Frames:** requests, replies, publications and records are signed
+  objects; in `pq_hybrid` every control frame is also neighbour-signed.
 
 ## Features
 
 | Primitive | Caller | Provider | Notes |
 |---|---|---|---|
-| Handshake (CONNECT/HELLO) | ✅ | — | Ed25519 identity, S/Kademlia puzzle-hardened; live-verified |
-| Deterministic CBOR codec | ✅ | — | Hand-rolled — see [Codec](#the-cbor-codec-is-hand-rolled-on-purpose) |
-| Unary RPC (CALL/RESULT/ERROR) | ✅ | ✅ | `Session.ServeOneCall`, BOLT#4 error mapping live-verified |
-| PubSub (PUBLISH/SUBSCRIBE/EVENT) | ✅ | ✅ | `Session.Subscribe` returns a `Subscription` (`Recv`, `Close`); a `*` topic segment matches one segment, as the station matches it. A subscriber gets its own publish, verified live |
-| Concurrent use of one session | ✅ | ✅ | One reader per `Session` routes each RESULT/ERROR to its call, each EVENT to every matching `Subscription` and each inbound CALL to a serve loop, so calls, subscriptions and serving share a session; a stalled write ends only that session |
-| Content transfer (single-block + chunked) | ✅ | ✅ | Content-addressed, BLAKE3/SHA-256, Merkle-verified |
-| Streaming RPC (STREAM_OPEN/DATA/END/REPLY) | ✅ | ✅ | Both roles live-verified against the real fleet; `ClientStream` mode's reply path is SDK-correct but currently blocked by a `macula-station` bug — see [Known limitations](#known-limitations) |
-| RPC advertise/unadvertise | ✅ | — | |
-| Pubkey-pinned trust | ✅ | — | `transport.Pinned` — Ed25519 SPKI match, no CA chain needed |
-| Direct-dial (`directdial`) | ✅ | ✅ | Resolve+dial via the mesh DHT, one hop, no routing-gossip dependency — RPC, streaming, content transfer; plain and cert-chain-authorized (`*WithCertChain`) |
-| Periodic re-advertise | ✅ | — | `Session.KeepAdvertised`, `directdial.KeepAdvertisedDirect` — a station's registration doesn't survive the connection that sent it being replaced |
-| Supervised PubSub pair | ✅ | ✅ | `Session.RunPublisher`/`RunSubscriber` — a managed alternative to the bare primitives above |
-| UCAN capability tokens (`ucan`) | ✅ | ✅ | Mint/verify/introspect + policy-gated serving (`ServeOneCallGated`, `CallWithUCAN`) |
-| Cert-chain org/realm authorization | ✅ | ✅ | `dht.VerifyAdvertisementCertChain` — opt-in, downstream of direct-dial |
-| RPC telemetry facts | ✅ | ✅ | `rpc.sent_v1`/`rpc.completed_v1` (caller), `rpc.received_v1`/`rpc.replied_v1` (provider) — automatic, fire-and-forget, published under the call's own realm |
+| Handshake v4 (OPENER, CHALLENGE, CONNECT, HELLO, STATUS) | ✅ | — | `stationlink.Dial`, the station pinned by node_id |
+| Deterministic CBOR codec and decoding rule | ✅ | ✅ | Hand-rolled, see [Codec](#the-cbor-codec-is-hand-rolled-on-purpose) |
+| Unary RPC (signed CALL, RESULT, ERROR) | ✅ | ✅ | `pool.Call` by direct dial; `pool.Serve` answers with `handler_error`, `temporary_relay_failure` or `unknown_next_peer` |
+| Request admission | — | ✅ | Deadline window, each request run once, a copy answered from the stored reply, bounded as macula bounds it |
+| Provider authorization | ✅ | ✅ | The realm's org directory and the org's delegation, checked against the realm key the pool pins |
+| PubSub (signed PUBLISH, SUBSCRIBE, EVENT) | ✅ | ✅ | Published once over several links, delivered once |
+| DHT (`_dht.*`) | ✅ | — | Records verified before they are handed on |
+| Pool of station links | ✅ | ✅ | Pinned seeds, redial with subscriptions and procedures replayed |
+| Streaming RPC | — | — | Not on master: macula 12 port in progress |
+| Content transfer | — | — | Not on master: macula 12 port in progress |
+| Gated procedures (UCAN) | token carried | — | Serving one is refused by name until the post-quantum UCAN verifier ([#2](https://github.com/macula-io/macula-go/issues/2)) |
 
-No `unsafe` and no cgo anywhere in this module — the badge above is
-checked, not aspirational (`grep -rl '"unsafe"' --include='*.go'` and a
-search for `import "C"` both come back empty across every `.go` file here).
+No `unsafe` and no cgo anywhere in this module: `grep -rl '"unsafe"'
+--include='*.go'` and a search for `import "C"` both come back empty.
 
 ## Quick start
 
-Also lives as a runnable example — `go run ./examples/quickstart`.
-Advertises and calls its own trivial echo procedure (two identities, a
-provider and a caller, since a station kicks a connection the instant a
-second one arrives under the same identity) rather than depending on any
-particular procedure already being advertised on the fleet:
-
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"log"
-	"time"
-
-	"github.com/macula-io/macula-go/cbor"
-	"github.com/macula-io/macula-go/connection"
-	"github.com/macula-io/macula-go/frame"
-	"github.com/macula-io/macula-go/identity"
-	"github.com/macula-io/macula-go/transport"
-)
-
-func main() {
-	// Puzzle-hardened identities — required. An unhardened identity fails
-	// the handshake silently in the worst case (QUIC/TLS looks healthy,
-	// HELLO never accepts).
-	providerID, err := identity.Generate()
-	if err != nil {
-		log.Fatalf("identity.Generate (provider): %v", err)
-	}
-	callerID, err := identity.Generate()
-	if err != nil {
-		log.Fatalf("identity.Generate (caller): %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	provider, err := connection.Connect(ctx, "station-de-frankfurt.macula.io", 4433, transport.WebPKI{}, providerID)
-	if err != nil {
-		log.Fatalf("connection.Connect (provider): %v", err)
-	}
-	defer provider.Close("normal", nil, providerID)
-
-	realm := make([]byte, 32)
-	// Unique per run — reusing a fixed procedure name across rapid
-	// repeated runs can hit stale DHT routing state from the prior run's
-	// now-dead advertiser.
-	procedure := fmt.Sprintf("macula_go.quickstart_echo.%d", time.Now().UnixNano())
-
-	lookup := func(realm []byte, proc string) (connection.CallHandler, bool) {
-		if proc != procedure {
-			return nil, false
-		}
-		return func(payload cbor.Value) (cbor.Value, error) {
-			return payload, nil
-		}, true
-	}
-
-	if err := provider.Advertise(frame.NewAdvertiseSpec(realm, procedure, providerID.NodeID()), providerID); err != nil {
-		log.Fatalf("provider.Advertise: %v", err)
-	}
-	time.Sleep(500 * time.Millisecond) // ADVERTISE is fire-and-forget; give it a moment to land
-
-	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- provider.ServeOneCall(lookup, providerID, 10*time.Second)
-	}()
-
-	caller, err := connection.Connect(ctx, "station-de-frankfurt.macula.io", 4433, transport.WebPKI{}, callerID)
-	if err != nil {
-		log.Fatalf("connection.Connect (caller): %v", err)
-	}
-	defer caller.Close("normal", nil, callerID)
-
-	deadlineMs := time.Now().Add(5 * time.Second).UnixMilli()
-	response, err := caller.Call(procedure, realm, cbor.Text("hello"), deadlineMs, callerID, 5*time.Second)
-	if err != nil {
-		log.Fatalf("caller.Call: %v", err)
-	}
-	fmt.Printf("call response: is_error=%v payload=%s\n", response.IsError, response.Payload)
-
-	if err := <-serveErr; err != nil {
-		log.Fatalf("provider.ServeOneCall: %v", err)
-	}
-}
+```bash
+go get github.com/macula-io/macula-go@master
 ```
 
-Content transfer and streaming RPC follow the same `*connection.Session`
-plus an identity shape — see `content.Put`/`content.Get` and
-`stream.Open`/`stream.Accept`, exercised end to end (both against the
-real fleet) in `content/live_test.go` and `stream/live_test.go`.
-
-Serving a procedure looks like this — `Session.ServeOneCall` blocks for
-the next inbound CALL and replies with the handler's result (or the
-matching BOLT#4 error on a lookup miss or a handler panic):
+A node needs three things to join: a station to link to, **pinned by its
+node_id**; the realm id; and the realm's key, which the realm publishes. The
+node's own identity key is created on first use and kept in a file readable by
+its owner only.
 
 ```go
-lookup := func(realm []byte, procedure string) (connection.CallHandler, bool) {
-	if procedure != "math.add" {
-		return nil, false
-	}
-	return func(payload cbor.Value) (cbor.Value, error) {
-		a, _ := payload.Get("a")
-		b, _ := payload.Get("b")
-		aVal, _ := a.AsInt64()
-		bVal, _ := b.AsInt64()
-		return cbor.Int(aVal + bVal), nil
-	}, true
-}
-
-if err := session.Advertise(frame.NewAdvertiseSpec(realm, "math.add", id.NodeID()), id); err != nil {
+key, err := identity.GenerateIdentityKey(profile.PQHybrid, identity.PuzzleDifficulty)
+if err != nil {
 	log.Fatal(err)
 }
-for {
-	if err := session.ServeOneCall(lookup, id, 30*time.Second); err != nil {
-		log.Println(err) // ErrServeOneCallTimeout just means nothing arrived
-	}
-}
-```
-
-## Direct-dial
-
-Ordinary `Advertise`/`Call` depend on inter-station routing gossip having
-already propagated a route between the caller's station and the
-service's station — on a large or freshly-changed mesh, that isn't
-always true yet. Direct-dial sidesteps it: a provider publishes a signed
-record to the mesh DHT naming its own station; a caller resolves that
-record and dials the named station **directly, in one hop**, regardless
-of whether ordinary gossip ever reached the caller's own station.
-
-```go
-// Provider: advertise once, then keep the DHT record fresh (a station's
-// registration doesn't survive the connection that sent it being replaced).
-if err := directdial.AdvertiseDirect(session, id, realm, "math.add", time.Hour); err != nil {
+p, err := pool.Connect(ctx, []pool.Seed{{Host: "2a01:4f8::1", Port: 4433, NodeID: stationID}},
+	pool.Opts{IdentityKey: key, RealmTrust: map[[32]byte][]byte{realm: realmKey}})
+if err != nil {
 	log.Fatal(err)
 }
-ctx, cancel := context.WithCancel(context.Background())
-defer cancel()
-directdial.KeepAdvertisedDirect(ctx, session, id, realm, "math.add", time.Hour, 30*time.Second,
-	func(err error) { log.Printf("re-advertise tick failed: %v", err) })
+defer p.Close()
 
-if err := session.ServeOneCall(lookup, id, 30*time.Second); err != nil {
-	log.Println(err)
-}
+// Call a procedure: its advertisements are resolved from the DHT, trusted only
+// when the realm key authorizes them, and the provider is called at the station
+// it serves from.
+result, err := p.Call(ctx, pool.Call{Realm: realm, Procedure: "mcl-echo/echo", Payload: cbor.Text("hello")})
+
+// Serve one: the realm must have admitted the org, and the org delegated its
+// procedures to this node.
+served, err := p.Serve(ctx, pool.Offer{Realm: realm, Procedure: "acme/echo",
+	Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return r.Payload, nil }})
+
+// Publish and subscribe.
+sub, err := p.Subscribe(realm, "acme/demo/greeting_sent_v1")
+err = p.Publish(stationlink.Publication{Realm: realm, Topic: "acme/demo/greeting_sent_v1", Payload: cbor.Text("hi")})
 ```
 
-```go
-// Caller: resolveVia can be a connection to ANY station — it's only used
-// to query the DHT, not necessarily the station actually serving the call.
-resp, err := directdial.Call(ctx, resolveVia, id, realm, "math.add", cbor.Text("hello"), 10*time.Second)
-```
+Runnable examples, all with the same flags (`-seed host:port -station <node_id
+hex> -realm <hex> -realm-key <file> -key <node key file>`):
 
-`timeout` bounds the whole call: resolution, each candidate's endpoint lookup
-and dial, and the CALL. Every advertisement that verifies is a candidate. One
-that can't be reached before the CALL is sent is passed over for the next, and
-when none qualifies, resolution asks the DHT again until the deadline.
-`Resolve`, `ResolveWithCertChain` and `ResolveStationEndpoint` take a
-`context.Context` that bounds them the same way.
+| Example | What it does |
+|---|---|
+| [`examples/call`](examples/call) | Lists a procedure's providers and calls it |
+| [`examples/serve`](examples/serve) | Serves an org procedure until interrupted |
+| [`examples/pubsub`](examples/pubsub) | Subscribes, publishes one message, prints what it hears |
 
-The same resolve-and-dial mechanism covers streaming (`directdial.OpenStreamDirect`)
-and content transfer (`directdial.PutDirect`/`GetDirect`), and each has a
-`*WithCertChain` variant that additionally requires the resolved
-advertisement's embedded X.509 chain to validate against a caller-trusted
-realm CA and name an expected org (`dht.VerifyAdvertisementCertChain`) —
-opt-in managed-realm authorization, layered on top of direct-dial rather
-than replacing it. `directdial.GetDirect`'s publish side
-(`dht.NewContentAnnouncement`) is deliberately not exposed as a
-client-facing function: unlike a `procedure_advertisement`, a
-`content_announcement`'s resolved endpoint is dialed with no
-station-relay indirection, so only something independently dialable (a
-station or dedicated relay) can legitimately publish one — a leaf
-identity can't pass its own trust check.
+## Packages
 
-## UCAN capability tokens
-
-A service can require callers to present a signed capability token
-before a handler ever runs:
-
-```go
-// Mint (typically done by whoever issues capabilities, not the caller
-// of ServeOneCallGated). The audience is the identity that will present
-// the token: its node ID as lowercase hex.
-token, err := ucan.Create("did:macula:issuer", hex.EncodeToString(callerID.NodeID()), nil, issuerID, ucan.CreateOpts{})
-
-// Provider: gate one (realm, procedure) behind a required issuer. An
-// open Policy (the zero value, ucan.Open) behaves exactly like plain
-// ServeOneCall — rejection happens BEFORE lookup/dispatch, so a handler
-// never sees the raw token either way.
-policy := func(realm []byte, procedure string) ucan.Policy {
-	return ucan.Required(issuerID.NodeID())
-}
-if err := session.ServeOneCallGated(lookup, policy, id, 30*time.Second); err != nil {
-	log.Println(err)
-}
-
-// Caller: attach the token to an outgoing call.
-resp, err := session.CallWithUCAN("gated.procedure", realm, payload, deadlineMs, id, timeout, token)
-```
-
-`ucan.Create`/`Verify`/`Decode`/`GetIssuer`/`GetAudience`/`GetCapabilities`/
-`GetExpiration`/`GetProofs`/`IsExpired` mirror `macula_ucan_nif`'s exact
-surface (JWT-shaped UCAN 0.10.0, EdDSA) — no more, no less. `issuer` is
-an opaque string; this package doesn't validate or resolve DID structure
-(that's `macula_did_nif`'s scope on the Erlang side). `audience` is the
-node ID of the identity that will present the token, as lowercase hex: a
-gated provider accepts the token only from that caller, and refuses a
-token without an audience or a call without a caller.
+| Package | What it is |
+|---|---|
+| [`pool`](pool) | A node's station links: seeds, redial and replay, calls by direct dial, serving, pubsub, the DHT |
+| [`stationlink`](stationlink) | One link to one station: handshake, STATUS, liveness, calls, serving, pubsub, the DHT |
+| [`identity`](identity) | Keys, bindings, status statements, signed objects, key files |
+| [`handshake`](handshake) | The v4 handshake frames, both sides |
+| [`frame`](frame) | Signed requests, replies, publications, stream frames, neighbour-signed control frames |
+| [`record`](record) | DHT records: sign, verify, storage keys, provider authorization |
+| [`transport`](transport) | The post-quantum QUIC dial |
+| [`cbor`](cbor) | The deterministic CBOR codec and its decoding rule |
+| [`profile`](profile) | The `pq_pure` and `pq_hybrid` crypto profiles |
+| [`manifest`](manifest) | Content manifests (still the pre-12 format; ported with content transfer) |
 
 ## The CBOR codec is hand-rolled on purpose
 
-This protocol's canonical CBOR **deliberately diverges** from RFC 8949's
-own canonical-form guidance in two ways: floats always encode as
-binary64 (never the shortest round-tripping width), and map keys sort
-by the bytewise order of their own *encoded* bytes, not their unencoded
-representation. A generic "canonical CBOR" library that follows the RFC
-instead of these rules produces bytes that don't verify against the
-real station — the same reason `macula-rust` bypasses `ciborium`
-entirely. `cbor/` has zero external dependencies as a result; the tests
-in `cbor/cbor_test.go` specifically target the divergent rules and the
-minimal-length-encoding boundaries a naive port is most likely to get
-wrong.
+This protocol's deterministic CBOR **deliberately diverges** from RFC 8949's
+own canonical-form guidance in two ways: floats always encode as binary64
+(never the shortest width that round-trips), and map keys sort by the bytewise
+order of their own *encoded* bytes, not their unencoded representation. A
+generic "canonical CBOR" library that follows the RFC produces bytes whose
+signatures don't verify against a real station. `cbor/` has zero external
+dependencies as a result, and its decoding rule is checked against macula's
+own vectors (`cbor/testdata/decoding_rule_v1.json`).
 
 ## Testing
 
 ```bash
-go test ./...                                       # default suite, no network
-go test -tags=live ./... -run TestLive -v            # dials the real fleet
+go test ./...
 ```
 
-The live suite is gated behind the `live` build tag — excluded from
-`go test ./...` and from CI entirely, since it depends on infrastructure
-this module doesn't control and a station blip must never block an
-unrelated PR. Same convention as `macula-rust`'s `tests/live_station.rs`.
+The suite needs no network. The pool is tested against
+[`internal/teststation`](internal/teststation), an in-process macula 12
+station that routes calls between connections, delivers events and holds a
+DHT.
 
-Checks against a compiled macula, in both directions, live in `scripts/interop/` (see its README). They need macula
-built with its NIFs and OTP 28, so they are not part of `go test ./...` or CI either.
+Checks against a compiled macula, in both directions (key bindings, the LAMPS
+composite, the handshake, neighbour signatures), and against a live station
+(`golivelink`), live in [`scripts/interop/`](scripts/interop) (see its README).
+They need macula built with its NIFs and OTP 28, or a running station, so they
+are not part of `go test ./...` or CI.
 
-A binary built with `GOFIPS140=v1.0.0` has no ML-DSA (see Known limitations). CI runs the tests that check such a build
-says so, and requires a PASS line from each. They run locally the same way:
+A binary built with `GOFIPS140=v1.0.0` has no ML-DSA (see Known limitations). CI
+runs the tests that check such a build says so, and requires a PASS line from
+each. They run locally the same way:
 
 ```bash
 GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record -run SaysWhetherTheBinaryHasMLDSA -v
@@ -333,79 +167,50 @@ GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record -ru
 
 ## Known limitations
 
-- **Not in a `GOFIPS140=v1.0.0` build.** The FIPS 140-3 Go Cryptographic
-  Module v1.0.0 has no ML-DSA, and every macula 11.0.0 profile signs with
-  ML-DSA-87. In a binary built with `GOFIPS140=v1.0.0` (at Go 1.27,
-  `GOFIPS140=certified` names the same module), `identity.GenerateKey`,
-  `GenerateIdentityKey`, `LoadKey`, the binding, status and signed object
-  verifiers, the handshake's checks, the frame verifiers and
-  `transport.DialTarget` return `identity.ErrPostQuantumUnavailable`. Build
-  without `GOFIPS140`, or with `GOFIPS140=v1.26.0` or later.
-- **`directdial.GetDirect` can only resolve a `content_announcement`
-  that something has actually published** — and nothing in this
-  ecosystem currently does, since (per the design note above) only a
-  station/relay can legitimately publish one. Treat `GetDirect` as
-  correct-but-currently-unreachable until a relay-side publisher exists.
-- The demo fleet's `station_endpoint` DHT records carry a short TTL and
-  are not always freshly republished — a direct-dial resolve can
-  intermittently return `ErrStationEndpointNotFound` for a station whose
-  procedure/service is otherwise healthy. Retrying against a different
-  station, or shortly after, typically clears it. This is fleet
-  infrastructure state, not a bug in this module.
+- **Streaming RPC and content transfer are not on master** until their
+  macula 12 ports land.
+- **Gated procedures cannot be served**: `Serve` refuses one by name until
+  macula-go has the post-quantum UCAN verifier macula 12 uses
+  ([#2](https://github.com/macula-io/macula-go/issues/2)). A call can carry a
+  token and its proofs (`pool.Call.Token`, `Proofs`), but macula-go cannot yet
+  mint one.
+- **A macula provider cannot be reached by direct dial until macula 12.3.0.**
+  Before it, macula names the provider itself as the serving station in its
+  advertisement ([macula#29](https://github.com/macula-io/macula/issues/29)).
+  Go providers name their station and are reachable.
+- **No station discovery beyond the seeds.** macula's discovery calls a
+  directory the fleet no longer serves
+  ([macula#31](https://github.com/macula-io/macula/issues/31)); both SDKs
+  will follow `mcl-stations` together.
+- **Not in a `GOFIPS140=v1.0.0` build.** The FIPS 140-3 Go Cryptographic Module
+  v1.0.0 has no ML-DSA, and every macula 12 profile signs with ML-DSA-87. In a
+  binary built with `GOFIPS140=v1.0.0` (at Go 1.27, `GOFIPS140=certified` names
+  the same module), key generation and loading, every verifier and the dial
+  return `identity.ErrPostQuantumUnavailable`. Build without `GOFIPS140`, or
+  with `GOFIPS140=v1.26.0` or later.
 
 ## Status
 
-**Live-verified, 2026-08-28 — full parity, both directions:** handshake,
-CALL/RESULT/ERROR as both caller (`Session.Call`) and provider
-(`Session.ServeOneCall`, BOLT#4 error mapping — `unknown_next_peer` on a
-lookup miss, `temporary_relay_failure` on a handler panic, `unknown_error`
-with detail on a handler-returned error, all ported field-for-field from
-`macula_station_link.erl`'s `handle_inbound_call/2`), PUBLISH/SUBSCRIBE/
-EVENT (a subscriber does receive its own publish), content transfer
-(single-block and chunked, Merkle-verified), and streaming RPC in both
-the caller and provider roles — all against
-`station-de-frankfurt.macula.io`, the real fleet, not a local mock. Two
-independent connections to the same station (one advertising and
-serving, the other calling in) is the pattern behind every provider-role
-test here — see `connection/live_test.go`'s
-`TestLiveUnaryCallProviderRoundTrip` for the unary case and
-`stream/live_test.go`'s `TestLiveStreamingProviderRoundTrip` for the
-streaming case.
+Measured against a live macula-station 0.6.1 (`pq_hybrid`, puzzle enforced),
+2026-09-24, with [`scripts/interop/golivelink`](scripts/interop/golivelink):
 
-The streaming-RPC and content-transfer wire behavior was cross-checked
-against `macula-rust`'s own live findings along the way — e.g. an
-unregistered streaming procedure returns the same STREAM_ERROR
-(`unknown_next_peer` / "procedure not advertised") on both SDKs.
-Unary-RPC provider dispatch was built here first and ported back to
-`macula-rust` in the same pass, so both SDKs now serve RPCs, not
-just call them.
+- handshake accepted in 14 to 48 ms, on SecP256r1MLKEM768 with an ML-DSA leaf;
+- `_dht.*` finds and puts, each record verified, 17 to 25 ms;
+- a publication delivered back as a verified event in 9 ms;
+- a Go provider served under a test realm and called by a second node's pool
+  by direct dial: 34 ms for the first call, 16 to 25 ms after.
 
-**Live-verified, 2026-08-30 — direct-dial, UCAN, cert-chain, re-advertise,
-supervised PubSub, RPC telemetry facts:** every item above got the same
-live-fleet treatment, and to a stricter bar than "no error was
-returned" — `AdvertiseDirect` originally published only the DHT record
-and never the plain ADVERTISE frame, which let `Resolve`+`Call` complete
-cleanly without ever reaching a live handler; found by insisting on an
-actual RESULT payload coming back through direct-dial rather than
-accepting a clean `unknown_next_peer` as sufficient, and fixed
-(`d18a079`). `TestLiveDirectDialServeRoundTrip`, `TestLiveKeepAdvertisedDirectRepublishes`,
-`TestLiveRunSubscriberAndRunPublisher`, and `TestLiveRPCTelemetryFacts`
-all hold to that same bar — a real reply payload, or a real fact
-confirmed by an independent third session, not just an absence of
-errors.
-
-See [`plans/PLAN_WIRE_PROTOCOL.md`](plans/PLAN_WIRE_PROTOCOL.md) for the
-full wire-format spec this module is built against, section by section,
-traced directly to the Erlang SDK's source.
+The macula 12 port and what remains of it are tracked in
+[`plans/PLAN_MACULA_12_RUNTIME.md`](plans/PLAN_MACULA_12_RUNTIME.md).
 
 ## Related projects
 
 | Project | Description |
 |---|---|
-| [macula-rust](https://github.com/macula-io/macula-rust) | The Rust port — same protocol, built first; also ships mobile bindings (Kotlin/Swift via UniFFI) |
 | [macula](https://github.com/macula-io/macula) | The reference SDK (Erlang/OTP) |
-| [macula-station](https://github.com/macula-io/macula-station) | The station: DHT, SWIM, routing, peering |
-| [macula-realm](https://github.com/macula-io/macula-realm) | Managed-realm identity + certificate authority |
+| [macula-rust](https://github.com/macula-io/macula-rust) | The Rust port; also ships mobile bindings (Kotlin/Swift via UniFFI) |
+| [macula-station](https://github.com/macula-io/macula-station) | The station: DHT, routing, peering |
+| [macula-realm](https://github.com/macula-io/macula-realm) | Realm identity: org admission and delegation |
 
 ## License
 
@@ -419,5 +224,5 @@ above, without any additional terms or conditions.
 ---
 
 <p align="center">
-  <sub>Built with the BEAM's protocol, ported to Go — <a href="https://github.com/sponsors/rgfaber">sponsor the work</a> if this saved you some time</sub>
+  <sub>Built with the BEAM's protocol, ported to Go. <a href="https://github.com/sponsors/rgfaber">Sponsor the work</a> if this saved you some time</sub>
 </p>

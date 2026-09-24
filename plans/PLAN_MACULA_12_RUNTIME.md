@@ -88,8 +88,30 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
   node_id-keyed half macula does not implement either; MaxDirectLinks bounds
   direct dials. Tested against `internal/teststation`, an in-process routing
   station.
-- [ ] B7 content and stream onto the link; delete the 10.x path; examples and
-  README.
+- [x] B7a Delete the 10.x path: `connection`, `dht`, `directdial`, `stream`,
+  the pre-12 `content`, the Ed25519 `ucan`, `bolt4`, the 10.x frame builders
+  and frame-level Ed25519 signing (`frame.Sign`, `publisher_sig`), Ed25519
+  identity (`identity.KeyPair`) and the trust-mode `transport.Dial`. New
+  examples (`call`, `serve`, `pubsub`) on the pool, each run against the lab
+  station; README rewritten for macula 12, streams and content stated absent.
+- [ ] B7b Streaming RPC, as macula 12.2.1 does it: each session on its own
+  QUIC stream the caller opens (the station opens one to the provider),
+  STREAM_OPEN a signed request with its mode, provider frames under
+  MACULA-PQ-STREAM-V1 and caller frames under MACULA-PQ-CALLER-STREAM-V1, a
+  seq per side chained to the open's request hash; admission as for CALLs
+  plus session caps (16 per caller, 1000 per node) and inbox bounds (16 MiB
+  per stream, per caller, 256 MiB per node); refusal codes as
+  `refuse_open`. Lessons from the retired 10.x leak survey, as requirements:
+  every dedicated stream is released on every path, success or failure
+  (cancel read and write, not just close); an accepted stream that fails
+  before a session exists is refused and released; no goroutine per frame.
+- [ ] B7c Content transfer: port `manifest` to macula 12 (SHA-384, 50-byte
+  MCID tagged 2, the MCID over name, size, chunk size and count, hash
+  algorithm and root); `_content.put_block/get_block/put_manifest/
+  get_manifest` CALLs to a station on dedicated streams, up to 4 per link;
+  content announcements (type 0x11) and fetch by direct dial. Lesson from
+  the leak survey: a manifest from the wire is untrusted input, so its
+  counts and sizes are bounded before anything is allocated from them.
 - [ ] C(i) live against a macula 12.1 lab station on host00; C(ii) one fleet
   station (amsterdam, canary).
 
@@ -144,6 +166,25 @@ the test realm's key, took the station's own endpoint record, dialed it
 pinned and called the provider there. First call 34 ms (resolution and
 dial), then 16 to 25 ms on the remembered candidate, seven of seven
 answered.
+
+## @macula-io/ts (macula-ts `cabi`) across B7
+
+macula-ts's `cabi` pins macula-go v0.7.1, so B7a does not break its build;
+it breaks when the pin moves past it. Every `cabi` export spoke the 10.x
+wire and none reaches a macula 12 station today. **Do not tag macula-go for
+TS until `cabi` moves to this API.** Where each export lands:
+
+| `cabi` exports | 10.x packages | macula 12 replacement | Ready |
+|---|---|---|---|
+| `macula_identity_generate`, `_from_seed_bytes`, `_node_id`, `_private_bytes`, `_free`; `macula_identity_sign` | identity (Ed25519) | `identity.GenerateIdentityKey`, `LoadKey`/`Save`, `NodeKey.NodeID`, `Sign` (key files replace raw private bytes) | B7a |
+| `macula_session_connect`, `_remote_addr`, `_station_node_id`, `_close` | connection, transport | `pool.Connect` with pinned seeds and realm trust, `Status`, `Close` | B6 |
+| `macula_session_call`, `macula_directdial_resolve`, `_call` | frame, dht, directdial | `pool.Call`, `pool.Providers` | B6 |
+| `macula_session_advertise`, `_unadvertise`, `macula_serve_wait_for_call`, `macula_pending_call_*`, `macula_directdial_advertise` | connection, frame | `pool.Serve` with a `Handler`, `Served.Stop` | B6 |
+| `macula_session_publish`, `_subscribe_start`, `_subscribe_stop` | frame | `pool.Publish`, `pool.Subscribe`, `Subscription.Unsubscribe` | B6 |
+| `macula_dht_find_record`, `_find_records`, `_find_records_by_type` | connection, dht | `pool.FindRecord`, `FindRecords`, `FindRecordsByType` | B6 |
+| `macula_dht_put_procedure_advertisement`, `_put_content_announcement` | dht | `pool.PutRecord` (a procedure advertisement comes from `Serve`) | B6 / B7c |
+| `macula_content_put`, `_get` | content, manifest | B7c | no |
+| `macula_ucan_mint`, `_decode`, `macula_session_call_with_ucan` | ucan (Ed25519) | PQ UCAN, macula-go#2; `pool.Call` carries a token | no |
 
 ## Found in macula and macula-station
 

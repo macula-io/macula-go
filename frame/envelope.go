@@ -1,16 +1,14 @@
-// Package frame implements the Macula application-frame envelope:
-// construction, Ed25519 signing/verification, and the length-prefixed
-// wire codec. Ported from src/peering/macula_frame.erl
-// (macula-io/macula) via macula-rust/src/frame.rs, per
-// plans/PLAN_WIRE_PROTOCOL.md §4-5.
+// Package frame implements macula 12's frames: the requests, replies, relay
+// errors, publications and stream frames that carry signed objects
+// (MACULA-PQ-REQUEST-V1 and its kin, see signed_frames.go), the control frames
+// a pq_hybrid link neighbour-signs, the decoding rule's payload bounds, and the
+// length-prefixed wire codec. Ported from macula's src/peering/macula_frame.erl.
 //
 // A wire frame is `<Length:4 bytes big-endian><Cbor>` where Cbor is the
-// deterministic encoding (package cbor) of a single map. Every frame
-// carries a common envelope — version, frame_type, frame_id (UUIDv7),
-// sent_at_ms, capabilities, plus realm/call_id/source_route set to null
-// unless the specific frame type populates them — and every frame is
-// Ed25519-signed over its own canonical bytes with signature/
-// publisher_sig stripped first.
+// deterministic encoding (package cbor) of a single map with version and
+// frame_type. No frame carries a frame-level signature: what is signed is the
+// signed object a frame holds, and, in pq_hybrid, a control frame's neighbour
+// signature.
 package frame
 
 import (
@@ -20,12 +18,6 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 )
-
-// SigDomain is the domain separator for the per-frame Ed25519 signature
-// (every frame's own signature field). Distinct from the SWIM-update and
-// publisher end-to-end domains documented in
-// plans/PLAN_WIRE_PROTOCOL.md §4 — neither is implemented here yet.
-const SigDomain = "macula-v2-frame\x00"
 
 // ProtocolVersion is the version field every frame carries.
 const ProtocolVersion = 2
@@ -82,19 +74,4 @@ func withField(fields []cbor.MapEntry, key string, val cbor.Value) []cbor.MapEnt
 		}
 	}
 	return append(fields, cbor.MapEntry{Key: cbor.Text(key), Val: val})
-}
-
-func bytes32List(items [][]byte) cbor.Value {
-	vs := make([]cbor.Value, len(items))
-	for i, b := range items {
-		vs[i] = cbor.Bytes(b)
-	}
-	return cbor.List(vs)
-}
-
-func boolValue(b bool) cbor.Value {
-	if b {
-		return cbor.Text("true")
-	}
-	return cbor.Text("false")
 }

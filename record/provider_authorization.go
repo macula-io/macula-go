@@ -41,7 +41,7 @@ var (
 )
 
 // Trust is what a caller trusts for its realm: the verifier's profile and the
-// realm key as carried. macula 11.0.0's realm issues no certificates, so no
+// realm key as carried. macula 12's realm issues no certificates, so no
 // realm CA is trusted for a provider's authorization.
 type Trust struct {
 	Profile  profile.Profile
@@ -65,7 +65,7 @@ func ProcedureOrg(procedure string) (org string, hasOrg bool, err error) {
 
 // VerifyAuthorization is the caller's check of a verified procedure
 // advertisement's provider authorization against the realm it trusts, as
-// macula_record's verify_authorization/3 does for 11.0.0, with nowMs the
+// macula_record's verify_authorization/3 does for macula 12, with nowMs the
 // caller's clock in Unix milliseconds. It takes a Verified, a record Verify
 // returned, so the advertiser node it checks is the one the advertisement's
 // signature covers; the zero Verified, like any record that is not a procedure

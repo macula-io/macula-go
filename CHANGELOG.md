@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **macula-go speaks the macula 12 wire and nothing older.** Removed with
+  the 10.x path, which cannot reach a macula 12 station: `connection`,
+  `dht`, `directdial`, `stream`, `content`, the Ed25519 `ucan`, `bolt4`, the
+  unsigned 10.x frame builders (`frame.Call`, `Result`, `Connect`, `Hello`,
+  `Goodbye`, `Publish`, `Subscribe`, `Advertise`, the 10.x stream frames),
+  frame-level Ed25519 signing (`frame.Sign`, `frame.Verify`, `SigDomain`,
+  `publisher_sig`), Ed25519 identity (`identity.KeyPair`, `Generate`,
+  `VerifyEd25519`) and the trust-mode `transport.Dial` (`WebPKI`, `Pinned`,
+  `Insecure`). Streaming RPC and content transfer return as their macula 12
+  ports land; the examples are new (`call`, `serve`, `pubsub`).
+- `pool` is rewritten on `stationlink`, as macula 12's `macula_client`:
+  `Connect` takes seeds pinned by node_id and `Opts.RealmTrust`, and refuses
+  an unpinned seed, a malformed realm key or too many seeds before it dials;
+  every link shares the node's identity key, statement issuer (run by the
+  pool), request admission, event dedup and publication seq; a link that
+  ends is redialed and given back its subscriptions and served procedures.
+  `Call` reaches a provider by direct dial (its trusted advertisements from
+  the DHT, freshest first, the serving station dialed from its own
+  station_endpoint, the next candidate on a reachability failure);
+  `Providers`, `Serve`, `Publish` (signed once for every link), `Subscribe`,
+  `FindRecord`, `FindRecords`, `FindRecordsByType`, `PutRecord`. Station
+  discovery is removed (macula#31).
+- `stationlink.Link.Serve` serves an org procedure: its org directory and
+  delegation from the DHT, checked against the realm key, an advertisement
+  naming the connected station, sent in an ADVERTISE and put in the DHT,
+  renewed at half its lifetime; inbound CALLs admitted as
+  `macula_request_admission` admits them and answered with a signed RESULT,
+  `handler_error`, `temporary_relay_failure` or `unknown_next_peer`; `Stop`
+  withdraws it with a tombstone. Gated procedures are refused
+  (`ErrGatedUnsupported`, #2). Links of one node share an `Admission` and an
+  `EventDedup` (`Config.Admission`, `Share`, `Dedup`); `SignPublication` and
+  `PublishSigned` send one publication on several links.
 - A `pq_hybrid` key signs the LAMPS composite id-MLDSA87-RSA4096-PSS-SHA512,
   as macula 12 does: the label is `COMPSIG-MLDSA87-RSA4096-PSS-SHA512`, and
   the ML-DSA-87 half signs with that label as its context. Composites made
@@ -50,8 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `UnsubscribeFrame` and `GoodbyeFrame`. macula 12.1.0 verifies all five as
   macula-go signs them (12 checks), and macula-go reads macula's
   (`frame/testdata/erlang_neighbour.json`), refusing both at the wrong seq or
-  on another connection. The connection runtime still sends the earlier
-  frames; moving it onto these is the next step.
+  on another connection. `stationlink` sends them.
 - A request carries its delegation chain's proofs (`RequestSpec.Proofs`,
   `VerifiedRequest.Proofs`) in its signed part, as macula 12 does: at most
   `MaxProofs` (8) distinct byte strings of at most `MaxProofsBytes` (256 KiB)
@@ -91,31 +122,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nested more than `frame.MaxPayloadNesting` (63) levels, and payloads of more
   than `frame.MaxPayloadElements` items, which leaves
   `frame.FrameReservedElements` (64) of the budget for the frame's own fields.
-- `identity.Verify` checks a signature by a node key (see Added). The Ed25519
-  check it replaces is `identity.VerifyEd25519` for now.
+- `identity.Verify` checks a signature by a node key (see Added).
 - macula-go requires Go 1.27.
-- `frame.Subscribe` and `frame.Unsubscribe` return `(cbor.Value, error)`. A
-  SUBSCRIBE carries no `filter`, which macula 11.0.0 refuses as a field its
-  type does not have, and both builders refuse what a station's receive rule
-  refuses: a realm or subscriber that is not 32 bytes (`frame.ErrOutOfRange`),
-  checked first, and a topic over 512 bytes (`frame.ErrTextTooLong`) or not
-  UTF-8 (`frame.ErrInvalidText`). `connection.Session.Subscribe` returns that
-  refusal before it tracks or sends anything.
-- `pool.Pool.Subscribe` returns `(SubID, error)`. Before it registers anything
-  it checks the realm, the topic and the pool's node id as subscriber with
-  `frame.CheckSubscription`, the check `frame.Subscribe` and
-  `frame.Unsubscribe` make, and returns a refusal with SubID 0, so no link
-  subscribes to what a station refuses.
-- `frame.Publish` returns `(cbor.Value, error)`. It refuses, with the new
-  `frame.CheckPublication`, what a station's publication table refuses and
-  drops without a reply: a realm that is not 32 bytes (`frame.ErrOutOfRange`),
-  checked first, and a topic over 512 bytes (`frame.ErrTextTooLong`) or not
-  UTF-8 (`frame.ErrInvalidText`). `connection.Session.Publish` and
-  `pool.Pool.Publish` return that refusal before anything is sent,
-  `Pool.Publish` before its payload check. `connection.Session.RunPublisher`
-  delivers it as the outcome's `Err` and announces nothing for it, and one of
-  a session's own facts that the builder refuses is warned about as a
-  `refused_fact` drop.
 
 ### Added
 
@@ -175,7 +183,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   binding's newest statement, and its channel closes when the binding ends or
   the subscriber unsubscribes; the subscriber owns the subscription. Bindings
   and statements are handed out as copies. Nothing is written to disk.
-- `handshake`: the version 3 connection handshake as CBOR bytes, on both
+- `handshake`: the connection handshake (version 4, see Breaking) as CBOR bytes, on both
   sides. `Opener`, `Challenge`, `AnswerChallenge` (the client checks the
   challenge's frame, profile, carried key, key purposes, the station's node_id
   against the one dialed, the TLS binding against the leaf it received, and the
@@ -188,14 +196,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checks every frame before it sends it: at most `cbor.MaxElements` items and
   `cbor.MaxNestingDepth` levels, besides what `frame.CheckPayload` checks. Its
   refusals wrap `frame.ErrFrameBreaksDecodingRule`, and `frame.Encode` refuses
-  a frame over the cap with `frame.ErrFrameTooLarge`. Every frame a
-  `connection.FrameStream` sends passes both before anything is written, so a
-  call, publish or stream frame that fails either returns that error. A
-  handler reply that fails either is answered with an ERROR instead:
-  `PayloadTooLarge` for a reply over the cap, `UnknownError` otherwise. It is
-  warned about as a `refused_reply` drop, one line per interval as other drops
-  are, and the call is not announced on `rpc.replied_v1`, which a provider now
-  announces only once the handler's reply is written.
+  a frame over the cap with `frame.ErrFrameTooLarge`.
 - `transport.DialTarget` dials a `transport.Target`, a station's host and port
   with its crypto profile and expected node_id, with the TLS 1.3 settings of
   that profile. It offers only the profile's key exchange group and macula's
@@ -363,11 +364,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A frame over the frame cap sent on a control stream ended the session. It
-  returns `frame.ErrFrameTooLarge` and leaves the session up.
-- Drop warnings escaped control characters but printed Unicode format
-  characters as they were. They escape those too, the bidirectional overrides
-  and isolates among them.
 - `cbor.Value.AsInt64` reports -2^63-1 as not fitting an int64, where it
   returned 2^63-1.
 - `cbor.Value.String` prints integers below -2^63 as they are, where it

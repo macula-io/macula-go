@@ -8,10 +8,10 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 )
 
-// ErrAuthorizationFormUnsupported is a provider authorization in a form macula
-// 11.0.0 does not have, a certificate chain among them: its only form is an org
+// ErrAuthorizationFormUnsupported is a provider authorization in a form
+// macula 12 does not have, a certificate chain among them: its only form is an org
 // directory and a procedure delegation.
-var ErrAuthorizationFormUnsupported = errors.New("record: an authorization in a form macula 11.0.0 does not have")
+var ErrAuthorizationFormUnsupported = errors.New("record: an authorization in a form macula 12 does not have")
 
 // AuthorizationForm is the form of a procedure advertisement's provider
 // authorization, as macula_record's read_authorization/1 reads it.
@@ -21,7 +21,7 @@ const (
 	// NoAuthorization is an advertisement that carries none.
 	NoAuthorization AuthorizationForm = iota
 	// DelegationAuthorization is the wire forms of the realm's org directory
-	// and of the org's procedure delegation, the one form macula 11.0.0 has.
+	// and of the org's procedure delegation, the one form macula 12 has.
 	DelegationAuthorization
 	// UnsupportedAuthorization is an authorization map of any other fields, a
 	// certificate chain among them.

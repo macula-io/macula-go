@@ -42,3 +42,18 @@ since macula's strict decoder reads its element budget from `macula_cbor_nif`. I
 non-zero when any check fails.
 
 To refresh the test data, give it `identity/testdata/erlang_bindings.json` as the fixtures file.
+
+## Against a live station
+
+`golivelink` dials one running macula 12 station with `stationlink` and reports the handshake (time, TLS group, suite,
+leaf), a `_macula.ping`, `_dht.*` finds and a put of its own signed node record, and a publication heard back as an
+event. With `-serve` it then serves `golivelink/echo` under a throwaway test realm, whose org directory and delegation it
+signs and puts in the station's DHT, and calls it every `-every` for `-serve` from a second node's `pool`, by direct
+dial:
+
+```sh
+go run ./scripts/interop/golivelink -host 127.0.0.1 -port 44330 -profile pq_hybrid -node <station node_id, 64 hex>
+go run ./scripts/interop/golivelink ... -hold 0s -serve 90s -every 15s
+```
+
+Point it only at a station you run for the purpose: it puts records in the station's DHT.

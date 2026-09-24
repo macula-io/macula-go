@@ -9,7 +9,7 @@ import (
 // ErrPostQuantumUnavailable is a key operation, a signature check or a dial in
 // a binary built against the FIPS 140-3 Go Cryptographic Module v1.0.0
 // (GOFIPS140=v1.0.0, or GOFIPS140=certified at Go 1.27). That module has no
-// ML-DSA, and every macula 11.0.0 profile signs with ML-DSA-87, so such a
+// ML-DSA, and every macula 12 profile signs with ML-DSA-87, so such a
 // binary can neither sign with a node key nor check a signature or a station's
 // certificate.
 var ErrPostQuantumUnavailable = errors.New("identity: ML-DSA is unavailable: this binary was built against the FIPS 140-3 Go Cryptographic Module v1.0.0 (GOFIPS140=v1.0.0, or GOFIPS140=certified at Go 1.27), which has no ML-DSA; build without GOFIPS140 or with GOFIPS140=v1.26.0 or later")

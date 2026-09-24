@@ -219,6 +219,15 @@ func (s *Station) Advertised(realm [32]byte, procedure string) bool {
 	return s.routes[routeKey{realm, procedure}] != nil
 }
 
+// Subscribed reports whether the client node_id's connection is subscribed to
+// topic in realm.
+func (s *Station) Subscribed(nodeID, realm [32]byte, topic string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.conns[nodeID]
+	return c != nil && c.topics[routeKey{realm, topic}]
+}
+
 // ShareDHT makes the stations hold one record store, as a DHT replicating
 // between them would: a record put at one is found at every other. Their
 // records so far are kept.
