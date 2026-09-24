@@ -110,6 +110,16 @@ its storage key: the same record back, verified.
 of a publication signed in pq_hybrid; the station delivered it back as a
 verified EVENT (`delivered_via` direct) in 9 ms; nothing unrouted.
 
+**2026-09-24, B5 against the same lab station** (`golivelink -serve 14m`):
+a Go provider served `golivelink/echo` under a throwaway test realm (org
+directory and delegation put in the station's DHT), renewing its 5-minute
+advertisement every 2.5 minutes on the same connection; a second Go link
+called it through the station every 30 s. RESULT in 14 to 25 ms until
+t+9m31s, then `unknown_next_peer` from t+10m1s to t+12m1s, RESULT again
+from t+12m31s. The station drops a same-connection renewal as a duplicate
+and purges the entry 5 minutes past the first advertisement's expiry:
+macula-io/macula-station#7.
+
 ## Found in macula while reading it (reported, not fixed here)
 
 - A handler's `{error, R}` goes out with provider code `unknown_error`, while
@@ -119,7 +129,7 @@ verified EVENT (`delivered_via` direct) in 9 ms; nothing unrouted.
   macula-io/macula#29.
 - macula's link runs the request admission for STREAM_OPEN only; a unary
   CALL goes straight to its handler, so a copy runs twice. macula-go admits
-  both, as the design says.
+  both, as the design says: macula-io/macula#30.
 
 ## Success criteria
 
