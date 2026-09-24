@@ -8,10 +8,10 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
-	"github.com/macula-io/macula-go/internal/teststation"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/teststation"
 )
 
 const (

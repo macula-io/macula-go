@@ -1,7 +1,6 @@
 package teststation
 
 import (
-	"testing"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,7 +24,7 @@ type Realm struct {
 }
 
 // NewRealm is a test realm named name with the org org.
-func NewRealm(t testing.TB, p profile.Profile, name, org string) Realm {
+func NewRealm(t T, p profile.Profile, name, org string) Realm {
 	t.Helper()
 	id := [32]byte{}
 	copy(id[:], name)
@@ -37,7 +36,7 @@ func (r Realm) RealmKey() []byte { return r.Key.PublicKey() }
 
 // Admit puts the realm's org directory, and the org's delegation to each
 // advertiser, in station's DHT, living an hour.
-func (r Realm) Admit(t testing.TB, station *Station, advertisers ...[32]byte) {
+func (r Realm) Admit(t T, station *Station, advertisers ...[32]byte) {
 	t.Helper()
 	orgKeyID := identity.KeyIDOf(r.OrgKey.PublicKey(), r.profile)
 	station.Put(signed(t, 0x15, cbor.Map([]cbor.MapEntry{
@@ -53,7 +52,7 @@ func (r Realm) Admit(t testing.TB, station *Station, advertisers ...[32]byte) {
 	}
 }
 
-func signed(t testing.TB, recordType uint64, payload cbor.Value, key *identity.NodeKey) []byte {
+func signed(t T, recordType uint64, payload cbor.Value, key *identity.NodeKey) []byte {
 	t.Helper()
 	version, err := uuid.NewV7()
 	if err != nil {

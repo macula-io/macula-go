@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Providers`, `Serve`, `Publish` (signed once for every link), `Subscribe`,
   `FindRecord`, `FindRecords`, `FindRecordsByType`, `PutRecord`. Station
   discovery is removed (macula#31).
+- `teststation`: an in-process macula 12 station (many connections, the
+  DHT, CALLs and streams routed to the advertising connection, PUBLISH
+  delivered as EVENTs), public so SDKs built on macula-go test against it;
+  it reports to any `teststation.T`, which a `*testing.T` is.
 - `manifest` is macula 12's: SHA-384 hashes and a 50-byte `Mcid`
   (`<<2, Codec, SHA-384>>`), `HashSize` and `Hash`; `SHA384` replaces
   `Blake3`, and a wire manifest that names no hash algorithm, or any but

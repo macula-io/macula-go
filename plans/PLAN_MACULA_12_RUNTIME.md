@@ -86,7 +86,7 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
   no direct-dial caller could find a Go provider. Not ported: station
   discovery (macula#31) and macula's new_peer_budget, whose second
   node_id-keyed half macula does not implement either; MaxDirectLinks bounds
-  direct dials. Tested against `internal/teststation`, an in-process routing
+  direct dials. Tested against `teststation` (public since the TS move), an in-process routing
   station.
 - [x] B7a Delete the 10.x path: `connection`, `dht`, `directdial`, `stream`,
   the pre-12 `content`, the Ed25519 `ucan`, `bolt4`, the 10.x frame builders

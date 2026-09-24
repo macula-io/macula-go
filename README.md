@@ -159,9 +159,10 @@ go test ./...
 ```
 
 The suite needs no network. The pool is tested against
-[`internal/teststation`](internal/teststation), an in-process macula 12
+[`teststation`](teststation), an in-process macula 12
 station that routes calls between connections, delivers events and holds a
-DHT.
+DHT. It is public, so the SDKs built on macula-go (such as @macula-io/ts)
+test against the same station.
 
 Checks against a compiled macula, in both directions (key bindings, the LAMPS
 composite, the handshake, neighbour signatures), and against a live station

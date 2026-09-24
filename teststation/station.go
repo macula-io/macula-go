@@ -1,5 +1,5 @@
 // Package teststation is an in-process macula 12 station for tests of the
-// clients built on stationlink: a QUIC listener with an ML-DSA-87 leaf on
+// clients built on macula-go, in Go or through its bindings: a QUIC listener with an ML-DSA-87 leaf on
 // macula-pqc's groups that accepts any number of client connections, runs the
 // station's side of the v4 handshake on each, and then does what a station
 // does with their frames: answers _macula.ping and the _dht.* procedures from
@@ -27,7 +27,6 @@ import (
 	"net"
 	"strconv"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -47,9 +46,19 @@ const (
 	maxFrameBytes       = 16 * 1024 * 1024
 )
 
+// T is what the station reports its failures to and registers its cleanup
+// with: a *testing.T, or, outside a test (a helper process serving another
+// language's tests), anything with these methods.
+type T interface {
+	Helper()
+	Errorf(format string, args ...any)
+	Fatalf(format string, args ...any)
+	Cleanup(func())
+}
+
 // Station is a running test station.
 type Station struct {
-	t       testing.TB
+	t       T
 	Profile profile.Profile
 	Key     *identity.NodeKey
 	NodeID  [32]byte
@@ -103,7 +112,7 @@ var keys sync.Map // name+profile -> *identity.NodeKey: puzzle-solved keys take 
 
 // Key is a puzzle-solved identity key for name in profile p, the same one each
 // time it is asked for in a test binary.
-func Key(t testing.TB, p profile.Profile, name string) *identity.NodeKey {
+func Key(t T, p profile.Profile, name string) *identity.NodeKey {
 	t.Helper()
 	if k, ok := keys.Load(string(p) + name); ok {
 		return k.(*identity.NodeKey)
@@ -118,7 +127,7 @@ func Key(t testing.TB, p profile.Profile, name string) *identity.NodeKey {
 
 // Start starts a station named name, stopped when the test ends. Its own
 // station_endpoint record is in its DHT.
-func Start(t testing.TB, p profile.Profile, name string) *Station {
+func Start(t T, p profile.Profile, name string) *Station {
 	t.Helper()
 	key := Key(t, p, "station "+name)
 	tlsKey, err := mldsa.GenerateKey(mldsa.MLDSA87())
@@ -190,7 +199,7 @@ func (s *Station) WaitAccepted() [32]byte {
 	case id := <-s.accepted:
 		return id
 	case <-time.After(15 * time.Second):
-		s.t.Fatal("teststation: no client was accepted")
+		s.t.Fatalf("teststation: no client was accepted")
 		return [32]byte{}
 	}
 }
