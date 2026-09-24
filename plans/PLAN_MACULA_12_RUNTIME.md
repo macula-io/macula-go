@@ -125,8 +125,8 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
   content announcements (type 0x11) and fetch by direct dial. Lesson from
   the leak survey: a manifest from the wire is untrusted input, so its
   counts and sizes are bounded before anything is allocated from them.
-- [ ] C(i) live against a macula 12.1 lab station on host00; C(ii) one fleet
-  station (amsterdam, canary).
+- [x] C(i) live against a macula-station 0.6.1 lab station on host00 (every
+  chunk above); C(ii) one fleet station, amsterdam (below).
 
 ## Measured live
 
@@ -188,6 +188,24 @@ stream of three chunks, answered by the provider's reply at 67 ms. The
 station verifies each relayed frame against the open, so it read the
 provider's and the caller's signed frames; its log shows no refusal.
 
+**2026-09-24, C(ii) on the fleet, 12:16:12Z to 12:16:46Z** (Raf's yes via the
+Supervisor; Terra holding amsterdam's re-pin and tailing it), from host00,
+master 2db68a0, a fresh puzzle-solved pq_hybrid key per tool:
+
+- `golivelink` against amsterdam (station-nl-ams.macula.io, ffd4a52, e982ec4
+  + #7): HELLO accepted in 52 ms on SecP256r1MLKEM768 with an ML-DSA leaf;
+  `_macula.ping` answered with the station's signed relay error in 25 ms;
+  `find_records_by_type` node_record: 7 verified, 0 dropped, 101 ms; the
+  station's own endpoint found, 25 ms; one node record (8,518 bytes) put and
+  found again, 40 ms; one publication heard back as a verified event in 86 ms;
+  held 20 s. The station pushed 40 ADVERTISE frames to the client link in the
+  hold, which a client does not route (counted as unrouted).
+- `examples/call` with the io.macula realm key: one trusted provider of
+  `mcl-echo/echo` (000e02b5… at station 00df6824…, mcl-echo on beam00 is not
+  seeded on amsterdam), called by direct dial through that station's own
+  endpoint record: "hello" back in 348 ms, resolution and the second dial
+  included.
+
 ## @macula-io/ts (macula-ts `cabi`) across B7
 
 macula-ts's `cabi` pins macula-go v0.7.1, so B7a does not break its build;
@@ -234,7 +252,7 @@ TS until `cabi` moves to this API.** Where each export lands:
 
 - [ ] Every chunk green in CI; the cross-stack checks in `scripts/interop`
   still pass.
-- [ ] A Go client connects to a live macula 12 station, calls `mcl-echo/echo`,
+- [x] A Go client connects to a live macula 12 station, calls `mcl-echo/echo`,
   publishes and subscribes, and finds records by type; measurements written
-  down.
+  down (C(ii), 2026-09-24).
 - [ ] No 10.x code left.

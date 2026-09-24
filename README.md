@@ -221,6 +221,11 @@ Measured against a live macula-station 0.6.1 (`pq_hybrid`, puzzle enforced),
 - a Go provider served under a test realm and called by a second node's pool
   by direct dial: 34 ms for the first call, 16 to 25 ms after.
 
+On the fleet, 2026-09-24, against amsterdam (station-nl-ams.macula.io): HELLO
+in 52 ms, DHT reads and a put, a publication heard back in 86 ms, and
+`mcl-echo/echo`, served from another station, called by direct dial and
+answered in 348 ms.
+
 The macula 12 port and what remains of it are tracked in
 [`plans/PLAN_MACULA_12_RUNTIME.md`](plans/PLAN_MACULA_12_RUNTIME.md).
 
