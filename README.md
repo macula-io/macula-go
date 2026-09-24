@@ -23,9 +23,10 @@
 > older. Handshake, calls, streaming RPC, publish/subscribe, the DHT and
 > serving procedures work against a live macula-station 0.6.1, including calls
 > and streams by direct dial from one node to another's provider. **Content
-> transfer is not on master yet**: the 10.x implementation was removed because
-> it cannot reach a macula 12 station, and its macula 12 port is in progress
-> (see [Status](#status)). The last release, v0.10.0, speaks the retired 10.x
+> transfer is not on master**: macula 12 stations keep no content (D27), and the
+> node-served protocol that replaces the store is not defined in macula yet
+> (see [Known limitations](#known-limitations)). Manifests and MCIDs are
+> macula 12's, byte for byte. The last release, v0.10.0, speaks the retired 10.x
 > wire and cannot reach the current fleet.
 
 ## What is this?
@@ -61,7 +62,8 @@ Everything on the wire is post-quantum:
 | DHT (`_dht.*`) | ✅ | — | Records verified before they are handed on |
 | Pool of station links | ✅ | ✅ | Pinned seeds, redial with subscriptions and procedures replayed |
 | Streaming RPC (server, client and bidi streams) | ✅ | ✅ | A QUIC stream per session; `pool.OpenStream` by direct dial, `Offer.Stream` to serve; admission, session and inbox bounds as macula's; every stream released on every path |
-| Content transfer | — | — | Not on master: macula 12 port in progress |
+| Content manifests and MCIDs | ✅ | ✅ | SHA-384, 50-byte MCIDs, byte for byte with macula's `macula_manifest` |
+| Content transfer | — | — | Not on master: stations keep no content in macula 12 (D27); waits for macula's node-served content |
 | Gated procedures (UCAN) | token carried | — | Serving one is refused by name until the post-quantum UCAN verifier ([#2](https://github.com/macula-io/macula-go/issues/2)) |
 
 No `unsafe` and no cgo anywhere in this module: `grep -rl '"unsafe"'
@@ -137,7 +139,7 @@ hex> -realm <hex> -realm-key <file> -key <node key file>`):
 | [`transport`](transport) | The post-quantum QUIC dial |
 | [`cbor`](cbor) | The deterministic CBOR codec and its decoding rule |
 | [`profile`](profile) | The `pq_pure` and `pq_hybrid` crypto profiles |
-| [`manifest`](manifest) | Content manifests (still the pre-12 format; ported with content transfer) |
+| [`manifest`](manifest) | Content manifests and MCIDs, as macula 12 makes them |
 
 ## The CBOR codec is hand-rolled on purpose
 
@@ -177,7 +179,12 @@ GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record -ru
 
 ## Known limitations
 
-- **Content transfer is not on master** until its macula 12 port lands.
+- **No content transfer.** In macula 12 a station keeps no content: the node
+  that shares content serves it, and stations only pass it through (D27). The
+  station's content store is gone (macula-station 647dfba), and macula has not
+  yet defined the node-served protocol that replaces it; its own
+  `put_content`/`get_content` still call the removed store. macula-go ports
+  that protocol once it exists, rather than inventing one.
 - **Gated procedures cannot be served**: `Serve` refuses one by name until
   macula-go has the post-quantum UCAN verifier macula 12 uses
   ([#2](https://github.com/macula-io/macula-go/issues/2)). A call can carry a

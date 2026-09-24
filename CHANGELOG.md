@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frame-level Ed25519 signing (`frame.Sign`, `frame.Verify`, `SigDomain`,
   `publisher_sig`), Ed25519 identity (`identity.KeyPair`, `Generate`,
   `VerifyEd25519`) and the trust-mode `transport.Dial` (`WebPKI`, `Pinned`,
-  `Insecure`). Content transfer returns when its macula 12 port lands;
-  streaming RPC is back (below); the examples are new (`call`, `serve`, `pubsub`).
+  `Insecure`). Content transfer waits for macula's node-served content (D27:
+  stations keep none); streaming RPC is back (below); the examples are new (`call`, `serve`, `pubsub`).
 - `pool` is rewritten on `stationlink`, as macula 12's `macula_client`:
   `Connect` takes seeds pinned by node_id and `Opts.RealmTrust`, and refuses
   an unpinned seed, a malformed realm key or too many seeds before it dials;
@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Providers`, `Serve`, `Publish` (signed once for every link), `Subscribe`,
   `FindRecord`, `FindRecords`, `FindRecordsByType`, `PutRecord`. Station
   discovery is removed (macula#31).
+- `manifest` is macula 12's: SHA-384 hashes and a 50-byte `Mcid`
+  (`<<2, Codec, SHA-384>>`), `HashSize` and `Hash`; `SHA384` replaces
+  `Blake3`, and a wire manifest that names no hash algorithm, or any but
+  `sha384`, is refused. Checked byte for byte against manifests macula
+  built. The BLAKE3 dependency is gone.
 - Streaming RPC on the macula 12 wire: `stationlink.Link.OpenStream` and
   `pool.OpenStream` (by direct dial) open a session on a QUIC stream of its
   own; `Offer.Stream` serves one with a `StreamHandler`. `Stream` sends

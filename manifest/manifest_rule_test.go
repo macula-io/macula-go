@@ -8,9 +8,9 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 )
 
-// emptyRootHash is BLAKE3 of no bytes, the root hash of empty content in every
-// macula stack.
-const emptyRootHash = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+// emptyRootHash is SHA-384 of no bytes (sha384sum < /dev/null), the root hash
+// of empty content in macula 12.
+const emptyRootHash = "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b"
 
 // wireWithAlgorithm is m's wire form with its hash_algorithm set to value.
 func wireWithAlgorithm(m Manifest, value cbor.Value) cbor.Value {
@@ -25,7 +25,7 @@ func wireWithAlgorithm(m Manifest, value cbor.Value) cbor.Value {
 }
 
 // A manifest naming sha256 is refused where it is read, as text or as bytes:
-// every chunk fetch checks BLAKE3, so blake3 is the one algorithm accepted.
+// every chunk fetch checks SHA-384, so sha384 is the one algorithm accepted.
 func TestASha256ManifestIsRefused(t *testing.T) {
 	m := threeChunks()
 	for _, value := range []cbor.Value{cbor.Text("sha256"), cbor.Bytes([]byte("sha256"))} {
@@ -46,7 +46,7 @@ func TestVerifyMcidRefusesSha256(t *testing.T) {
 }
 
 // Empty content has one whole form: size 0, chunk_count 0, no chunks, a
-// positive chunk_size and BLAKE3 of no bytes as its root hash. That form reads
+// positive chunk_size and SHA-384 of no bytes as its root hash. That form reads
 // back, describes its MCID and verifies; the same content as one empty chunk
 // is refused where it is read.
 func TestEmptyContentHasOneWholeForm(t *testing.T) {

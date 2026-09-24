@@ -28,6 +28,14 @@ These scripts check macula-go's post-quantum identity against a compiled macula,
 escript scripts/interop/emit_erlang_composite.escript <macula lib dir>/ebin identity/testdata/lamps_mldsa87_rsa4096_pss_sha512
 ```
 
+`emit_erlang_manifest.escript` writes manifests macula's `macula_manifest` builds (their MCIDs, root and chunk hashes,
+and deterministic CBOR as a CALL payload carries them) to `manifest/testdata/erlang_manifests.json`, which
+`manifest/erlang_manifest_test.go` checks byte for byte in every `go test`:
+
+```sh
+escript scripts/interop/emit_erlang_manifest.escript <macula lib dir> manifest/testdata/erlang_manifests.json
+```
+
 ## Running
 
 Compile macula at the revision to check, then point the script at the compiled application:

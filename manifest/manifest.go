@@ -1,11 +1,10 @@
 // Package manifest implements fixed-size chunking, Merkle-root
 // computation, and manifest construction for content larger than one
-// storage block, in the PRE-12 format: BLAKE3 hashes and a 34-byte MCID
-// tagged 1. macula 12 uses SHA-384 and a 50-byte MCID tagged 2
-// (macula_manifest), so nothing built here interoperates with a macula 12
-// station yet; the package is ported with content transfer (plans/
-// PLAN_MACULA_12_RUNTIME.md, B7c). The chunk size (256 KiB) and the Merkle
-// fold (pair an odd last hash with itself) are the same in both.
+// storage block, as macula 12's macula_manifest does, byte for byte: SHA-384
+// hashes, a 50-byte MCID <<2, Codec, SHA-384>> (tag 2 names SHA-384, D24), a
+// 256 KiB default chunk size, and a Merkle fold that pairs an odd last hash
+// with itself. testdata/erlang_manifests.json holds manifests macula built,
+// checked in every go test.
 //
 // Two different wire representations of name, both handled separately,
 // not confused with each other: computeMcid's canonical hash input
@@ -16,13 +15,12 @@
 package manifest
 
 import (
+	"crypto/sha512"
 	"errors"
 	"fmt"
 	"math"
 	"time"
 	"unicode/utf8"
-
-	"lukechampine.com/blake3"
 
 	"github.com/macula-io/macula-go/cbor"
 )
@@ -32,35 +30,43 @@ const DefaultChunkSize = 262_144
 
 const (
 	version       = 1
+	tagSHA384     = 2
 	codecRaw      = 0x55
 	codecManifest = 0x56
 )
 
-// Mcid is <<Version:8, Codec:8, Hash:32/binary>> — 34 bytes.
-type Mcid [34]byte
+// HashSize is a SHA-384 digest's length.
+const HashSize = 48
 
-func makeMcid(codec byte, hash [32]byte) Mcid {
+// Mcid is <<Tag:8, Codec:8, Hash:48/binary>>, 50 bytes: tag 2 is SHA-384,
+// codec 0x55 a raw block and 0x56 a manifest.
+type Mcid [50]byte
+
+// Hash is a SHA-384 digest.
+type Hash = [HashSize]byte
+
+func makeMcid(codec byte, hash Hash) Mcid {
 	var out Mcid
-	out[0] = version
+	out[0] = tagSHA384
 	out[1] = codec
 	copy(out[2:], hash[:])
 	return out
 }
 
-// Algorithm is a content hash algorithm. Blake3 is the only one: every macula
-// stack checks chunks with BLAKE3 and refuses a manifest naming another.
+// Algorithm is a content hash algorithm. SHA384 is the only one: macula 12
+// hashes content with SHA-384 and refuses a manifest naming another.
 type Algorithm int
 
-// Blake3 is BLAKE3, the hash algorithm of every manifest.
-const Blake3 Algorithm = 0
+// SHA384 is SHA-384, the hash algorithm of every manifest.
+const SHA384 Algorithm = 0
 
-func (a Algorithm) hash(data []byte) [32]byte {
-	return blake3.Sum256(data)
+func (a Algorithm) hash(data []byte) Hash {
+	return sha512.Sum384(data)
 }
 
-// Name is the wire spelling of a manifest's hash_algorithm field: "blake3".
+// Name is the wire spelling of a manifest's hash_algorithm field: "sha384".
 func (a Algorithm) Name() string {
-	return "blake3"
+	return "sha384"
 }
 
 // ChunkInfo describes one chunk of a manifest.
@@ -68,7 +74,7 @@ type ChunkInfo struct {
 	Index  int
 	Offset int
 	Size   int
-	Hash   [32]byte
+	Hash   Hash
 }
 
 // Manifest is a chunked-content manifest.
@@ -81,12 +87,12 @@ type Manifest struct {
 	ChunkSize     int
 	ChunkCount    int
 	HashAlgorithm Algorithm
-	RootHash      [32]byte
+	RootHash      Hash
 	Chunks        []ChunkInfo
 }
 
 // CreateOptions configures Create. A manifest's hash algorithm is always
-// Blake3, so there is no option for it.
+// SHA-384, so there is no option for it.
 type CreateOptions struct {
 	Name      string
 	ChunkSize int
@@ -110,13 +116,13 @@ func Create(data []byte, opts CreateOptions) (Manifest, [][]byte) {
 
 func createWithCreated(data []byte, opts CreateOptions, created uint64) (Manifest, [][]byte) {
 	chunks := doChunk(data, opts.ChunkSize)
-	chunkInfos := makeChunkInfos(chunks, Blake3)
-	rootHash := rootHashFor(chunkInfos, Blake3)
+	chunkInfos := makeChunkInfos(chunks, SHA384)
+	rootHash := rootHashFor(chunkInfos, SHA384)
 	chunkCount := len(chunkInfos)
-	mcid := computeMcid(opts.Name, uint64(len(data)), opts.ChunkSize, chunkCount, Blake3, rootHash)
+	mcid := computeMcid(opts.Name, uint64(len(data)), opts.ChunkSize, chunkCount, SHA384, rootHash)
 	m := Manifest{
 		Mcid: mcid, Version: 1, Name: opts.Name, Size: uint64(len(data)), Created: created,
-		ChunkSize: opts.ChunkSize, ChunkCount: chunkCount, HashAlgorithm: Blake3,
+		ChunkSize: opts.ChunkSize, ChunkCount: chunkCount, HashAlgorithm: SHA384,
 		RootHash: rootHash, Chunks: chunkInfos,
 	}
 	return m, chunks
@@ -134,11 +140,10 @@ func ChunkMcid(m Manifest, index int) (Mcid, bool) {
 
 // BlockMcid is the MCID a whole blob is stored/fetched under when it's
 // small enough to be a single block (no manifest at all). Matches
-// macula_content_transfer:put_single_block/3 exactly: ALWAYS Blake3,
-// regardless of any algorithm preference -- single-block content has
-// no algorithm choice, only chunked/manifest content does.
+// macula_content_transfer:put_single_block/3 exactly: <<2, 0x55,
+// SHA-384(data)>>.
 func BlockMcid(data []byte) Mcid {
-	return makeMcid(codecRaw, Blake3.hash(data))
+	return makeMcid(codecRaw, SHA384.hash(data))
 }
 
 // McidIsChunked reports whether mcid addresses a manifest (chunked
@@ -182,10 +187,10 @@ func McidFor(m Manifest) Mcid {
 
 // VerifyMcid checks that m describes mcid, the way macula_manifest's
 // verify_mcid/2 does: m's name must be valid UTF-8, its hash algorithm
-// blake3, and the MCID recomputed from its canonical fields (McidFor) must
+// sha384, and the MCID recomputed from its canonical fields (McidFor) must
 // equal mcid. m's own Mcid field is not consulted.
 func VerifyMcid(m Manifest, mcid Mcid) error {
-	if !utf8.ValidString(m.Name) || m.HashAlgorithm != Blake3 || McidFor(m) != mcid {
+	if !utf8.ValidString(m.Name) || m.HashAlgorithm != SHA384 || McidFor(m) != mcid {
 		return ErrManifestMcidMismatch
 	}
 	return nil
@@ -269,11 +274,11 @@ func makeChunkInfos(chunks [][]byte, algorithm Algorithm) []ChunkInfo {
 	return infos
 }
 
-func rootHashFor(infos []ChunkInfo, algorithm Algorithm) [32]byte {
+func rootHashFor(infos []ChunkInfo, algorithm Algorithm) Hash {
 	if len(infos) == 0 {
 		return algorithm.hash(nil)
 	}
-	hashes := make([][32]byte, len(infos))
+	hashes := make([]Hash, len(infos))
 	for i, info := range infos {
 		hashes[i] = info.Hash
 	}
@@ -286,15 +291,15 @@ func rootHashFor(infos []ChunkInfo, algorithm Algorithm) [32]byte {
 // combine is one Merkle-fold pass: pairs from the front, hash(L || R).
 // An odd leftover at the end is paired with itself, hash(Last || Last)
 // -- the rule most likely to be implemented wrong.
-func combine(hashes [][32]byte, algorithm Algorithm) [][32]byte {
-	out := make([][32]byte, 0, (len(hashes)+1)/2)
+func combine(hashes []Hash, algorithm Algorithm) []Hash {
+	out := make([]Hash, 0, (len(hashes)+1)/2)
 	for i := 0; i < len(hashes); i += 2 {
 		left := hashes[i]
 		right := left
 		if i+1 < len(hashes) {
 			right = hashes[i+1]
 		}
-		buf := make([]byte, 0, 64)
+		buf := make([]byte, 0, 2*HashSize)
 		buf = append(buf, left[:]...)
 		buf = append(buf, right[:]...)
 		out = append(out, algorithm.hash(buf))
@@ -307,7 +312,7 @@ func combine(hashes [][32]byte, algorithm Algorithm) [][32]byte {
 // up into root_hash). name and hash_algorithm are wrapped as CBOR text
 // here specifically, matching the reference's own special-cased
 // compute_mcid/2 -- NOT the same encoding ToWire uses for name.
-func computeMcid(name string, size uint64, chunkSize, chunkCount int, algorithm Algorithm, rootHash [32]byte) Mcid {
+func computeMcid(name string, size uint64, chunkSize, chunkCount int, algorithm Algorithm, rootHash Hash) Mcid {
 	canonical := cbor.Map([]cbor.MapEntry{
 		{Key: cbor.Text("name"), Val: cbor.Text(name)},
 		{Key: cbor.Text("size"), Val: cbor.Uint64(size)},
@@ -352,11 +357,13 @@ func chunkInfoToWire(c ChunkInfo) cbor.Value {
 }
 
 // FromWire parses a manifest as received from a _content.get_manifest
-// RESULT. A manifest naming any hash algorithm but blake3, whose chunks
-// don't describe its content whole (see CheckWhole), or holding a number too
-// large for the field it fills, is refused.
+// RESULT, as macula_manifest's from_wire/1 does. A manifest that does not name
+// sha384 as its hash algorithm, whose chunks don't describe its content whole
+// (see CheckWhole), or holding a number too large for the field it fills, is
+// refused. Nothing is allocated from the size or count it claims: only the
+// chunks it lists, which the frame bounds, are read.
 func FromWire(v cbor.Value) (Manifest, error) {
-	mcidB, err := getBytesExact(v, "mcid", 34)
+	mcidB, err := getBytesExact(v, "mcid", len(Mcid{}))
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -391,11 +398,11 @@ func FromWire(v cbor.Value) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	rootHashB, err := getBytesExact(v, "root_hash", 32)
+	rootHashB, err := getBytesExact(v, "root_hash", HashSize)
 	if err != nil {
 		return Manifest{}, err
 	}
-	var rootHash [32]byte
+	var rootHash Hash
 	copy(rootHash[:], rootHashB)
 
 	chunksVal, ok := v.Get("chunks")
@@ -427,23 +434,23 @@ func FromWire(v cbor.Value) (Manifest, error) {
 }
 
 // wireAlgorithm reads a manifest's hash_algorithm the way macula_manifest's
-// from_wire/1 does: a missing one is blake3, blake3 as text or bytes is
-// accepted, and any other, sha256 included, is refused. Every chunk fetch
-// checks BLAKE3, so blake3 is the one algorithm a manifest can name.
+// from_wire/1 does: sha384, as text or bytes, is the one algorithm a manifest
+// can name, and a manifest that names none or another, sha256 or blake3
+// among them, is refused.
 func wireAlgorithm(v cbor.Value) (Algorithm, error) {
 	field, ok := v.Get("hash_algorithm")
 	if !ok {
-		return Blake3, nil
+		return SHA384, fmt.Errorf("manifest: from_wire: no hash_algorithm")
 	}
 	name, isText := field.AsText()
 	if !isText {
 		b, _ := field.AsBytes()
 		name = string(b)
 	}
-	if name != Blake3.Name() {
-		return Blake3, fmt.Errorf("manifest: from_wire: hash_algorithm %q is not blake3", name)
+	if name != SHA384.Name() {
+		return SHA384, fmt.Errorf("manifest: from_wire: hash_algorithm %q is not sha384", name)
 	}
-	return Blake3, nil
+	return SHA384, nil
 }
 
 func chunkInfoFromWire(v cbor.Value) (ChunkInfo, error) {
@@ -459,11 +466,11 @@ func chunkInfoFromWire(v cbor.Value) (ChunkInfo, error) {
 	if err != nil {
 		return ChunkInfo{}, err
 	}
-	hashB, err := getBytesExact(v, "hash", 32)
+	hashB, err := getBytesExact(v, "hash", HashSize)
 	if err != nil {
 		return ChunkInfo{}, err
 	}
-	var hash [32]byte
+	var hash Hash
 	copy(hash[:], hashB)
 	return ChunkInfo{Index: int(index), Offset: int(offset), Size: int(size), Hash: hash}, nil
 }

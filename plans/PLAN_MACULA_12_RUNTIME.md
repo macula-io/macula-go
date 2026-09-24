@@ -105,7 +105,20 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
   every dedicated stream is released on every path, success or failure
   (cancel read and write, not just close); an accepted stream that fails
   before a session exists is refused and released; no goroutine per frame.
-- [ ] B7c Content transfer: port `manifest` to macula 12 (SHA-384, 50-byte
+- [~] B7c Content transfer. **Done: `manifest` is macula 12's**, SHA-384 and
+  50-byte MCIDs, checked byte for byte against manifests macula built
+  (`manifest/testdata/erlang_manifests.json`, from
+  `scripts/interop/emit_erlang_manifest.escript`). **Stopped: the transfer.**
+  Measured on the lab station: a `_content.*` CALL on a dedicated stream is
+  dropped ("dropping call on an unrouted dedicated stream"), because D27
+  removed the station's content store (macula-station 647dfba): the sharing
+  node serves its content and stations only relay. macula 12.3.0's own
+  `put_content`/`get_content` still call the removed store, and no
+  node-served protocol exists in macula to port. The station-store client
+  built here is parked on the local branch `park/b7c-station-content-store`
+  (bounded verified gets, announcer fallback, stream release with tests), to
+  be reworked onto the node-served protocol once macula defines it. The
+  scope as first written: port `manifest` to macula 12 (SHA-384, 50-byte
   MCID tagged 2, the MCID over name, size, chunk size and count, hash
   algorithm and root); `_content.put_block/get_block/put_manifest/
   get_manifest` CALLs to a station on dedicated streams, up to 4 per link;
@@ -190,8 +203,8 @@ TS until `cabi` moves to this API.** Where each export lands:
 | `macula_session_advertise`, `_unadvertise`, `macula_serve_wait_for_call`, `macula_pending_call_*`, `macula_directdial_advertise` | connection, frame | `pool.Serve` with a `Handler`, `Served.Stop` | B6 |
 | `macula_session_publish`, `_subscribe_start`, `_subscribe_stop` | frame | `pool.Publish`, `pool.Subscribe`, `Subscription.Unsubscribe` | B6 |
 | `macula_dht_find_record`, `_find_records`, `_find_records_by_type` | connection, dht | `pool.FindRecord`, `FindRecords`, `FindRecordsByType` | B6 |
-| `macula_dht_put_procedure_advertisement`, `_put_content_announcement` | dht | `pool.PutRecord` (a procedure advertisement comes from `Serve`) | B6 / B7c |
-| `macula_content_put`, `_get` | content, manifest | B7c | no |
+| `macula_dht_put_procedure_advertisement`, `_put_content_announcement` | dht | `pool.PutRecord` (a procedure advertisement comes from `Serve`; a content announcement waits for D27 content) | B6 |
+| `macula_content_put`, `_get` | content, manifest | node-served content, once macula defines it (D27); `manifest` is ready | no |
 | `macula_ucan_mint`, `_decode`, `macula_session_call_with_ucan` | ucan (Ed25519) | PQ UCAN, macula-go#2; `pool.Call` carries a token | no |
 
 ## Found in macula and macula-station

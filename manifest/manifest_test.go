@@ -5,9 +5,10 @@ import (
 	"testing"
 )
 
-func TestBlockMcidIsAlwaysBlake3RegardlessOfAlgorithmPreference(t *testing.T) {
+// A single block's MCID is tag 2, codec raw and the block's SHA-384.
+func TestBlockMcidIsTheBlocksSHA384(t *testing.T) {
 	data := []byte("small blob, single block")
-	want := makeMcid(codecRaw, Blake3.hash(data))
+	want := makeMcid(codecRaw, SHA384.hash(data))
 	got := BlockMcid(data)
 	if got != want {
 		t.Fatalf("BlockMcid = %x, want %x", got, want)
@@ -65,7 +66,7 @@ func TestChunkMcidIsTheBlockMcidOfTheChunk(t *testing.T) {
 			t.Fatalf("ChunkMcid(%d) not ok", i)
 		}
 		// A chunk is stored and fetched as a block of its bytes, so its
-		// address is the BLAKE3 block MCID of those bytes.
+		// address is the SHA-384 block MCID of those bytes.
 		if want := BlockMcid(chunk); got != want {
 			t.Errorf("ChunkMcid(%d) = %x, want %x", i, got, want)
 		}
@@ -82,15 +83,15 @@ func TestRootHashOddLeafCountPairsLastHashWithItself(t *testing.T) {
 
 	infos := m.Chunks
 	h0, h1, h2 := infos[0].Hash, infos[1].Hash, infos[2].Hash
-	level1a := combineOne(h0, h1, Blake3)
-	level1b := combineOne(h2, h2, Blake3) // odd one out, paired with itself
-	want := combineOne(level1a, level1b, Blake3)
+	level1a := combineOne(h0, h1, SHA384)
+	level1b := combineOne(h2, h2, SHA384) // odd one out, paired with itself
+	want := combineOne(level1a, level1b, SHA384)
 	if m.RootHash != want {
 		t.Fatalf("RootHash = %x, want %x (manual odd-leaf fold)", m.RootHash, want)
 	}
 }
 
-func combineOne(l, r [32]byte, alg Algorithm) [32]byte {
+func combineOne(l, r Hash, alg Algorithm) Hash {
 	buf := make([]byte, 0, 64)
 	buf = append(buf, l[:]...)
 	buf = append(buf, r[:]...)
