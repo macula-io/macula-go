@@ -390,3 +390,38 @@ func TestACallForAnotherNodeIsNotAnswered(t *testing.T) {
 		t.Errorf("counted %d calls for another node", n)
 	}
 }
+
+// The advertisement is also put in the station's DHT, where a caller resolving
+// the procedure finds it, and Stop puts its tombstone in the same slot.
+func TestTheAdvertisementIsPutInTheDHT(t *testing.T) {
+	link, s, fixture := startServing(t, profile.PQPure)
+	served := serveEcho(t, link, fixture, echo)
+	s.nextControl(t)
+	stored := func() []record.Type {
+		s.dht.mu.Lock()
+		defer s.dht.mu.Unlock()
+		var types []record.Type
+		for _, wire := range s.dht.byKey[record.ProcedureKey(servedRealm, servedProcedure)] {
+			verified, err := record.Verify(wire, profile.PQPure, time.Now().UnixMilli())
+			if err == nil {
+				types = append(types, verified.Record().Type)
+			}
+		}
+		return types
+	}
+	if types := stored(); len(types) != 1 || types[0] != record.TypeProcedureAdvertisement {
+		t.Errorf("stored under the procedure key: %v", types)
+	}
+	if err := served.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	s.nextControl(t)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if types := stored(); len(types) == 2 && types[1] == record.TypeTombstone {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("after Stop, stored: %v", stored())
+}

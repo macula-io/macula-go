@@ -121,7 +121,8 @@ type Served struct {
 // DHT, signs the advertisement with this node's identity key, naming the
 // connected station as the serving station and living no longer than either
 // record nor 5 minutes, and checks its authorization against o.RealmKey
-// before sending it. The advertisement is renewed at half its lifetime.
+// before sending it in an ADVERTISE and putting it in the DHT. The
+// advertisement is renewed at half its lifetime.
 func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 	if o.Handler == nil || len(o.RealmKey) == 0 {
 		return nil, ErrInvalidOffer
@@ -146,7 +147,7 @@ func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 	}
 	l.served[s.key] = s
 	l.mu.Unlock()
-	if err := l.sendControl(frame.AdvertiseFrame(wire)); err != nil {
+	if err := l.announce(ctx, wire); err != nil {
 		s.end(err)
 		return nil, err
 	}
@@ -239,7 +240,9 @@ func (s *Served) renew() {
 		advertisement, wire, err := s.link.advertisement(ctx, s.offer, s.maxTTL)
 		cancel()
 		if err == nil {
-			err = s.link.sendControl(frame.AdvertiseFrame(wire))
+			ctx, cancel := context.WithTimeout(context.Background(), DefaultCallTimeout)
+			err = s.link.announce(ctx, wire)
+			cancel()
 		}
 		if err != nil {
 			lastErr = err
@@ -258,7 +261,8 @@ func halfLife(r record.Record) time.Duration {
 }
 
 // Stop withdraws the advertisement with an UNADVERTISE carrying its tombstone,
-// signed by this node, and stops answering the procedure's CALLs. Stopping a
+// signed by this node, puts the tombstone in the advertisement's DHT slot, and
+// stops answering the procedure's CALLs. Stopping a
 // procedure no longer served does nothing.
 func (s *Served) Stop() error {
 	select {
@@ -282,7 +286,23 @@ func (s *Served) Stop() error {
 	if err != nil {
 		return err
 	}
-	return s.link.sendControl(frame.UnadvertiseFrame(wire))
+	if err := s.link.sendControl(frame.UnadvertiseFrame(wire)); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultCallTimeout)
+	defer cancel()
+	return s.link.PutRecord(ctx, wire)
+}
+
+// announce sends an advertisement to the station in an ADVERTISE, which routes
+// CALLs through it, and puts it in the DHT, where a caller resolving the
+// procedure to dial its serving station directly finds it, as macula's
+// advertise_direct does both.
+func (l *Link) announce(ctx context.Context, wire []byte) error {
+	if err := l.sendControl(frame.AdvertiseFrame(wire)); err != nil {
+		return err
+	}
+	return l.PutRecord(ctx, wire)
 }
 
 // Done is closed when the procedure is no longer served.
