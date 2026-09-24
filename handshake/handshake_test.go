@@ -289,11 +289,67 @@ func TestAWholeHandshakeConnectsBothSides(t *testing.T) {
 		if capabilities, err := ReadHello(hello); err != nil || capabilities != stationCapabilities {
 			t.Errorf("ReadHello = (%d, %v), want the station's capabilities", capabilities, err)
 		}
-		if keys := frameKeys(t, connect); keys != "capabilities connect_binding connect_key connect_status frame_type identity_key proof version" {
+		if keys := frameKeys(t, connect); keys != "capabilities connect_binding connect_key connect_status frame_type identity_key member_endorsement proof version" {
 			t.Errorf("CONNECT holds %q", keys)
+		}
+		if endorsement, ok := fields(t, connect)["member_endorsement"].AsBytes(); !ok || len(endorsement) != 0 {
+			t.Errorf("CONNECT's member_endorsement %x (bytes %t), want it present and empty", endorsement, ok)
+		}
+		if client.MemberEndorsement == nil || len(client.MemberEndorsement) != 0 {
+			t.Errorf("the station was handed member_endorsement %x, want an empty one", client.MemberEndorsement)
 		}
 		if bytes.Equal(challenge, w.challenge(t)) {
 			t.Error("two challenges are equal, want a fresh nonce in each")
+		}
+	})
+}
+
+// Version 4, as macula 12's handshake: CONNECT gained member_endorsement, and
+// macula matches key sets exactly, so an older peer must hear
+// unsupported_version rather than malformed_frame.
+func TestTheHandshakeIsVersion4(t *testing.T) {
+	if Version != 4 {
+		t.Fatalf("Version = %d, want 4", Version)
+	}
+}
+
+// A CONNECT carries the endorsement the session was given, and the station is
+// handed it untouched. Nothing checks it here: enforcing it is the station's.
+func TestAConnectCarriesTheSessionsEndorsementAndTheStationIsHandedIt(t *testing.T) {
+	forEachWorld(t, func(t *testing.T, w *world) {
+		challenge := w.challenge(t)
+		session := w.clientSession()
+		session.MemberEndorsement = []byte("a signed membership endorsement")
+		connect, _, err := AnswerChallenge(challenge, session)
+		if err != nil {
+			t.Fatalf("AnswerChallenge: %v", err)
+		}
+		client, _, err := AcceptConnect(connect, w.stationSession(challenge))
+		if err != nil {
+			t.Fatalf("AcceptConnect: %v", err)
+		}
+		if !bytes.Equal(client.MemberEndorsement, session.MemberEndorsement) {
+			t.Errorf("the station was handed %q, want %q", client.MemberEndorsement, session.MemberEndorsement)
+		}
+	})
+}
+
+// The endorsement is outside the proof, as in macula 12. Comparing two proofs
+// could not show it (ML-DSA signing is randomised), so the endorsement is
+// swapped into a signed CONNECT and the station still accepts it. That is safe
+// because an endorsement binds its member to the node_id the proof
+// establishes, which is the station's check to make after the proof.
+func TestTheEndorsementIsOutsideTheProof(t *testing.T) {
+	forEachWorld(t, func(t *testing.T, w *world) {
+		challenge := w.challenge(t)
+		connect := w.connectFor(t, challenge)
+		swapped := rebuilt(t, connect, map[string]cbor.Value{"member_endorsement": cbor.Bytes([]byte("swapped in after signing"))})
+		client, _, err := AcceptConnect(swapped, w.stationSession(challenge))
+		if err != nil {
+			t.Fatalf("AcceptConnect of the swapped CONNECT: %v, want it accepted", err)
+		}
+		if string(client.MemberEndorsement) != "swapped in after signing" {
+			t.Errorf("the station was handed %q", client.MemberEndorsement)
 		}
 	})
 }
@@ -437,6 +493,7 @@ func TestAStationRefusesAConnectItCannotTrustWithOneCoarseCode(t *testing.T) {
 			{"two hours on", connect, func(s *StationSession) { s.NowMs = now + 2*hour }, identity.ErrStatusExpired, RefusalNotAccepted},
 			{"an opener", Opener(), nil, ErrUnexpectedFrame, RefusalNotAccepted},
 			{"version 2", rebuilt(t, connect, map[string]cbor.Value{"version": cbor.Int(2)}), nil, ErrUnsupportedVersion, RefusalUnsupportedVersion},
+			{"version 3, before member_endorsement", rebuilt(t, connect, map[string]cbor.Value{"version": cbor.Int(3)}), nil, ErrUnsupportedVersion, RefusalUnsupportedVersion},
 			{"bytes that are not CBOR", []byte("not cbor"), nil, ErrMalformedFrame, RefusalNotAccepted},
 			{"an 8-byte proof", rebuilt(t, connect, map[string]cbor.Value{"proof": cbor.Bytes(make([]byte, 8))}), nil, ErrMalformedFrame, RefusalNotAccepted},
 			{"an identity key one byte short", rebuilt(t, connect, map[string]cbor.Value{"identity_key": cbor.Bytes(clientKey[:len(clientKey)-1])}), nil, ErrMalformedFrame, RefusalNotAccepted},
@@ -511,7 +568,7 @@ func TestAStationChecksThePuzzleBeforeAnySignature(t *testing.T) {
 
 func TestAClientReadsHelloExactly(t *testing.T) {
 	hello := func(changes map[string]cbor.Value) []byte {
-		f := map[string]cbor.Value{"version": cbor.Int(3), "frame_type": cbor.Text("hello"), "capabilities": cbor.Int(7)}
+		f := map[string]cbor.Value{"version": cbor.Int(4), "frame_type": cbor.Text("hello"), "capabilities": cbor.Int(7)}
 		for key, v := range changes {
 			f[key] = v
 		}

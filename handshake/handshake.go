@@ -30,8 +30,10 @@ import (
 	"github.com/macula-io/macula-go/profile"
 )
 
-// Version is the post-quantum handshake's frame version.
-const Version = 3
+// Version is the post-quantum handshake's frame version: 4, as macula 12's.
+// CONNECT gained member_endorsement, and macula matches key sets exactly, so a
+// peer on version 3 hears unsupported_version rather than malformed_frame.
+const Version = 4
 
 const (
 	nonceSize         = 32
@@ -46,7 +48,7 @@ var (
 	// ErrUnexpectedFrame is a frame of another type than the one expected
 	// next.
 	ErrUnexpectedFrame = errors.New("handshake: unexpected frame")
-	// ErrUnsupportedVersion is a frame of another version than 3.
+	// ErrUnsupportedVersion is a frame of another version than 4.
 	ErrUnsupportedVersion = errors.New("handshake: unsupported frame version")
 	// ErrMalformedFrame is a frame that does not decode exactly, or a carried
 	// key or proof of the wrong form.
@@ -88,7 +90,7 @@ func (e *PeerIdentityMismatchError) Is(target error) bool { return target == Err
 type RefusalCode string
 
 const (
-	// RefusalUnsupportedVersion refuses frames that are not version 3.
+	// RefusalUnsupportedVersion refuses frames that are not version 4.
 	RefusalUnsupportedVersion RefusalCode = "unsupported_version"
 	// RefusalPuzzleInvalid refuses a node_id that misses the puzzle, which the
 	// client can check itself.
@@ -130,9 +132,12 @@ const (
 )
 
 var (
-	openerKeys        = []string{"frame_type", "version"}
-	challengeKeys     = []string{"frame_type", "identity_key", "nonce", "profile", "tls_binding", "tls_status", "version"}
-	connectKeys       = []string{"capabilities", "connect_binding", "connect_key", "connect_status", "frame_type", "identity_key", "proof", "version"}
+	openerKeys    = []string{"frame_type", "version"}
+	challengeKeys = []string{"frame_type", "identity_key", "nonce", "profile", "tls_binding", "tls_status", "version"}
+	// connectKeys hold member_endorsement ALWAYS, empty when the node has none,
+	// as macula 12's CONNECT: one layout, so a peer cannot tell from the wire
+	// whether a node holds an endorsement or whether a station asks for one.
+	connectKeys       = []string{"capabilities", "connect_binding", "connect_key", "connect_status", "frame_type", "identity_key", "member_endorsement", "proof", "version"}
 	helloAcceptedKeys = []string{"accepted", "capabilities", "frame_type", "version"}
 	helloRefusedKeys  = []string{"accepted", "capabilities", "frame_type", "refusal_code", "version"}
 	statusKeys        = []string{"frame_type", "statement", "version"}
@@ -189,6 +194,11 @@ type ClientSession struct {
 	ConnectStatus  identity.SignedTBS
 	Capabilities   uint64
 	NowMs          int64
+	// MemberEndorsement is the realm membership endorsement CONNECT carries:
+	// a signed record, or nil for a node that holds none, which sends it empty.
+	// It is outside the proof; a station binds it to the node_id the proof
+	// establishes.
+	MemberEndorsement []byte
 }
 
 // Station is what a client knows of the station once it has checked the
@@ -246,7 +256,8 @@ func AnswerChallenge(challenge []byte, s ClientSession) ([]byte, Station, error)
 		entry("connect_binding", s.ConnectBinding.Value()),
 		entry("connect_status", s.ConnectStatus.Value()),
 		entry("proof", cbor.Bytes(proof)),
-		entry("capabilities", cbor.Uint64(s.Capabilities)))
+		entry("capabilities", cbor.Uint64(s.Capabilities)),
+		entry("member_endorsement", cbor.Bytes(endorsementBytes(s.MemberEndorsement))))
 	station := Station{
 		NodeID:          stationNodeID,
 		IdentityKey:     stationKey,
@@ -280,6 +291,9 @@ type Client struct {
 	StatusExpiresAt int64
 	BindingNotAfter int64
 	Puzzle          PuzzleResult
+	// MemberEndorsement is the endorsement the CONNECT carried, empty when the
+	// client holds none. Nothing here checks it: that is the station's policy.
+	MemberEndorsement []byte
 }
 
 // AcceptConnect checks a CONNECT and returns the HELLO bytes to send. It
@@ -331,15 +345,25 @@ func checkConnect(connect []byte, s StationSession) (Client, error) {
 		return Client{}, ErrProofInvalid
 	}
 	return Client{
-		NodeID:          nodeID,
-		IdentityKey:     identityKey,
-		ConnectKey:      connectKey,
-		ConnectBinding:  connectBinding,
-		Capabilities:    f.uint("capabilities"),
-		StatusExpiresAt: expiresAt,
-		BindingNotAfter: binding.NotAfter,
-		Puzzle:          puzzle,
+		NodeID:            nodeID,
+		IdentityKey:       identityKey,
+		ConnectKey:        connectKey,
+		ConnectBinding:    connectBinding,
+		Capabilities:      f.uint("capabilities"),
+		StatusExpiresAt:   expiresAt,
+		BindingNotAfter:   binding.NotAfter,
+		Puzzle:            puzzle,
+		MemberEndorsement: endorsementBytes(f.bytes("member_endorsement")),
 	}, nil
+}
+
+// endorsementBytes is an endorsement as sent and as handed on: never nil, so
+// an absent one is the empty byte string on the wire and to the station.
+func endorsementBytes(endorsement []byte) []byte {
+	if endorsement == nil {
+		return []byte{}
+	}
+	return endorsement
 }
 
 func knownPuzzleMode(mode PuzzleMode) bool {
@@ -539,7 +563,7 @@ func fieldTyped(key string, v cbor.Value) bool {
 	case "nonce":
 		nonce, isBytes := v.AsBytes()
 		return isBytes && len(nonce) == nonceSize
-	case "identity_key", "connect_key", "proof":
+	case "identity_key", "connect_key", "proof", "member_endorsement":
 		_, isBytes := v.AsBytes()
 		return isBytes
 	case "tls_binding", "tls_status", "connect_binding", "connect_status", "statement":

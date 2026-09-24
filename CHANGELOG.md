@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   direction. Checked against the LAMPS draft's own vector, a composite macula
   12.1.0 signed, and macula 12.1.0 verifying macula-go's keys (26 checks) and
   bindings (40 checks); the bindings fixture is rewritten by macula 12.1.0.
+- The post-quantum handshake is version 4, as macula 12's: CONNECT always
+  carries `member_endorsement`, empty when the node holds none
+  (`ClientSession.MemberEndorsement`), outside the proof, and the station is
+  handed it (`Client.MemberEndorsement`); nothing here checks it. A version 3
+  frame is refused `unsupported_version`. macula 12.1.0 accepts macula-go's
+  CONNECT and answers its CHALLENGE, and macula-go accepts macula's CONNECT and
+  answers its CHALLENGE, in both profiles (`handshake/testdata/erlang_handshake.json`).
 - A profile dial offers and accepts macula-pqc's key exchange groups,
   `transport.KeyExchangeGroups` (SecP384r1MLKEM1024, then SecP256r1MLKEM768),
   whatever the node's profile, as every macula 12 station does, and checks no

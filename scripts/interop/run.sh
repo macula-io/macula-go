@@ -39,6 +39,16 @@ echo "go: $(go version)"
 status=0
 escript "$here/verify_go_identity.escript" "$lib/ebin" "$work/go_identity_artifacts.json" || status=1
 escript "$here/verify_go_bindings.escript" "$lib/ebin" "$work/go_binding_artifacts.json" || status=1
+# The handshake across stacks: macula makes CHALLENGEs, macula-go answers them and makes its own, macula accepts
+# macula-go's CONNECTs and answers its CHALLENGEs. With a fixtures file, the frames macula made are written to
+# handshake/testdata/erlang_handshake.json for handshake/erlang_interop_test.go.
+escript "$here/erlang_handshake.escript" challenge "$lib/ebin" "$work/erlang_challenges.json"
+(cd "$root" && go run ./scripts/interop/gohandshake "$work/erlang_challenges.json" "$work/go_handshake.json")
+escript "$here/erlang_handshake.escript" answer "$lib/ebin" "$work/erlang_challenges.json" "$work/go_handshake.json" \
+  "$work/erlang_handshake.json" || status=1
+if [ -n "$fixtures" ]; then
+  cp "$work/erlang_handshake.json" "$root/handshake/testdata/erlang_handshake.json"
+fi
 if [ -n "$fixtures" ]; then
   escript "$here/emit_erlang_bindings.escript" "$lib/ebin" "$fixtures" "${revision:0:7}"
 fi

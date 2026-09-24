@@ -10,6 +10,11 @@ These scripts check macula-go's post-quantum identity against a compiled macula,
 - macula writes bindings and statements of its own, and `identity/binding_interop_test.go` verifies them, including
   altered copies.
 
+- macula's `macula_handshake` accepts the CONNECT macula-go sends to a macula CHALLENGE, is handed its empty
+  `member_endorsement`, and answers a CHALLENGE macula-go made (`erlang_handshake.escript` around
+  `gohandshake`). The frames macula made go to `handshake/testdata/erlang_handshake.json`, which
+  `handshake/erlang_interop_test.go` checks in every `go test`.
+
 `emit_erlang_composite.escript` writes a `pq_hybrid` composite that macula's `macula_node_keys` signed into
 `identity/testdata/lamps_mldsa87_rsa4096_pss_sha512/` (`otp_message.bin`, `otp_pk.bin`, `otp_sig.bin`), for
 `identity/node_key_test.go` to verify:
