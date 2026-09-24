@@ -6,6 +6,7 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/identity"
 )
 
 // PubSub, as macula 12's link does it. A PUBLISH carries a publication signed
@@ -93,14 +94,37 @@ func (l *Link) NodeID() [32]byte { return l.self }
 
 // Publish signs p as a PUBLISH and sends it on the control stream.
 func (l *Link) Publish(p Publication) error {
-	publish, err := frame.SignPublish(frame.PublicationSpec{
-		Realm: p.Realm, Topic: p.Topic, Seq: l.seq.Next(), PublishedAt: uint64(time.Now().UnixMilli()),
-		Payload: p.Payload, TTLMs: p.TTLMs,
-	}, l.key)
+	signed, err := SignPublication(l.key, l.seq, p)
 	if err != nil {
 		return err
 	}
-	return l.writer.write(cbor.Encode(publish), MaxFrameBytes)
+	return l.PublishSigned(signed)
+}
+
+// SignedPublication is a PUBLISH signed once, to be sent on several links of
+// one node: every copy is the same publication, so a subscriber hearing it on
+// several links delivers it once.
+type SignedPublication struct {
+	encoded []byte
+}
+
+// SignPublication signs p with key at the next seq of seq, as Publish does.
+func SignPublication(key *identity.NodeKey, seq *PublicationSeq, p Publication) (SignedPublication, error) {
+	publish, err := frame.SignPublish(frame.PublicationSpec{
+		Realm: p.Realm, Topic: p.Topic, Seq: seq.Next(), PublishedAt: uint64(time.Now().UnixMilli()),
+		Payload: p.Payload, TTLMs: p.TTLMs,
+	}, key)
+	if err != nil {
+		return SignedPublication{}, err
+	}
+	return SignedPublication{encoded: cbor.Encode(publish)}, nil
+}
+
+// PublishSigned sends a publication SignPublication signed, as it is. Sign
+// with the node's own identity key: the publisher a subscriber hears is the
+// key that signed it, whichever link carried it.
+func (l *Link) PublishSigned(p SignedPublication) error {
+	return l.writer.write(p.encoded, MaxFrameBytes)
 }
 
 // Subscribe subscribes to topic in realm: the first subscription to a realm

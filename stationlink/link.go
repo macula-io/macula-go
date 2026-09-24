@@ -67,7 +67,9 @@ func (e *GoodbyeError) Error() string { return "stationlink: the station said go
 
 // Config is what a link is dialed with: the station to reach, the node's
 // identity key, the statement issuer that holds its CONNECT key and statements,
-// and the realm membership endorsement to present, or none.
+// and the realm membership endorsement to present, or none. The issuer must be
+// Run: the link sends each statement it reissues, and the station ends a link
+// whose statement lapses.
 type Config struct {
 	Target      transport.Target
 	IdentityKey *identity.NodeKey

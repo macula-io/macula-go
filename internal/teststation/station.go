@@ -60,9 +60,9 @@ type Station struct {
 
 	mu       sync.Mutex
 	conns    map[[32]byte]*conn // by the client's node_id; a reconnect replaces
-	routes   map[routeKey][32]byte
+	routes   map[routeKey]*conn // the connection that advertised; gone with it
 	pending  map[[16]byte]*conn // request_id -> the caller's connection
-	records  map[slot][]byte
+	dht      *dht
 	accepted chan [32]byte
 	listener *quic.Listener
 	stopped  bool
@@ -71,6 +71,13 @@ type Station struct {
 type routeKey struct {
 	realm     [32]byte
 	procedure string
+}
+
+// dht is a station's record store; stations that share one stand in for a
+// DHT replicating between them.
+type dht struct {
+	mu      sync.Mutex
+	records map[slot][]byte
 }
 
 type slot struct {
@@ -136,8 +143,8 @@ func Start(t testing.TB, p profile.Profile, name string) *Station {
 	host, portText, _ := net.SplitHostPort(listener.Addr().String())
 	port, _ := strconv.Atoi(portText)
 	s := &Station{t: t, Profile: p, Key: key, NodeID: nodeID, Host: host, Port: uint16(port), leaf: leaf, binding: binding,
-		conns: map[[32]byte]*conn{}, routes: map[routeKey][32]byte{}, pending: map[[16]byte]*conn{},
-		records: map[slot][]byte{}, accepted: make(chan [32]byte, 64), listener: listener}
+		conns: map[[32]byte]*conn{}, routes: map[routeKey]*conn{}, pending: map[[16]byte]*conn{},
+		dht: &dht{records: map[slot][]byte{}}, accepted: make(chan [32]byte, 64), listener: listener}
 	s.putOwnEndpoint()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
@@ -189,9 +196,9 @@ func (s *Station) WaitAccepted() [32]byte {
 func (s *Station) Drop(nodeID [32]byte) {
 	s.mu.Lock()
 	c := s.conns[nodeID]
-	delete(s.conns, nodeID)
 	s.mu.Unlock()
 	if c != nil {
+		s.forget(c)
 		_ = c.qconn.CloseWithError(0, "dropped")
 	}
 }
@@ -204,13 +211,45 @@ func (s *Station) Connected(nodeID [32]byte) bool {
 	return held
 }
 
-// Advertised reports whether a connected node serves procedure in realm here.
+// Advertised reports whether a live connection advertised procedure in realm
+// here. A reconnecting node advertises again on its new connection.
 func (s *Station) Advertised(realm [32]byte, procedure string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	advertiser, routed := s.routes[routeKey{realm, procedure}]
-	_, held := s.conns[advertiser]
-	return routed && held
+	return s.routes[routeKey{realm, procedure}] != nil
+}
+
+// ShareDHT makes the stations hold one record store, as a DHT replicating
+// between them would: a record put at one is found at every other. Their
+// records so far are kept.
+func ShareDHT(stations ...*Station) {
+	shared := &dht{records: map[slot][]byte{}}
+	for _, s := range stations {
+		s.mu.Lock()
+		s.dht.mu.Lock()
+		for sl, wire := range s.dht.records {
+			shared.records[sl] = wire
+		}
+		s.dht.mu.Unlock()
+		s.dht = shared
+		s.mu.Unlock()
+	}
+}
+
+// Forge stores wire under key whatever record it is, as a station lying about
+// its DHT would answer; it replaces what the key held.
+func (s *Station) Forge(key [32]byte, wire []byte) {
+	s.mu.Lock()
+	d := s.dht
+	s.mu.Unlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for sl := range d.records {
+		if sl.key == key {
+			delete(d.records, sl)
+		}
+	}
+	d.records[slot{key: key}] = wire
 }
 
 // Put stores a record's wire bytes in the DHT, as a put_record would, and
@@ -248,8 +287,11 @@ func (s *Station) store(wire []byte) error {
 		return err
 	}
 	s.mu.Lock()
-	s.records[slot{key, verified.Record().KeyID}] = wire
+	d := s.dht
 	s.mu.Unlock()
+	d.mu.Lock()
+	d.records[slot{key, verified.Record().KeyID}] = wire
+	d.mu.Unlock()
 	return nil
 }
 
@@ -320,12 +362,18 @@ func (s *Station) serve(ctx context.Context, qconn *quic.Conn) {
 	}
 }
 
-// forget drops a connection that ended, unless a reconnect already replaced it.
+// forget drops a connection that ended, unless a reconnect already replaced
+// it, and the routes it advertised, as a station sweeps a dead advertiser.
 func (s *Station) forget(c *conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conns[c.nodeID] == c {
 		delete(s.conns, c.nodeID)
+	}
+	for key, advertiser := range s.routes {
+		if advertiser == c {
+			delete(s.routes, key)
+		}
 	}
 }
 
@@ -378,13 +426,13 @@ func (s *Station) called(c *conn, v cbor.Value, raw []byte) {
 		return
 	}
 	s.mu.Lock()
-	advertiser, routed := s.routes[routeKey{request.Realm, request.Procedure}]
-	provider := s.conns[advertiser]
-	if routed && provider != nil && advertiser == request.Target {
+	provider := s.routes[routeKey{request.Realm, request.Procedure}]
+	routed := provider != nil && provider.nodeID == request.Target
+	if routed {
 		s.pending[request.RequestID] = c
 	}
 	s.mu.Unlock()
-	if !routed || provider == nil || advertiser != request.Target {
+	if !routed {
 		s.relayError(c, request, "unknown_next_peer")
 		return
 	}
@@ -455,9 +503,12 @@ func (s *Station) answer(c *conn, request frame.VerifiedRequest) {
 
 func (s *Station) find(match func(slot, []byte) bool) [][]byte {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	d := s.dht
+	s.mu.Unlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	var found [][]byte
-	for sl, wire := range s.records {
+	for sl, wire := range d.records {
 		if match(sl, wire) {
 			found = append(found, wire)
 		}
@@ -480,7 +531,7 @@ func (s *Station) advertised(c *conn, v cbor.Value) {
 		return
 	}
 	s.mu.Lock()
-	s.routes[routeKey{ad.RealmID, ad.Procedure}] = c.nodeID
+	s.routes[routeKey{ad.RealmID, ad.Procedure}] = c
 	s.mu.Unlock()
 }
 

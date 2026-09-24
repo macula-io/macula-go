@@ -1,444 +1,317 @@
-// Package pool ports macula_client.erl's connection-pool design —
-// macula-station itself depends on this in Erlang — to macula-go: hold
-// live links to N stations, respawn a dead one with backoff, and replay
-// every tracked subscription onto the fresh link so a caller's
-// subscription survives a link dying underneath it. connection.Session
-// itself deliberately does none of this: reconnecting and replaying
-// subscriptions onto a fresh session is the caller's responsibility.
+// Package pool is a macula 12 node's set of station links, as macula's client
+// pool keeps them: one link to each seed station, every seed pinned by its
+// node_id, all links of one node sharing its identity key, statement issuer,
+// request admission, publication seq and event dedup. A link that ends is
+// dialed again after RespawnDelay and given back the node's subscriptions and
+// served procedures.
 //
-// Each link holds one connection.Session at a time. A session carries any
-// number of concurrent calls, publishes and subscriptions (its single
-// reader routes replies and events), so a link subscribes once per tracked
-// realm and topic and forwards what each subscription receives into the
-// pool, which dedups events across links and fans them out to local
-// handlers -- see link_session.go.
+// Calls reach providers directly, as macula 12 calls them: the procedure's
+// advertisements are resolved from the DHT and checked against the realm key
+// the pool pins for the realm, the serving station an advertisement names is
+// dialed (pinned by its node_id, from its own station_endpoint record) and the
+// provider called there. Station procedures (_dht.*) go to the pool's links.
 //
-// v1 scope: Connect/Close/Status/Publish/Subscribe/Unsubscribe/Call/
-// CallStation (direct-dial, macula_client.erl's call_station/6). NOT in
-// v1, deliberately, not silently: serving RPCs through the pool
-// (Advertise/ServeForever-equivalent — no CallLookup/procs/UCAN-policy
-// plumbing here yet) and per-publisher delivery ORDERING
-// (macula_client.erl defaults to `ordered` with a reorder buffer; this
-// package does dedup only, and does NOT preserve even arrival order —
-// subscribe.go's deliver spawns one goroutine per delivery, so two
-// events for the same subscriber can be handled in either order,
-// weaker than even macula_client.erl's own weakest `as_arrives` mode).
-// Both are real macula_client.erl capabilities left as a follow-up, not
-// gaps to discover later.
+// Station discovery beyond the seeds is not here: macula's discovery calls
+// hecate_stations.list_stations, which the fleet no longer serves
+// (macula-io/macula#31), and returns when both SDKs follow mcl-stations.
 package pool
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	mathrand "math/rand/v2"
+	"math/rand/v2"
+	"net"
+	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/macula-io/macula-go/cbor"
-	"github.com/macula-io/macula-go/connection"
 	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/transport"
 )
 
-// ErrNoHealthyStation matches macula_client.erl's own
-// {error, {transient, no_healthy_station}} — zero links currently
-// connected for the operation attempted.
-var ErrNoHealthyStation = errors.New("pool: no healthy station")
-
+// The defaults and caps of a pool's bounds, macula's.
 const (
-	// DefaultReplicationFactor matches macula_client.erl's own default.
-	DefaultReplicationFactor = 1
-	// DefaultRespawnDelay matches macula_client.erl's own
-	// ?LINK_RESPAWN_DELAY_MS -- flat, not exponential; Erlang has no
-	// backoff curve here and there's no existing Go precedent in this
-	// codebase to match instead, so this mirrors the reference exactly.
-	DefaultRespawnDelay = 1 * time.Second
-	// DefaultDedupWindow/DefaultDedupSweep match macula_client.erl's own
-	// dedup_window_ms/dedup_sweep_ms defaults.
-	DefaultDedupWindow = 60 * time.Second
-	DefaultDedupSweep  = 30 * time.Second
-	// DefaultConnectTimeout bounds one link's CONNECT/HELLO handshake --
-	// matches connection.HandshakeTimeout.
-	DefaultConnectTimeout = 30 * time.Second
-	// DefaultStationDiscoveryRefreshInterval/DefaultStationDiscoveryMaxLinks
-	// match macula_client.erl's own station_discovery defaults
-	// (refresh_ms/max_links) exactly, only applied when
-	// StationDiscovery.Enabled is true.
-	DefaultStationDiscoveryRefreshInterval = 30 * time.Minute
-	DefaultStationDiscoveryMaxLinks        = 5
+	DefaultReplicationFactor = 2
+	DefaultRespawnDelay      = time.Second
+	DefaultMaxSeeds          = 16
+	DefaultMaxDirectLinks    = 8
+	maxLinkLimit             = 64
 )
 
-// Seed is one seed station to dial at Connect -- re-exported so callers
-// don't need to import package connection just to build one.
-type Seed = connection.Seed
+var (
+	// ErrNoSeeds is a pool given no seed station.
+	ErrNoSeeds = errors.New("pool: at least one seed station is needed")
+	// ErrSeedNotPinned is a seed without the station's node_id: a pool dials
+	// only stations it can check.
+	ErrSeedNotPinned = errors.New("pool: every seed needs the station's node_id")
+	// ErrTooManySeeds is more seeds than MaxSeeds.
+	ErrTooManySeeds = errors.New("pool: more seeds than MaxSeeds")
+	// ErrRealmTrustInvalid is a realm key that is not a key of the pool's
+	// profile as carried.
+	ErrRealmTrustInvalid = errors.New("pool: a realm key is not a well-formed key of the pool's profile")
+	// ErrInvalidOpts is an option out of its range, or no identity key.
+	ErrInvalidOpts = errors.New("pool: invalid options")
+	// ErrNoLink is an operation with no link up to carry it.
+	ErrNoLink = errors.New("pool: no station link is up")
+	// ErrClosed is an operation on a closed pool.
+	ErrClosed = errors.New("pool: closed")
+)
 
-// EventHandler processes one delivered EVENT. Runs on its own goroutine
-// per delivery (see fanoutEvents' own doc) -- a slow or panicking
-// handler affects only its own delivery, never the pool's dispatch path.
-type EventHandler func(realm []byte, topic string, payload cbor.Value)
+// Seed is a station to link to: where it is dialed and the node_id it must
+// prove.
+type Seed struct {
+	Host   string
+	Port   uint16
+	NodeID [32]byte
+}
 
-// SubID identifies one Subscribe call, for a later Unsubscribe.
-type SubID uint64
-
-// LinkSelection picks how Call/Publish order the pool's currently-
-// connected links before applying their own existing first-match/
-// replication-factor logic -- it changes ORDER only, never how many
-// links get used. CallStation is deliberately NOT in scope: it dials
-// one specific target, not a selection among several, so there is no
-// order for this option to affect. Matches macula_client.erl's own
-// link_selection option exactly (first_success/random), so a caller
-// porting config from the Erlang reference (or another SDK) doesn't
-// have to re-learn the shape.
+// LinkSelection is the order Call and Publish try the pool's links in.
 type LinkSelection int
 
 const (
-	// LinkSelectionAuto (the zero value) derives the actual policy from
-	// StationDiscovery.Enabled: LinkSelectionFirstSuccess if discovery is
-	// off (today's exact behavior, unchanged), LinkSelectionRandom if
-	// it's on. Set LinkSelection explicitly to override that pairing
-	// either way.
-	LinkSelectionAuto LinkSelection = iota
-	// LinkSelectionFirstSuccess tries links in whatever order
-	// connectedSessions() currently returns them, first non-error wins --
-	// this package's original, pre-existing behavior. Note that order
-	// was never actually deliberate: p.links is a map, and Go
-	// randomizes map iteration, so this policy already had incidental,
-	// undocumented variation baked in -- LinkSelectionFirstSuccess makes
-	// that historical accident irrelevant by not caring about order at
-	// all beyond "whatever connectedSessions() hands back."
-	LinkSelectionFirstSuccess
-	// LinkSelectionRandom uniformly shuffles the connected-links list
-	// before the same first-match (Call) or take-first-N (Publish)
-	// logic runs. This is a real, deliberate, tested rotation -- not an
-	// accident of a map -- and composes safely with a small
-	// ReplicationFactor (shuffling a 1-element slice is a no-op).
-	LinkSelectionRandom
+	// FirstSuccess tries the links in seed order.
+	FirstSuccess LinkSelection = iota
+	// Random tries them in a fresh random order each time.
+	Random
 )
 
-// StationDiscoveryOpts configures opt-in discovery of additional
-// stations via hecate_stations.list_stations, layered on top of the
-// caller-supplied bootstrap Seeds. Absent (the zero value, Enabled ==
-// false) is a complete no-op -- zero config means zero behavior
-// change, matching macula_client.erl's own station_discovery option.
-//
-// Bootstrap Seeds keep their exact current meaning: dialed first,
-// permanent fallback if discovery never succeeds, never replaced.
-// Discovery only ADDS links (via the pool's own addLink, which is
-// already a no-op for an already-known host:port) -- a station
-// missing from a later refresh does NOT tear down an existing link;
-// removal stays tied to the existing crash/DOWN cleanup only, never
-// to absence from a discovery response (replication lag in the
-// station directory isn't evidence a station is gone).
-type StationDiscoveryOpts struct {
-	Enabled bool
-	// RefreshInterval between discovery attempts once at least one
-	// bootstrap link is up. 0 -> DefaultStationDiscoveryRefreshInterval.
-	RefreshInterval time.Duration
-	// MaxLinks bounds discovery's OWN adds only, not this Pool's total
-	// link count: discovery adds a link only while linkCount() (every
-	// link this Pool holds, from any source -- Seeds, CallStation
-	// direct-dial targets, and previously discovered ones, healthy or
-	// not) is still below MaxLinks. Connect dials every bootstrap Seed
-	// regardless of MaxLinks (more Seeds than MaxLinks means discovery
-	// simply adds nothing, ever), and CallStation adds its own link
-	// regardless too -- but once added, a CallStation link DOES count
-	// toward the total linkCount() compares against, consuming
-	// discovery's budget even though CallStation itself never checks
-	// MaxLinks. A link discovery added that never connects (e.g. a
-	// station whose only known address isn't dialable under this
-	// Pool's Trust) still occupies a slot against this cap even while
-	// permanently unhealthy -- there is no separate "healthy slots"
-	// budget. 0 -> DefaultStationDiscoveryMaxLinks.
-	MaxLinks int
+// LinkEvent is a link coming up, or ending or failing to dial with Err.
+type LinkEvent struct {
+	Station [32]byte
+	Direct  bool
+	Up      bool
+	Err     error
 }
 
-// Opts configures a Pool. Zero-value Opts is invalid -- Identity has no
-// safe default the way Erlang's resolve_identity generates a
-// puzzle-hardened one lazily, because Go's identity.GenerateWithPuzzle
-// is not free to call unconditionally at every Connect (see that
-// package's own doc); callers wanting the same lazy-generate-if-absent
-// behavior should call it themselves before building Opts.
+// Opts configure a pool. IdentityKey is required; zero values take macula's
+// defaults.
 type Opts struct {
-	Identity          identity.KeyPair
-	Trust             transport.Trust
-	ReplicationFactor int           // 0 -> DefaultReplicationFactor
-	ConnectTimeout    time.Duration // 0 -> DefaultConnectTimeout
-	RespawnDelay      time.Duration // 0 -> DefaultRespawnDelay
-	DedupWindow       time.Duration // 0 -> DefaultDedupWindow
-	DedupSweep        time.Duration // 0 -> DefaultDedupSweep
-	// LivenessInterval/LivenessMaxMisses configure the application-level
-	// probe every link runs on top of the transport's own keepalive --
-	// see link_session.go's probe for why the transport layer alone
-	// isn't enough. 0 -> DefaultLivenessInterval/DefaultLivenessMaxMisses.
-	LivenessInterval  time.Duration
-	LivenessMaxMisses int
-
-	// OnLinkEvent, if set, is called on every link lifecycle transition —
-	// a dial failure, a successful (re)connect, or a live link dying —
-	// with linkKey identifying which configured target (host:port) it
-	// concerns, up true only for a successful (re)connect, and err set
-	// for everything else. Optional; nil is a no-op. Without this, a
-	// link that fails to dial over and over (wrong port, an identity the
-	// station's puzzle check rejects, TLS refusal) is completely silent
-	// from outside the pool — Status only ever reports it as "not
-	// healthy," never why. Called on its own goroutine so a slow or
-	// panicking callback can never stall replay for every other link —
-	// same reasoning as event delivery's own per-handler goroutine.
-	OnLinkEvent func(linkKey string, up bool, err error)
-
-	// LinkSelection picks Call/Publish's link ordering policy -- see
-	// LinkSelection's own doc. Zero value (LinkSelectionAuto) derives it
-	// from StationDiscovery.Enabled.
+	// IdentityKey is the node's identity key; its profile is the pool's.
+	IdentityKey *identity.NodeKey
+	// RealmTrust pins each realm's key, as carried: an advertisement in a
+	// realm is trusted only when its authorization verifies against it, and
+	// a procedure is served only in a realm it names.
+	RealmTrust        map[[32]byte][]byte
+	ReplicationFactor int
+	RespawnDelay      time.Duration
+	MaxSeeds          int
+	MaxDirectLinks    int
+	// Admission bounds the requests the node's served procedures take; zero
+	// is macula's defaults, with Cap one share per link the pool may hold.
+	Admission     stationlink.AdmissionLimits
 	LinkSelection LinkSelection
-	// StationDiscovery opts into resolving additional stations via
-	// hecate_stations.list_stations -- see StationDiscoveryOpts' own
-	// doc. Zero value (Enabled == false) is a complete no-op.
-	StationDiscovery StationDiscoveryOpts
-
-	// Logger, if set, is where each link's session logs: the inbound frames
-	// it drops and the dedicated streams it refuses or aborts, as drop
-	// warnings, and its end (connection.Session.SetLogger). Every session a
-	// link dials, a redial's included, is given it before the link uses it.
-	Logger *slog.Logger
-	// DropWarningInterval is how long a drop warning interval lasts on each
-	// link's session (connection.Session.SetDropWarningInterval). 0 -> the
-	// session's own default, a minute.
-	DropWarningInterval time.Duration
-
-	dial dialFunc // test-only seam; nil -> dialSession
+	// OnLinkEvent, when set, hears every link coming up and going down, on
+	// its own goroutine.
+	OnLinkEvent func(LinkEvent)
+	// OnIssuerError hears each failure to reissue the node's status
+	// statements or rotate its CONNECT key; nil logs it as a warning. Left
+	// failing, the links end when their statements lapse.
+	OnIssuerError func(error)
 }
 
-func (o Opts) withDefaults() Opts {
-	if o.ReplicationFactor <= 0 {
-		o.ReplicationFactor = DefaultReplicationFactor
-	}
-	if o.ConnectTimeout <= 0 {
-		o.ConnectTimeout = DefaultConnectTimeout
-	}
-	if o.RespawnDelay <= 0 {
-		o.RespawnDelay = DefaultRespawnDelay
-	}
-	if o.DedupWindow <= 0 {
-		o.DedupWindow = DefaultDedupWindow
-	}
-	if o.DedupSweep <= 0 {
-		o.DedupSweep = DefaultDedupSweep
-	}
-	if o.LivenessInterval <= 0 {
-		o.LivenessInterval = DefaultLivenessInterval
-	}
-	if o.LivenessMaxMisses <= 0 {
-		o.LivenessMaxMisses = DefaultLivenessMaxMisses
-	}
-	if o.LinkSelection == LinkSelectionAuto {
-		if o.StationDiscovery.Enabled {
-			o.LinkSelection = LinkSelectionRandom
-		} else {
-			o.LinkSelection = LinkSelectionFirstSuccess
-		}
-	}
-	if o.StationDiscovery.Enabled {
-		if o.StationDiscovery.RefreshInterval <= 0 {
-			o.StationDiscovery.RefreshInterval = DefaultStationDiscoveryRefreshInterval
-		}
-		if o.StationDiscovery.MaxLinks <= 0 {
-			o.StationDiscovery.MaxLinks = DefaultStationDiscoveryMaxLinks
-		}
-	}
-	if o.dial == nil {
-		o.dial = dialSession
-	}
-	return o
-}
-
-type topicKey struct{ realm, topic string }
-
-type subSpec struct {
-	realm   []byte
-	topic   string
-	handler EventHandler
-}
-
-// Pool is a live handle to N links, reconnecting and replaying
-// subscriptions as needed. Construct with Connect.
+// Pool is a node's station links.
 type Pool struct {
-	opts Opts
+	opts   Opts
+	key    *identity.NodeKey
+	self   [32]byte
+	issuer *identity.StatementIssuer
+	shared stationlink.Config
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-
-	linksMu sync.RWMutex
-	links   map[string]*link
-
-	subsMu     sync.Mutex
-	subs       map[SubID]*subSpec
-	topicIndex map[topicKey]map[SubID]struct{}
-	nextSubID  atomic.Uint64
-
-	dedup *dedupTable
-
-	publishSeq atomic.Uint64
-
-	events    chan inboundEvent
-	linkEvent chan linkEvent
+	mu       sync.Mutex
+	members  []*member
+	subs     map[*Subscription]struct{}
+	served   map[*Served]struct{}
+	remember map[resolvedKey]candidate
+	closed   bool
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
-// Connect spawns one link per seed, dialing all of them concurrently --
-// not one-then-fallback -- and returns immediately; handshakes complete
-// asynchronously, exactly like macula_client.erl's own connect/2. Publish
-// and Call return ErrNoHealthyStation until at least one link is up;
-// Subscribe succeeds immediately and is replayed onto every link as it
-// (re)connects.
+// Connect validates seeds and opts, dials every seed, and returns once one link
+// is up, or with the last dial's error when ctx ends before any is. Links not
+// yet up keep dialing.
 func Connect(ctx context.Context, seeds []Seed, opts Opts) (*Pool, error) {
-	if len(seeds) == 0 {
-		return nil, fmt.Errorf("pool: no seeds given")
+	opts, err := checked(seeds, opts)
+	if err != nil {
+		return nil, err
 	}
-	if opts.Trust == nil {
-		return nil, fmt.Errorf("pool: opts.Trust is required")
+	self, err := opts.IdentityKey.NodeID()
+	if err != nil {
+		return nil, errors.Join(ErrInvalidOpts, err)
 	}
-	if !opts.Identity.Valid() {
-		return nil, fmt.Errorf("pool: opts.Identity is required (zero-value KeyPair)")
+	issuer, err := identity.NewStatementIssuer(opts.IdentityKey, func() int64 { return time.Now().UnixMilli() })
+	if err != nil {
+		return nil, err
 	}
-	opts = opts.withDefaults()
-
-	poolCtx, cancel := context.WithCancel(ctx)
-	p := &Pool{
-		opts:       opts,
-		ctx:        poolCtx,
-		cancel:     cancel,
-		links:      make(map[string]*link),
-		subs:       make(map[SubID]*subSpec),
-		topicIndex: make(map[topicKey]map[SubID]struct{}),
-		dedup:      newDedupTable(),
-		events:     make(chan inboundEvent, eventQueueCap),
-		linkEvent:  make(chan linkEvent, 16),
-	}
-	// Seeded from wall-clock microseconds, matching macula_client.erl's
-	// own publish_seq init -- a pool restart must not re-issue seqs that
-	// collide with the pre-restart tail still inside a station's own
-	// dedup window.
-	p.publishSeq.Store(uint64(time.Now().UnixMicro()))
-
-	p.wg.Add(3)
-	go func() { defer p.wg.Done(); p.watchLinks() }()
-	go func() { defer p.wg.Done(); p.fanoutEvents() }()
-	go func() { defer p.wg.Done(); p.sweepDedup() }()
-
+	runCtx, cancel := context.WithCancel(context.Background())
+	p := &Pool{opts: opts, key: opts.IdentityKey, self: self, issuer: issuer,
+		shared: stationlink.Config{IdentityKey: opts.IdentityKey, Issuer: issuer, PublicationSeq: &stationlink.PublicationSeq{},
+			Admission: stationlink.NewAdmission(opts.Admission), Dedup: stationlink.NewEventDedup()},
+		subs: map[*Subscription]struct{}{}, served: map[*Served]struct{}{}, remember: map[resolvedKey]candidate{},
+		ctx: runCtx, cancel: cancel}
+	go issuer.Run(runCtx, opts.OnIssuerError)
 	for _, seed := range seeds {
-		p.addLink(seed.Host, seed.Port, opts.Trust)
+		p.startMember(seed.target(opts.IdentityKey), false)
 	}
-
-	// wg.Add happens here, synchronously, before Connect returns and
-	// before any concurrent Close() could observe the WaitGroup at
-	// zero -- same safe pattern the 3 fixed goroutines above already
-	// use. Bootstrap Seeds keep their exact current meaning either way
-	// (dialed above, permanent fallback) -- discovery is additive on
-	// top, never a replacement; see StationDiscoveryOpts' own doc.
-	if opts.StationDiscovery.Enabled {
-		p.wg.Add(1)
-		go func() { defer p.wg.Done(); p.discoverStations() }()
+	if err := p.awaitUp(ctx); err != nil {
+		_ = p.Close()
+		return nil, err
 	}
-
 	return p, nil
 }
 
-// addLink registers and starts supervising a link for host:port under
-// trust, if one doesn't already exist for that exact key. Safe from any
-// goroutine.
-func (p *Pool) addLink(host string, port uint16, trust transport.Trust) *link {
-	key := linkKey(host, port)
-
-	p.linksMu.Lock()
-	if existing, ok := p.links[key]; ok {
-		p.linksMu.Unlock()
-		return existing
-	}
-	l := newLink(host, port, trust, p.opts.Identity, p.opts.dial, p.opts.RespawnDelay,
-		p.opts.LivenessInterval, p.opts.LivenessMaxMisses, p.opts.Logger, p.opts.DropWarningInterval, p.events, p.linkEvent)
-	p.links[key] = l
-	p.linksMu.Unlock()
-
-	p.wg.Add(1)
-	go func() { defer p.wg.Done(); l.supervise(p.ctx) }()
-	return l
+func (s Seed) target(key *identity.NodeKey) transport.Target {
+	return transport.Target{Host: s.Host, Port: s.Port, Profile: key.Profile(), ExpectedNodeID: s.NodeID}
 }
 
-// Close cancels every link and waits for each link's supervise loop, and
-// the run of its current session, which that loop calls synchronously, to
-// return. It does not join a session's subscription forwarders or a
-// SUBSCRIBE still being written: they end with the session run closes, so
-// one may still be returning briefly after Close does. Harmless: nothing
-// is shared between one session's goroutines and the next's.
+// checked refuses, before anything is dialed, what macula's pool refuses, and
+// fills in the defaults.
+func checked(seeds []Seed, opts Opts) (Opts, error) {
+	if opts.IdentityKey == nil || opts.IdentityKey.Purpose() != identity.PurposeIdentity {
+		return opts, fmt.Errorf("%w: an identity key is required", ErrInvalidOpts)
+	}
+	p := opts.IdentityKey.Profile()
+	for realm, key := range opts.RealmTrust {
+		if !identity.CarriedKeyWellFormed(key, p) {
+			return opts, fmt.Errorf("%w: realm %x", ErrRealmTrustInvalid, realm[:4])
+		}
+	}
+	for _, limit := range []*int{&opts.MaxSeeds, &opts.MaxDirectLinks, &opts.ReplicationFactor} {
+		if *limit < 0 || *limit > maxLinkLimit {
+			return opts, fmt.Errorf("%w: a link limit of %d, outside 1 to %d", ErrInvalidOpts, *limit, maxLinkLimit)
+		}
+	}
+	opts.MaxSeeds = orDefault(opts.MaxSeeds, DefaultMaxSeeds)
+	opts.MaxDirectLinks = orDefault(opts.MaxDirectLinks, DefaultMaxDirectLinks)
+	opts.ReplicationFactor = orDefault(opts.ReplicationFactor, DefaultReplicationFactor)
+	if opts.RespawnDelay <= 0 {
+		opts.RespawnDelay = DefaultRespawnDelay
+	}
+	if opts.Admission == (stationlink.AdmissionLimits{}) {
+		opts.Admission = stationlink.DefaultAdmissionLimits()
+		opts.Admission.Cap = opts.Admission.Share * (opts.MaxSeeds + opts.MaxDirectLinks)
+	}
+	if err := opts.Admission.Validate(); err != nil {
+		return opts, errors.Join(ErrInvalidOpts, err)
+	}
+	switch {
+	case len(seeds) == 0:
+		return opts, ErrNoSeeds
+	case len(seeds) > opts.MaxSeeds:
+		return opts, fmt.Errorf("%w: %d, at most %d", ErrTooManySeeds, len(seeds), opts.MaxSeeds)
+	}
+	for _, seed := range seeds {
+		if seed.NodeID == ([32]byte{}) {
+			return opts, fmt.Errorf("%w: %s", ErrSeedNotPinned, net.JoinHostPort(seed.Host, strconv.Itoa(int(seed.Port))))
+		}
+	}
+	return opts, nil
+}
+
+func orDefault(v, fallback int) int {
+	if v == 0 {
+		return fallback
+	}
+	return v
+}
+
+// NodeID is the node_id the pool links as.
+func (p *Pool) NodeID() [32]byte { return p.self }
+
+// LinkStatus is one of the pool's links.
+type LinkStatus struct {
+	Station [32]byte
+	Host    string
+	Port    uint16
+	Direct  bool
+	Up      bool
+}
+
+// Status is every link the pool holds, seeds first.
+func (p *Pool) Status() []LinkStatus {
+	p.mu.Lock()
+	members := append([]*member(nil), p.members...)
+	p.mu.Unlock()
+	out := make([]LinkStatus, len(members))
+	for i, m := range members {
+		out[i] = LinkStatus{Station: m.target.ExpectedNodeID, Host: m.target.Host, Port: m.target.Port,
+			Direct: m.direct, Up: m.current() != nil}
+	}
+	return out
+}
+
+// Close ends every link with GOODBYE and every subscription, and withdraws
+// nothing: an advertisement lapses with its link.
 func (p *Pool) Close() error {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return nil
+	}
+	p.closed = true
+	members := p.members
+	subs := p.subs
+	p.subs = map[*Subscription]struct{}{}
+	p.mu.Unlock()
 	p.cancel()
-	p.wg.Wait()
+	for _, m := range members {
+		m.stop()
+	}
+	for sub := range subs {
+		sub.end()
+	}
 	return nil
 }
 
-// Status is an aggregate health snapshot -- see macula_client.erl's own
-// status/1.
-type Status struct {
-	ConfiguredLinks int
-	HealthyLinks    int
-	Subscriptions   int
-}
-
-func (p *Pool) Status() Status {
-	p.linksMu.RLock()
-	total, healthy := len(p.links), 0
-	for _, l := range p.links {
-		if l.CurrentSession() != nil {
-			healthy++
+// links is the links up now, in the pool's selection order.
+func (p *Pool) links() []*stationlink.Link {
+	p.mu.Lock()
+	members := append([]*member(nil), p.members...)
+	p.mu.Unlock()
+	var up []*stationlink.Link
+	for _, m := range members {
+		if link := m.current(); link != nil {
+			up = append(up, link)
 		}
 	}
-	p.linksMu.RUnlock()
-
-	p.subsMu.Lock()
-	subCount := len(p.subs)
-	p.subsMu.Unlock()
-
-	return Status{ConfiguredLinks: total, HealthyLinks: healthy, Subscriptions: subCount}
+	if p.opts.LinkSelection == Random {
+		rand.Shuffle(len(up), func(i, j int) { up[i], up[j] = up[j], up[i] })
+	}
+	return up
 }
 
-// connectedSessions snapshots the live sessions across every configured
-// link.
-func (p *Pool) connectedSessions() []*linkSession {
-	p.linksMu.RLock()
-	defer p.linksMu.RUnlock()
-	sessions := make([]*linkSession, 0, len(p.links))
-	for _, l := range p.links {
-		if ls := l.CurrentSession(); ls != nil {
-			sessions = append(sessions, ls)
+// awaitUp waits until a link is up, or ctx ends.
+func (p *Pool) awaitUp(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if len(p.links()) > 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %w", ErrNoLink, errors.Join(ctx.Err(), p.lastErr()))
+		case <-ticker.C:
 		}
 	}
-	return sessions
 }
 
-// selectLinks returns connectedSessions() ordered per p.opts.LinkSelection --
-// the single shared choke point Call and Publish both route through, so
-// the two operations can never drift onto different selection policies
-// by accident. LinkSelectionFirstSuccess passes the list through
-// unchanged (today's original behavior: whatever order connectedSessions()
-// happens to return, which was always map-iteration-random and never
-// actually deliberate -- see LinkSelectionFirstSuccess's own doc).
-// LinkSelectionRandom uniformly shuffles a COPY of the list (never the
-// slice connectedSessions() just built in place, and never anything
-// touching p.links itself) via math/rand/v2, which needs no seeding and
-// is safe for concurrent use from multiple goroutines calling Call/
-// Publish at once -- unlike math/rand's global source pre-v2, which
-// needed its own lock and a deliberate seed to avoid every process
-// producing the identical shuffle sequence.
-func (p *Pool) selectLinks() []*linkSession {
-	sessions := p.connectedSessions()
-	if p.opts.LinkSelection != LinkSelectionRandom || len(sessions) <= 1 {
-		return sessions
+func (p *Pool) lastErr() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var errs []error
+	for _, m := range p.members {
+		if err := m.lastErr(); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	shuffled := make([]*linkSession, len(sessions))
-	copy(shuffled, sessions)
-	mathrand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
-	return shuffled
+	return errors.Join(errs...)
+}
+
+func (p *Pool) event(e LinkEvent) {
+	if p.opts.OnLinkEvent != nil {
+		go p.opts.OnLinkEvent(e)
+	}
 }

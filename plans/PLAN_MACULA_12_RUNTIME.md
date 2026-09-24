@@ -69,8 +69,25 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
   one), handler_error / temporary_relay_failure / unknown_next_peer, and
   UNADVERTISE with a tombstone. Open procedures only: a gated one is refused
   with ErrGatedUnsupported until the PQ UCAN verifier (macula-go#2).
-- [ ] B6 Pool and direct dial on `stationlink`: seeds with expected node ids,
-  realm_trust, reconnect and replay.
+- [x] B6 Pool and direct dial on `stationlink`, replacing the 10.x `pool`
+  package, as macula 12.2.1's `macula_client` (surveyed at 76a0994f):
+  every seed pinned by node_id; realm keys pinned per realm and checked as
+  keys of the pool's profile; one identity key, statement issuer (run by the
+  pool), request admission (a share per link, cap = share x links), event
+  dedup and publication seq for all links; a link redialed after
+  RespawnDelay with its subscriptions and served procedures replayed;
+  Publish signed once and sent on ReplicationFactor links; Call by direct
+  dial (trusted advertisements from the DHT, freshest first, the serving
+  station dialed from its own station_endpoint, a share of the deadline per
+  candidate, the next candidate on a reachability failure, the answering
+  candidate remembered); `Providers`; the DHT over the links. A direct link
+  that never comes up is not kept. Serve now also puts its advertisement in
+  the DHT (and its tombstone at Stop), as advertise_direct does: without it
+  no direct-dial caller could find a Go provider. Not ported: station
+  discovery (macula#31) and macula's new_peer_budget, whose second
+  node_id-keyed half macula does not implement either; MaxDirectLinks bounds
+  direct dials. Tested against `internal/teststation`, an in-process routing
+  station.
 - [ ] B7 content and stream onto the link; delete the 10.x path; examples and
   README.
 - [ ] C(i) live against a macula 12.1 lab station on host00; C(ii) one fleet
@@ -120,16 +137,24 @@ from t+12m31s. The station drops a same-connection renewal as a duplicate
 and purges the entry 5 minutes past the first advertisement's expiry:
 macula-io/macula-station#7.
 
-## Found in macula while reading it (reported, not fixed here)
+## Found in macula and macula-station
 
-- A handler's `{error, R}` goes out with provider code `unknown_error`, while
-  the caller unwraps only `handler_error`: macula-io/macula#28.
+- A handler's `{error, R}` went out with provider code `unknown_error`, while
+  the caller unwraps only `handler_error`: macula-io/macula#28, fixed in
+  macula 12.2.1.
 - The facade's ADVERTISE sets `serving_station` to the provider's own node_id;
   the design and `macula_direct_dial` use the connected station's:
-  macula-io/macula#29.
-- macula's link runs the request admission for STREAM_OPEN only; a unary
-  CALL goes straight to its handler, so a copy runs twice. macula-go admits
-  both, as the design says: macula-io/macula#30.
+  macula-io/macula#29, being fixed per link for 12.3.0. Until then a Go
+  caller cannot direct-dial a macula provider: its advertisement names the
+  provider, which has no station_endpoint of its own.
+- macula-io/macula#30 (unary CALL admission) was read against a checkout 103
+  commits behind; the admission has been in since macula 12.0.0
+  (`on_call_admission/3`). Closed.
+- Station discovery calls `hecate_stations.list_stations`, which the fleet no
+  longer serves since 2026-09-23: macula-io/macula#31. macula-go's pool has no
+  discovery until both SDKs follow `mcl-stations/list_stations`.
+- The station drops a same-connection ADVERTISE renewal as a duplicate:
+  macula-io/macula-station#7, folded into 0.6.2.
 
 ## Success criteria
 

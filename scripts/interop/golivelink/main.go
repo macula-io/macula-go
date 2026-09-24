@@ -68,6 +68,9 @@ func run(host string, port uint16, profileName, node string, hold, serve, every 
 	if err != nil {
 		return err
 	}
+	running, stopIssuer := context.WithCancel(context.Background())
+	defer stopIssuer()
+	go issuer.Run(running, nil)
 	fmt.Printf("identity: %s, generated in %s\n", key, time.Since(started).Round(time.Millisecond))
 	ctx, cancel := context.WithTimeout(context.Background(), stationlink.HandshakeTimeout)
 	defer cancel()
@@ -165,6 +168,9 @@ func serveCheck(provider *stationlink.Link, providerKey *identity.NodeKey, targe
 	if err != nil {
 		return err
 	}
+	running, stopIssuer := context.WithCancel(context.Background())
+	defer stopIssuer()
+	go issuer.Run(running, nil)
 	caller, err := stationlink.Dial(ctx, stationlink.Config{Target: target, IdentityKey: callerKey, Issuer: issuer})
 	if err != nil {
 		return fmt.Errorf("dial the caller: %w", err)
