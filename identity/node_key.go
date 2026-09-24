@@ -51,7 +51,7 @@ const (
 	rsaModulusBits     = 4096
 	rsaPublicExponent  = 65537
 	compositePrefix    = "CompositeAlgorithmSignatures2025"
-	compositeLabel     = "MACULA-ML-DSA-87-PS384"
+	compositeLabel     = "COMPSIG-MLDSA87-RSA4096-PSS-SHA512"
 	nodeIDLabel        = "MACULA-NODE-ID-V1"
 	keyIDLabel         = "MACULA-KEY-ID-V1"
 )
@@ -158,10 +158,12 @@ func (k *NodeKey) KeyID() [32]byte {
 	return KeyIDOf(k.PublicKey(), k.profile)
 }
 
-// Sign signs message: with ML-DSA-87 alone in pq_pure, and with Macula's
-// composite ML-DSA-87-PS384 in pq_hybrid, where both halves sign the message
-// representative and the signature is the ML-DSA-87 signature followed by the
-// RSA-PSS signature. An empty or nil key refuses with ErrEmptyNodeKey.
+// Sign signs message: with ML-DSA-87 alone in pq_pure, and in pq_hybrid with
+// the LAMPS composite id-MLDSA87-RSA4096-PSS-SHA512 (as macula 12 signs it),
+// where both halves sign the message representative, the ML-DSA-87 half with
+// the composite label as its context, and the signature is the ML-DSA-87
+// signature followed by the RSA-PSS signature. An empty or nil key refuses
+// with ErrEmptyNodeKey.
 func (k *NodeKey) Sign(message []byte) ([]byte, error) {
 	if k == nil || k.mldsa == nil {
 		return nil, ErrEmptyNodeKey
@@ -170,7 +172,7 @@ func (k *NodeKey) Sign(message []byte) ([]byte, error) {
 		return k.mldsa.Sign(rand.Reader, message, crypto.Hash(0))
 	}
 	representative := compositeRepresentative(message)
-	mldsaSignature, err := k.mldsa.Sign(rand.Reader, representative, crypto.Hash(0))
+	mldsaSignature, err := k.mldsa.Sign(rand.Reader, representative, compositeMLDSAOptions)
 	if err != nil {
 		return nil, fmt.Errorf("identity: sign the ML-DSA-87 half: %w", err)
 	}
@@ -206,19 +208,28 @@ func Verify(message, signature, carriedKey []byte, p profile.Profile) bool {
 	}
 	representative := compositeRepresentative(message)
 	digest := sha512.Sum384(representative)
-	mldsaValid := verifyMLDSA(carriedKey[:mldsaPublicKeySize], representative, signature[:mldsaSignatureSize])
+	mldsaValid := verifyMLDSAWith(carriedKey[:mldsaPublicKeySize], representative, signature[:mldsaSignatureSize], compositeMLDSAOptions)
 	rsaValid := rsa.VerifyPSS(rsaPublic, crypto.SHA384, digest[:], signature[mldsaSignatureSize:], pssOptions) == nil
 	return mldsaValid && rsaValid
 }
 
+// compositeMLDSAOptions is the composite's ML-DSA-87 context: the composite
+// label itself, as the LAMPS draft and macula 12 sign it.
+var compositeMLDSAOptions = &mldsa.Options{Context: compositeLabel}
+
 // verifyMLDSA reports whether signature is an ML-DSA-87 signature over message,
 // with an empty context, by the 2,592-byte public key.
 func verifyMLDSA(public, message, signature []byte) bool {
+	return verifyMLDSAWith(public, message, signature, nil)
+}
+
+// verifyMLDSAWith is verifyMLDSA under the given options (nil: empty context).
+func verifyMLDSAWith(public, message, signature []byte, opts *mldsa.Options) bool {
 	if len(public) != mldsaPublicKeySize {
 		return false
 	}
 	key, err := mldsa.NewPublicKey(mldsa.MLDSA87(), public)
-	return err == nil && mldsa.Verify(key, message, signature, nil) == nil
+	return err == nil && mldsa.Verify(key, message, signature, opts) == nil
 }
 
 // CarriedKeyWellFormed reports whether key is a key in its one carried form for
@@ -303,8 +314,8 @@ func PuzzleSolved(nodeID [32]byte, difficulty int) bool {
 }
 
 // compositeRepresentative is the message both halves of a composite sign:
-// the prefix, the label, a zero byte for the empty context, and the SHA-512 of
-// the message.
+// the prefix, the label, a zero byte for the empty application context, and
+// the SHA-512 of the message.
 func compositeRepresentative(message []byte) []byte {
 	digest := sha512.Sum512(message)
 	out := make([]byte, 0, len(compositePrefix)+len(compositeLabel)+1+len(digest))

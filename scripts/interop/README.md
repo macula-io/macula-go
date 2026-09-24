@@ -10,6 +10,14 @@ These scripts check macula-go's post-quantum identity against a compiled macula,
 - macula writes bindings and statements of its own, and `identity/binding_interop_test.go` verifies them, including
   altered copies.
 
+`emit_erlang_composite.escript` writes a `pq_hybrid` composite that macula's `macula_node_keys` signed into
+`identity/testdata/lamps_mldsa87_rsa4096_pss_sha512/` (`otp_message.bin`, `otp_pk.bin`, `otp_sig.bin`), for
+`identity/node_key_test.go` to verify:
+
+```sh
+escript scripts/interop/emit_erlang_composite.escript <macula lib dir>/ebin identity/testdata/lamps_mldsa87_rsa4096_pss_sha512
+```
+
 ## Running
 
 Compile macula at the revision to check, then point the script at the compiled application:

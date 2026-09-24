@@ -3,6 +3,7 @@ package identity
 import (
 	"bytes"
 	"crypto"
+	"crypto/mldsa"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -13,31 +14,44 @@ import (
 	"github.com/macula-io/macula-go/profile"
 )
 
-// zeroDroppedFixture is the zero-dropped composite from macula's
-// test/fixtures/composite_ml_dsa_87_ps384 at merge-11.0.0 bdbd6720, by the
-// sha256 macula records for each file: a pq_hybrid composite over message.bin
-// whose RSA-PSS half had its leading zero byte dropped, 4627 + 511 bytes.
-// macula_node_keys:verify/4 refuses the same bytes
-// (cross_stack_zero_dropped_composite_is_refused_test).
-var zeroDroppedFixture = map[string]string{
-	"message.bin":                    "0bd6435c67f59022b2c9c09b47aaf9cc5e21afdc1bac1269c43f094968a8f313",
-	"zero_dropped_composite_pub.bin": "2a088f4f99874258d8f6206fa605ff17645fd191a7f9c9216b2ee0da3b2dbc78",
-	"zero_dropped_composite_sig.bin": "87bac541d243135bc330ce21173ff90a27c94dd41c0f3ecd96c6014d0067e6c0",
+// lampsFixture is id-MLDSA87-RSA4096-PSS-SHA512 as the IETF LAMPS draft
+// publishes it (draft-ietf-lamps-pq-composite-sigs, src/testvectors.json), and
+// macula's zero-dropped composite over the same message and key: copied from
+// macula v12.1.0's test/fixtures/lamps_mldsa87_rsa4096_pss_sha512 and
+// test/fixtures/lamps_composite_zero_dropped, pinned by sha256 so a drifted
+// copy fails here rather than passing on bytes nobody else signed.
+var lampsFixture = map[string]string{
+	"m.bin":                "ef537f25c895bfa782526529a9b63d97aa631564d5d789c2b765448c8635fb6c",
+	"pk.bin":               "88560e139b35d0738857f9c8e29bbcfb108e3539bd2bf6f4994bb4b34beb019d",
+	"s.bin":                "95e17c93e9c1d6b5c3c4bae9d8687cd1606e232dca0af38e437e7e2e16894303",
+	"zero_dropped_sig.bin": "4e43a85def2b0acec014724d7d4b23ac86685ef35f28a9be85d9aff4a7cd30cd",
+}
+
+func TestTheLAMPSFixtureIsTheOneMaculaPins(t *testing.T) {
+	for name, want := range lampsFixture {
+		if sum := sha256.Sum256(fixtureBytes(t, name)); hex.EncodeToString(sum[:]) != want {
+			t.Fatalf("%s: sha256 %x, want %s", name, sum, want)
+		}
+	}
+}
+
+// The draft's own signature verifies: a third party's bytes, so this holds the
+// composite to the standard and not only to another Macula stack.
+func TestTheLAMPSDraftVectorVerifies(t *testing.T) {
+	message, public, signature := fixtureBytes(t, "m.bin"), fixtureBytes(t, "pk.bin"), fixtureBytes(t, "s.bin")
+	if !Verify(message, signature, public, profile.PQHybrid) {
+		t.Fatal("the LAMPS draft vector does not verify")
+	}
 }
 
 // A composite whose RSA-PSS half lost its leading zero byte is refused, as macula
-// refuses it, and by its length alone: its ML-DSA-87 half verifies, its RSA-PSS
-// half verifies once the zero byte is back, and the composite restored to 4627 +
-// 512 bytes verifies.
+// refuses it, and by its length alone: its ML-DSA-87 half verifies (under the
+// composite label as its context), its RSA-PSS half verifies once the zero byte
+// is back, and the composite restored to 4627 + 512 bytes verifies.
 func TestAZeroDroppedCompositeIsRefused(t *testing.T) {
-	for name, want := range zeroDroppedFixture {
-		if sum := sha256.Sum256(fixtureBytes(t, name)); hex.EncodeToString(sum[:]) != want {
-			t.Fatalf("%s: sha256 %x, want macula's %s", name, sum, want)
-		}
-	}
-	message := fixtureBytes(t, "message.bin")
-	public := fixtureBytes(t, "zero_dropped_composite_pub.bin")
-	signature := fixtureBytes(t, "zero_dropped_composite_sig.bin")
+	message := fixtureBytes(t, "m.bin")
+	public := fixtureBytes(t, "pk.bin")
+	signature := fixtureBytes(t, "zero_dropped_sig.bin")
 	if len(public) != 3118 || len(signature) != mldsaSignatureSize+511 {
 		t.Fatalf("key %d bytes and signature %d bytes, want 3118 and 4627 + 511", len(public), len(signature))
 	}
@@ -50,8 +64,12 @@ func TestAZeroDroppedCompositeIsRefused(t *testing.T) {
 	restoredHalf := append([]byte{0}, signature[mldsaSignatureSize:]...)
 	restored := append(bytes.Clone(signature[:mldsaSignatureSize]), restoredHalf...)
 
-	if !verifyMLDSA(public[:mldsaPublicKeySize], representative, signature[:mldsaSignatureSize]) {
-		t.Error("the ML-DSA-87 half does not verify")
+	mlPublic, err := mldsa.NewPublicKey(mldsa.MLDSA87(), public[:mldsaPublicKeySize])
+	if err != nil {
+		t.Fatalf("the ML-DSA-87 public key: %v", err)
+	}
+	if err := mldsa.Verify(mlPublic, representative, signature[:mldsaSignatureSize], &mldsa.Options{Context: compositeLabel}); err != nil {
+		t.Errorf("the ML-DSA-87 half under the composite label: %v", err)
 	}
 	if err := rsa.VerifyPSS(rsaPublic, crypto.SHA384, digest[:], restoredHalf, pssOptions); err != nil {
 		t.Errorf("the RSA-PSS half with its zero byte restored: %v, want it verified", err)

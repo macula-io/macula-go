@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- A `pq_hybrid` key signs the LAMPS composite id-MLDSA87-RSA4096-PSS-SHA512,
+  as macula 12 does: the label is `COMPSIG-MLDSA87-RSA4096-PSS-SHA512`, and
+  the ML-DSA-87 half signs with that label as its context. Composites made
+  under the earlier `MACULA-ML-DSA-87-PS384` label no longer verify, in either
+  direction. Checked against the LAMPS draft's own vector, a composite macula
+  12.1.0 signed, and macula 12.1.0 verifying macula-go's keys (26 checks) and
+  bindings (40 checks); the bindings fixture is rewritten by macula 12.1.0.
+
 - `cbor.Decode` decodes under macula 11.0.0's decoding rule and returns
   `(Value, error)`. It refuses bytes after the top-level value, map keys other
   than text or integers, duplicate map keys, text that is not valid UTF-8,

@@ -41,7 +41,7 @@ func flippedAt(b []byte, offset int) []byte {
 
 func fixtureBytes(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata", "composite_ml_dsa_87_ps384", name))
+	b, err := os.ReadFile(filepath.Join("testdata", "lamps_mldsa87_rsa4096_pss_sha512", name))
 	if err != nil {
 		t.Fatalf("fixture %s: %v", name, err)
 	}
@@ -107,11 +107,14 @@ func TestKeyIDMatchesMaculasReferenceVectors(t *testing.T) {
 	}
 }
 
-// The composite's message representative, byte for byte as macula and the V8
-// check have it.
+// The composite's message representative, byte for byte as macula 12's
+// composite_representative/1 builds it: the prefix, the LAMPS label
+// COMPSIG-MLDSA87-RSA4096-PSS-SHA512, a zero byte for the empty context, and
+// the SHA-512 of the message. The expected bytes were computed on OTP 28.4.3
+// from that function's definition.
 func TestCompositeRepresentativeMatchesTheSharedVector(t *testing.T) {
 	const want = "436f6d706f73697465416c676f726974686d5369676e61747572657332303235" +
-		"4d4143554c412d4d4c2d4453412d38372d5053333834" +
+		"434f4d505349472d4d4c44534138372d525341343039362d5053532d534841353132" +
 		"00" +
 		"e4f23edffade3a0a47087a2f675e84d4ed9c126f824e93c09ae81c09033b82d3" +
 		"ef4b9c62d5bbc6238b99df1bec305ed30456cd776dca2e8182ecc35e4c72b7f7"
@@ -120,14 +123,18 @@ func TestCompositeRepresentativeMatchesTheSharedVector(t *testing.T) {
 	}
 }
 
-// Composites signed by OTP and by Go in the V8 check, as macula's own tests
-// hold them, verify here, and each alteration is refused.
-func TestCompositeSignaturesMadeByOTPAndByGoVerify(t *testing.T) {
-	message := fixtureBytes(t, "message.bin")
-	for _, signer := range []string{"otp", "go"} {
+// Composites signed elsewhere verify here, and each alteration is refused: the
+// LAMPS draft's own vector, and one macula 12 signed (written by
+// scripts/interop/emit_erlang_composite.escript).
+func TestCompositeSignaturesMadeElsewhereVerify(t *testing.T) {
+	for signer, files := range map[string][3]string{
+		"lamps": {"m.bin", "pk.bin", "s.bin"},
+		"otp":   {"otp_message.bin", "otp_pk.bin", "otp_sig.bin"},
+	} {
 		t.Run(signer, func(t *testing.T) {
-			public := fixtureBytes(t, signer+"_composite_pub.bin")
-			signature := fixtureBytes(t, signer+"_composite_sig.bin")
+			message := fixtureBytes(t, files[0])
+			public := fixtureBytes(t, files[1])
+			signature := fixtureBytes(t, files[2])
 			if !Verify(message, signature, public, profile.PQHybrid) {
 				t.Fatal("the composite does not verify")
 			}
@@ -186,8 +193,11 @@ func TestAPQHybridKeySignsWithTheCompositeValidOnlyIfBothHalvesVerify(t *testing
 	}
 	representative := compositeRepresentative(message)
 	mldsaPublic, err := mldsa.NewPublicKey(mldsa.MLDSA87(), public[:2592])
-	if err != nil || mldsa.Verify(mldsaPublic, representative, signature[:4627], nil) != nil {
-		t.Errorf("the ML-DSA-87 half does not sign the representative with an empty context: %v", err)
+	if err != nil || mldsa.Verify(mldsaPublic, representative, signature[:4627], &mldsa.Options{Context: compositeLabel}) != nil {
+		t.Errorf("the ML-DSA-87 half does not sign the representative under the composite label: %v", err)
+	}
+	if mldsa.Verify(mldsaPublic, representative, signature[:4627], nil) == nil {
+		t.Error("the ML-DSA-87 half verifies with an empty context, as the pre-12 composite signed it")
 	}
 	rsaPublic, err := x509.ParsePKCS1PublicKey(public[2592:])
 	if err != nil {
