@@ -137,6 +137,14 @@ from t+12m31s. The station drops a same-connection renewal as a duplicate
 and purges the entry 5 minutes past the first advertisement's expiry:
 macula-io/macula-station#7.
 
+**2026-09-24, B6 against the same lab station** (`golivelink -serve 90s
+-every 15s`): the provider's advertisement, with its authorization, was put
+in the station's DHT; a second node's `pool` resolved it, checked it against
+the test realm's key, took the station's own endpoint record, dialed it
+pinned and called the provider there. First call 34 ms (resolution and
+dial), then 16 to 25 ms on the remembered candidate, seven of seven
+answered.
+
 ## Found in macula and macula-station
 
 - A handler's `{error, R}` went out with provider code `unknown_error`, while

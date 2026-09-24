@@ -5,9 +5,12 @@
 //
 // With -serve, it then serves golivelink/echo under a throwaway test realm
 // whose org directory and procedure delegation it signs itself and puts in the
-// station's DHT, and calls it from a second link every -every for -serve,
-// reporting each outcome: whether a station keeps routing to a provider whose
-// advertisement is renewed on the same connection.
+// station's DHT, and calls it every -every for -serve from a second node's
+// pool, by direct dial: the advertisement resolved from the DHT and checked
+// against the test realm's key, the serving station dialed from its own
+// endpoint record. Each outcome is reported, so a run long enough shows
+// whether the station keeps routing to a provider whose advertisement is
+// renewed on the same connection.
 //
 //	go run ./scripts/interop/golivelink -host 127.0.0.1 -port 44330 -profile pq_hybrid -node <64 hex>
 //	go run ./scripts/interop/golivelink ... -hold 0s -serve 14m -every 30s
@@ -27,6 +30,7 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/pool"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
@@ -164,25 +168,19 @@ func serveCheck(provider *stationlink.Link, providerKey *identity.NodeKey, targe
 	if err != nil {
 		return err
 	}
-	issuer, err := identity.NewStatementIssuer(callerKey, func() int64 { return time.Now().UnixMilli() })
+	caller, err := pool.Connect(ctx, []pool.Seed{{Host: target.Host, Port: target.Port, NodeID: target.ExpectedNodeID}},
+		pool.Opts{IdentityKey: callerKey, RealmTrust: map[[32]byte][]byte{realm: realmKey.PublicKey()}})
 	if err != nil {
-		return err
+		return fmt.Errorf("the caller's pool: %w", err)
 	}
-	running, stopIssuer := context.WithCancel(context.Background())
-	defer stopIssuer()
-	go issuer.Run(running, nil)
-	caller, err := stationlink.Dial(ctx, stationlink.Config{Target: target, IdentityKey: callerKey, Issuer: issuer})
-	if err != nil {
-		return fmt.Errorf("dial the caller: %w", err)
-	}
-	defer caller.Close("client_stop")
+	defer caller.Close()
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	for {
 		callStarted := time.Now()
-		_, err := caller.Call(context.Background(), stationlink.Call{Realm: realm, Procedure: procedure,
-			Target: provider.NodeID(), Payload: cbor.Text("echo"), Timeout: 5 * time.Second})
-		fmt.Printf("t+%s call %s: %s in %s\n", time.Since(started).Round(time.Second), procedure, outcome(err),
+		_, err := caller.Call(context.Background(), pool.Call{Realm: realm, Procedure: procedure,
+			Payload: cbor.Text("echo"), Timeout: 5 * time.Second})
+		fmt.Printf("t+%s call %s (direct dial): %s in %s\n", time.Since(started).Round(time.Second), procedure, outcome(err),
 			time.Since(callStarted).Round(time.Millisecond))
 		select {
 		case <-served.Done():
@@ -196,8 +194,6 @@ func serveCheck(provider *stationlink.Link, providerKey *identity.NodeKey, targe
 		case <-ticker.C:
 		case <-provider.Done():
 			return fmt.Errorf("the provider's link ended: %w", provider.Err())
-		case <-caller.Done():
-			return fmt.Errorf("the caller's link ended: %w", caller.Err())
 		}
 	}
 }
