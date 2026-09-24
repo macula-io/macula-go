@@ -20,11 +20,11 @@
 ---
 
 > **Status, 2026-09-24:** master speaks the **macula 12** wire and nothing
-> older. Handshake, calls, publish/subscribe, the DHT and serving procedures
-> work against a live macula-station 0.6.1, including a call by direct dial
-> from one node to another's provider. **Streaming RPC and content transfer
-> are not on master yet**: the 10.x implementations were removed because they
-> cannot reach a macula 12 station, and their macula 12 ports are in progress
+> older. Handshake, calls, streaming RPC, publish/subscribe, the DHT and
+> serving procedures work against a live macula-station 0.6.1, including calls
+> and streams by direct dial from one node to another's provider. **Content
+> transfer is not on master yet**: the 10.x implementation was removed because
+> it cannot reach a macula 12 station, and its macula 12 port is in progress
 > (see [Status](#status)). The last release, v0.10.0, speaks the retired 10.x
 > wire and cannot reach the current fleet.
 
@@ -60,7 +60,7 @@ Everything on the wire is post-quantum:
 | PubSub (signed PUBLISH, SUBSCRIBE, EVENT) | ✅ | ✅ | Published once over several links, delivered once |
 | DHT (`_dht.*`) | ✅ | — | Records verified before they are handed on |
 | Pool of station links | ✅ | ✅ | Pinned seeds, redial with subscriptions and procedures replayed |
-| Streaming RPC | — | — | Not on master: macula 12 port in progress |
+| Streaming RPC (server, client and bidi streams) | ✅ | ✅ | A QUIC stream per session; `pool.OpenStream` by direct dial, `Offer.Stream` to serve; admission, session and inbox bounds as macula's; every stream released on every path |
 | Content transfer | — | — | Not on master: macula 12 port in progress |
 | Gated procedures (UCAN) | token carried | — | Serving one is refused by name until the post-quantum UCAN verifier ([#2](https://github.com/macula-io/macula-go/issues/2)) |
 
@@ -99,6 +99,16 @@ result, err := p.Call(ctx, pool.Call{Realm: realm, Procedure: "mcl-echo/echo", P
 // procedures to this node.
 served, err := p.Serve(ctx, pool.Offer{Realm: realm, Procedure: "acme/echo",
 	Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return r.Payload, nil }})
+
+// Stream: a server stream's chunks arrive as events until its end.
+stream, err := p.OpenStream(ctx, pool.StreamCall{Realm: realm, Procedure: "mcl-tube/watch", Mode: frame.ServerStream})
+for {
+	event, err := stream.Recv(ctx)
+	if err != nil || event.Kind == stationlink.StreamEnd {
+		break
+	}
+	// event.Body is the chunk
+}
 
 // Publish and subscribe.
 sub, err := p.Subscribe(realm, "acme/demo/greeting_sent_v1")
@@ -167,8 +177,7 @@ GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record -ru
 
 ## Known limitations
 
-- **Streaming RPC and content transfer are not on master** until their
-  macula 12 ports land.
+- **Content transfer is not on master** until its macula 12 port lands.
 - **Gated procedures cannot be served**: `Serve` refuses one by name until
   macula-go has the post-quantum UCAN verifier macula 12 uses
   ([#2](https://github.com/macula-io/macula-go/issues/2)). A call can carry a
@@ -198,6 +207,10 @@ Measured against a live macula-station 0.6.1 (`pq_hybrid`, puzzle enforced),
 - handshake accepted in 14 to 48 ms, on SecP256r1MLKEM768 with an ML-DSA leaf;
 - `_dht.*` finds and puts, each record verified, 17 to 25 ms;
 - a publication delivered back as a verified event in 9 ms;
+- a server stream opened by direct dial from a second node's pool: first chunk
+  at 53 to 66 ms, the next every 5 to 7 ms; a client stream's three chunks
+  answered by the provider's reply at 67 ms, the caller's signed frames
+  accepted by the station;
 - a Go provider served under a test realm and called by a second node's pool
   by direct dial: 34 ms for the first call, 16 to 25 ms after.
 

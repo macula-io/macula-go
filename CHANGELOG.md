@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frame-level Ed25519 signing (`frame.Sign`, `frame.Verify`, `SigDomain`,
   `publisher_sig`), Ed25519 identity (`identity.KeyPair`, `Generate`,
   `VerifyEd25519`) and the trust-mode `transport.Dial` (`WebPKI`, `Pinned`,
-  `Insecure`). Streaming RPC and content transfer return as their macula 12
-  ports land; the examples are new (`call`, `serve`, `pubsub`).
+  `Insecure`). Content transfer returns when its macula 12 port lands;
+  streaming RPC is back (below); the examples are new (`call`, `serve`, `pubsub`).
 - `pool` is rewritten on `stationlink`, as macula 12's `macula_client`:
   `Connect` takes seeds pinned by node_id and `Opts.RealmTrust`, and refuses
   an unpinned seed, a malformed realm key or too many seeds before it dials;
@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Providers`, `Serve`, `Publish` (signed once for every link), `Subscribe`,
   `FindRecord`, `FindRecords`, `FindRecordsByType`, `PutRecord`. Station
   discovery is removed (macula#31).
+- Streaming RPC on the macula 12 wire: `stationlink.Link.OpenStream` and
+  `pool.OpenStream` (by direct dial) open a session on a QUIC stream of its
+  own; `Offer.Stream` serves one with a `StreamHandler`. `Stream` sends
+  (`Send`, `SendValue`, `CloseSend`, `Close`, `Reply`, `Abort`) and receives
+  (`Recv`: data, end and reply events, or a `*StreamError`) signed frames, a
+  seq per side. Opens are admitted as CALLs are and bounded by sessions per
+  caller and per node; inboxes are bounded per stream, per caller and per
+  node. Every stream is released on every path.
 - `stationlink.Link.Serve` serves an org procedure: its org directory and
   delegation from the DHT, checked against the realm key, an advertisement
   naming the connected station, sent in an ADVERTISE and put in the DHT,

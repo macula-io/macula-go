@@ -14,12 +14,14 @@ import (
 var ErrNoRealmKey = errors.New("pool: no realm key pinned for the realm")
 
 // Offer is a procedure the node serves: its realm, which the pool must pin a
-// key for, its name, its handler, and whether it is gated (refused until
-// macula-go has a post-quantum UCAN verifier).
+// key for, its name, its handler (or Stream, for a streaming procedure:
+// exactly one of the two), and whether it is gated (refused until macula-go
+// has a post-quantum UCAN verifier).
 type Offer struct {
 	Realm     [32]byte
 	Procedure string
 	Handler   stationlink.Handler
+	Stream    *stationlink.StreamOffer
 	Gated     bool
 }
 
@@ -47,7 +49,7 @@ func (p *Pool) Serve(ctx context.Context, o Offer) (*Served, error) {
 		return nil, stationlink.ErrGatedUnsupported
 	}
 	s := &Served{pool: p, onLinks: map[*stationlink.Link]*stationlink.Served{},
-		offer: stationlink.Offer{Realm: o.Realm, Procedure: o.Procedure, Handler: o.Handler, RealmKey: realmKey}}
+		offer: stationlink.Offer{Realm: o.Realm, Procedure: o.Procedure, Handler: o.Handler, Stream: o.Stream, RealmKey: realmKey}}
 	links := p.links()
 	if len(links) == 0 {
 		return nil, ErrNoLink

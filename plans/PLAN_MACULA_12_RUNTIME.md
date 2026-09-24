@@ -94,7 +94,7 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
   identity (`identity.KeyPair`) and the trust-mode `transport.Dial`. New
   examples (`call`, `serve`, `pubsub`) on the pool, each run against the lab
   station; README rewritten for macula 12, streams and content stated absent.
-- [ ] B7b Streaming RPC, as macula 12.2.1 does it: each session on its own
+- [x] B7b Streaming RPC, as macula 12.2.1 does it: each session on its own
   QUIC stream the caller opens (the station opens one to the provider),
   STREAM_OPEN a signed request with its mode, provider frames under
   MACULA-PQ-STREAM-V1 and caller frames under MACULA-PQ-CALLER-STREAM-V1, a
@@ -166,6 +166,14 @@ the test realm's key, took the station's own endpoint record, dialed it
 pinned and called the provider there. First call 34 ms (resolution and
 dial), then 16 to 25 ms on the remembered candidate, seven of seven
 answered.
+
+**2026-09-24, B7b against the same lab station** (`golivelink -serve`):
+`golivelink/watch`, a server stream opened by direct dial from a second
+node's pool: first chunk at 53 to 66 ms (resolution, dial, open), then one
+every 5 to 7 ms, the end at 73 to 82 ms; `golivelink/count`, a client
+stream of three chunks, answered by the provider's reply at 67 ms. The
+station verifies each relayed frame against the open, so it read the
+provider's and the caller's signed frames; its log shows no refusal.
 
 ## @macula-io/ts (macula-ts `cabi`) across B7
 

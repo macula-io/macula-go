@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/internal/teststation"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/record"
@@ -371,4 +372,49 @@ func TestARecordPutThroughThePoolIsFoundByType(t *testing.T) {
 	if err != nil || dropped != 0 || len(found) != 1 || found[0].Record().KeyID != p.NodeID() {
 		t.Errorf("FindRecordsByType: %d found, %d dropped, %v", len(found), dropped, err)
 	}
+}
+
+// A streaming procedure is served on the pool's links and opened by direct
+// dial from a node that shares no station with its provider.
+func TestAStreamDialsTheProvidersStation(t *testing.T) {
+	serving := teststation.Start(t, profile.PQPure, "stream serving")
+	callers := teststation.Start(t, profile.PQPure, "stream callers")
+	teststation.ShareDHT(serving, callers)
+	realm := teststation.NewRealm(t, profile.PQPure, "streams", org)
+	realm.Admit(t, serving, nodeIDOf(t, "stream provider"))
+	provider := connect(t, "stream provider", realm, serving)
+	if _, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure,
+		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
+			for _, chunk := range []string{"a", "b"} {
+				if err := s.Send([]byte(chunk)); err != nil {
+					return err
+				}
+			}
+			return s.Close()
+		}}}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	caller := connect(t, "stream caller", realm, callers)
+	stream, err := caller.OpenStream(t.Context(), StreamCall{Realm: realm.ID, Procedure: procedure, Mode: frame.ServerStream, Payload: cbor.Map(nil)})
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	var got []string
+	for {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		event, err := stream.Recv(ctx)
+		cancel()
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+		if event.Kind == stationlink.StreamEnd {
+			break
+		}
+		body, _ := event.Body.AsBytes()
+		got = append(got, string(body))
+	}
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("heard %v", got)
+	}
+	eventually(t, "every relayed stream released", func() bool { return serving.Relayed() == 0 })
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/pool"
 	"github.com/macula-io/macula-go/profile"
@@ -174,6 +175,9 @@ func serveCheck(provider *stationlink.Link, providerKey *identity.NodeKey, targe
 		return fmt.Errorf("the caller's pool: %w", err)
 	}
 	defer caller.Close()
+	if err := streamCheck(ctx, provider, caller, realm, realmKey.PublicKey()); err != nil {
+		return err
+	}
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	for {
@@ -301,4 +305,91 @@ func dhtChecks(ctx context.Context, link *stationlink.Link, key *identity.NodeKe
 func nodeIDBytes(link *stationlink.Link) []byte {
 	id := link.NodeID()
 	return id[:]
+}
+
+// streamCheck serves golivelink/watch as a server stream of three chunks and
+// opens it from the caller's pool by direct dial, reporting when each chunk
+// and the end arrive.
+func streamCheck(ctx context.Context, provider *stationlink.Link, caller *pool.Pool, realm [32]byte, realmKey []byte) error {
+	const watch = "golivelink/watch"
+	served, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: watch, RealmKey: realmKey,
+		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
+			for _, chunk := range []string{"one", "two", "three"} {
+				if err := s.Send([]byte(chunk)); err != nil {
+					return err
+				}
+			}
+			return s.Close()
+		}}})
+	if err != nil {
+		return fmt.Errorf("serve %s: %w", watch, err)
+	}
+	defer served.Stop()
+	started := time.Now()
+	stream, err := caller.OpenStream(ctx, pool.StreamCall{Realm: realm, Procedure: watch, Mode: frame.ServerStream, Payload: cbor.Map(nil)})
+	if err != nil {
+		return fmt.Errorf("open %s: %w", watch, err)
+	}
+	for {
+		event, err := stream.Recv(ctx)
+		if err != nil {
+			fmt.Printf("stream %s: %v after %s\n", watch, err, time.Since(started).Round(time.Millisecond))
+			return nil
+		}
+		body, _ := event.Body.AsBytes()
+		switch event.Kind {
+		case stationlink.StreamData:
+			fmt.Printf("stream %s: chunk %q at %s\n", watch, body, time.Since(started).Round(time.Millisecond))
+		case stationlink.StreamEnd:
+			fmt.Printf("stream %s: end at %s\n", watch, time.Since(started).Round(time.Millisecond))
+			return clientStreamCheck(ctx, provider, caller, realm, realmKey)
+		}
+	}
+}
+
+// clientStreamCheck serves golivelink/count as a client stream that answers
+// with how many bytes it heard, and sends it three chunks from the caller's
+// pool: the caller's signed frames cross the station too.
+func clientStreamCheck(ctx context.Context, provider *stationlink.Link, caller *pool.Pool, realm [32]byte, realmKey []byte) error {
+	const count = "golivelink/count"
+	served, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: count, RealmKey: realmKey,
+		Stream: &stationlink.StreamOffer{Mode: frame.ClientStream, Handler: func(ctx context.Context, s *stationlink.Stream) error {
+			total := 0
+			for {
+				event, err := s.Recv(ctx)
+				if err != nil {
+					return err
+				}
+				if event.Kind == stationlink.StreamEnd {
+					return s.Reply(cbor.Uint64(uint64(total)))
+				}
+				body, _ := event.Body.AsBytes()
+				total += len(body)
+			}
+		}}})
+	if err != nil {
+		return fmt.Errorf("serve %s: %w", count, err)
+	}
+	defer served.Stop()
+	started := time.Now()
+	stream, err := caller.OpenStream(ctx, pool.StreamCall{Realm: realm, Procedure: count, Mode: frame.ClientStream, Payload: cbor.Map(nil)})
+	if err != nil {
+		return fmt.Errorf("open %s: %w", count, err)
+	}
+	for _, chunk := range []string{"ab", "cde", "f"} {
+		if err := stream.Send([]byte(chunk)); err != nil {
+			return fmt.Errorf("send on %s: %w", count, err)
+		}
+	}
+	if err := stream.CloseSend(); err != nil {
+		return err
+	}
+	event, err := stream.Recv(ctx)
+	if err != nil {
+		fmt.Printf("stream %s: %v after %s\n", count, err, time.Since(started).Round(time.Millisecond))
+		return nil
+	}
+	total, _ := event.Payload.AsInt64()
+	fmt.Printf("stream %s: reply %d bytes at %s\n", count, total, time.Since(started).Round(time.Millisecond))
+	return nil
 }

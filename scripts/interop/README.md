@@ -49,7 +49,8 @@ To refresh the test data, give it `identity/testdata/erlang_bindings.json` as th
 leaf), a `_macula.ping`, `_dht.*` finds and a put of its own signed node record, and a publication heard back as an
 event. With `-serve` it then serves `golivelink/echo` under a throwaway test realm, whose org directory and delegation it
 signs and puts in the station's DHT, and calls it every `-every` for `-serve` from a second node's `pool`, by direct
-dial:
+dial. Before the calls it serves and opens two streams the same way: `golivelink/watch`, a server stream of three chunks,
+and `golivelink/count`, a client stream the provider answers with a reply:
 
 ```sh
 go run ./scripts/interop/golivelink -host 127.0.0.1 -port 44330 -profile pq_hybrid -node <station node_id, 64 hex>

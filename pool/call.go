@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/transport"
@@ -335,4 +336,61 @@ func firstAnswer[T any](p *Pool, ask func(*stationlink.Link) (T, error)) (T, err
 func unreachable(err error) bool {
 	return errors.Is(err, stationlink.ErrCallTimeout) || errors.Is(err, stationlink.ErrClosed) ||
 		errors.Is(err, stationlink.ErrLivenessLost)
+}
+
+// StreamCall is a streaming session to open on an org procedure: its realm and
+// name, the provider (any trusted one when zero), the mode, the open's payload,
+// its deadline (the stationlink default when zero), and a UCAN and its proofs
+// for a gated procedure.
+type StreamCall struct {
+	Realm     [32]byte
+	Procedure string
+	Provider  [32]byte
+	Mode      frame.StreamMode
+	Payload   cbor.Value
+	Deadline  time.Duration
+	Token     []byte
+	Proofs    [][]byte
+}
+
+// OpenStream opens a streaming session at a provider of the procedure, reached
+// as Call reaches one: its trusted advertisements from the DHT, freshest
+// first, its serving station dialed pinned, the next candidate when a station
+// cannot be reached. The stream is open once its STREAM_OPEN is sent; a
+// provider's or station's refusal arrives on its first Recv.
+func (p *Pool) OpenStream(ctx context.Context, c StreamCall) (*stationlink.Stream, error) {
+	realmKey, pinned := p.opts.RealmTrust[c.Realm]
+	if !pinned {
+		return nil, ErrNoRealmKey
+	}
+	key := resolvedKey{c.Realm, c.Procedure, c.Provider}
+	candidates, err := p.candidates(ctx, key, realmKey)
+	if err != nil {
+		return nil, err
+	}
+	var errs []error
+	for i, cand := range candidates {
+		share, cancel := context.WithTimeout(ctx, candidateShare(ctx, len(candidates)-i))
+		stream, err := p.openAt(share, cand, c)
+		cancel()
+		if err == nil {
+			p.rememberCandidate(key, cand)
+			return stream, nil
+		}
+		if ctx.Err() != nil {
+			return nil, errors.Join(append(errs, err)...)
+		}
+		p.forget(key)
+		errs = append(errs, fmt.Errorf("provider %x at station %x: %w", cand.Node[:4], cand.Station[:4], err))
+	}
+	return nil, errors.Join(append([]error{ErrNoProvider}, errs...)...)
+}
+
+func (p *Pool) openAt(ctx context.Context, cand candidate, c StreamCall) (*stationlink.Stream, error) {
+	link, err := p.linkTo(ctx, cand.Station)
+	if err != nil {
+		return nil, err
+	}
+	return link.OpenStream(ctx, stationlink.StreamCall{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
+		Mode: c.Mode, Payload: c.Payload, Deadline: c.Deadline, Token: c.Token, Proofs: c.Proofs})
 }
