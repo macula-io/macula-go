@@ -27,7 +27,7 @@ var (
 	ErrDirectLinksFull = errors.New("pool: MaxDirectLinks direct links are held")
 )
 
-// Call is a call to an org procedure: its realm and name, the provider to call
+// Call is a call to a procedure: its realm and name, the provider to call
 // (any trusted one when zero), the payload, how long to wait (the stationlink
 // default when zero), and a UCAN and its proofs for a gated procedure.
 type Call struct {
@@ -60,9 +60,10 @@ type resolvedKey struct {
 	provider  [32]byte
 }
 
-// Call calls an org procedure at a provider that serves it, as macula 12
-// calls one: it resolves the procedure's advertisements from the DHT, keeps
-// those the realm's pinned key authorizes, and tries the freshest first,
+// Call calls a procedure at a provider that serves it, as macula 12 calls
+// one: it resolves the procedure's advertisements from the DHT, keeps those
+// the realm's pinned key authorizes (or, in a node's own namespace, those that
+// node signed), and tries the freshest first,
 // dialing the serving station the advertisement names, pinned by its node_id
 // from its own station_endpoint record, and calling the provider there. It
 // moves on to the next candidate when a station cannot be reached or reports
@@ -70,9 +71,9 @@ type resolvedKey struct {
 // it is. A candidate that answered is remembered until its advertisement
 // expires.
 func (p *Pool) Call(ctx context.Context, c Call) (cbor.Value, error) {
-	realmKey, pinned := p.opts.RealmTrust[c.Realm]
-	if !pinned {
-		return cbor.Value{}, ErrNoRealmKey
+	realmKey, err := p.realmKeyFor(c.Realm, c.Procedure)
+	if err != nil {
+		return cbor.Value{}, err
 	}
 	timeout := c.Timeout
 	if timeout <= 0 {
@@ -108,9 +109,9 @@ func (p *Pool) Call(ctx context.Context, c Call) (cbor.Value, error) {
 // realm's pinned key authorizes, with the station each serves from, freshest
 // first.
 func (p *Pool) Providers(ctx context.Context, realm [32]byte, procedure string) ([]Provider, error) {
-	realmKey, pinned := p.opts.RealmTrust[realm]
-	if !pinned {
-		return nil, ErrNoRealmKey
+	realmKey, err := p.realmKeyFor(realm, procedure)
+	if err != nil {
+		return nil, err
 	}
 	candidates, err := p.resolve(ctx, resolvedKey{realm: realm, procedure: procedure}, realmKey)
 	if err != nil {
@@ -359,9 +360,9 @@ type StreamCall struct {
 // cannot be reached. The stream is open once its STREAM_OPEN is sent; a
 // provider's or station's refusal arrives on its first Recv.
 func (p *Pool) OpenStream(ctx context.Context, c StreamCall) (*stationlink.Stream, error) {
-	realmKey, pinned := p.opts.RealmTrust[c.Realm]
-	if !pinned {
-		return nil, ErrNoRealmKey
+	realmKey, err := p.realmKeyFor(c.Realm, c.Procedure)
+	if err != nil {
+		return nil, err
 	}
 	key := resolvedKey{c.Realm, c.Procedure, c.Provider}
 	candidates, err := p.candidates(ctx, key, realmKey)

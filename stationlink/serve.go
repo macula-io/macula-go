@@ -17,7 +17,10 @@ import (
 // namespace: the realm's org directory names the org's key, the org's procedure
 // delegation names this node, both are found in the DHT, and the signed
 // procedure_advertisement carries them to the station in an ADVERTISE, checked
-// against the realm key before it goes out. The station routes CALLs for the
+// against the realm key before it goes out. Or it is served in this node's own
+// namespace, ~<node_id>/<name> (macula's D25 item 6, revised 2026-09-24): its
+// advertisement carries no authorization, its signature alone authorizes it,
+// and no realm key or record in the DHT is needed. The station routes CALLs for the
 // procedure to this link; each is admitted once per (caller, request_id) and
 // answered with a RESULT or ERROR signed by this node. UNADVERTISE carries a
 // tombstone of the advertisement.
@@ -51,17 +54,17 @@ var (
 )
 
 var (
-	// ErrNoOrg is a procedure without an org namespace, which nobody can
-	// authorize a provider for.
-	ErrNoOrg = errors.New("stationlink: a served procedure needs an org namespace")
+	// ErrNoOrg is a procedure without a namespace, which nobody can authorize
+	// a provider for.
+	ErrNoOrg = errors.New("stationlink: a served procedure needs an org namespace or this node's own")
 	// ErrGatedUnsupported is a gated procedure: its UCAN check needs the
 	// post-quantum token verifier macula-go does not have yet.
 	ErrGatedUnsupported = errors.New("stationlink: gated procedures need a post-quantum UCAN verifier (macula-io/macula-go#2)")
 	// ErrAlreadyServed is a procedure this link already serves in the realm.
 	ErrAlreadyServed = errors.New("stationlink: the procedure is already served on this link")
 	// ErrInvalidOffer is an offer without exactly one of a handler and a
-	// stream handler, or without a realm key.
-	ErrInvalidOffer = errors.New("stationlink: an offer needs one handler, unary or streaming, and the realm key")
+	// stream handler, or an org procedure's offer without the realm key.
+	ErrInvalidOffer = errors.New("stationlink: an offer needs one handler, unary or streaming, and for an org procedure the realm key")
 	// ErrStopped is a served procedure withdrawn by Stop.
 	ErrStopped = errors.New("stationlink: the procedure was withdrawn")
 )
@@ -83,8 +86,9 @@ type Request struct {
 // caller receives as a handler_error's detail.
 type Handler func(ctx context.Context, r Request) (cbor.Value, error)
 
-// Offer is a procedure to serve: its realm and name, its handler, and the realm
-// key the org directory must be signed with, as the realm's members pin it.
+// Offer is a procedure to serve: its realm and name, its handler, and, for an
+// org procedure, the realm key the org directory must be signed with, as the
+// realm's members pin it; a procedure in this node's own namespace needs none.
 // Gated is a procedure whose callers need a UCAN, refused for now.
 type Offer struct {
 	Realm     [32]byte
@@ -135,14 +139,17 @@ type Served struct {
 }
 
 // Serve advertises o's procedure on the link and answers its CALLs until Stop.
-// It resolves the org directory and this node's procedure delegation from the
-// DHT, signs the advertisement with this node's identity key, naming the
-// connected station as the serving station and living no longer than either
-// record nor 5 minutes, and checks its authorization against o.RealmKey
-// before sending it in an ADVERTISE and putting it in the DHT. The
-// advertisement is renewed at half its lifetime.
+// For an org procedure it resolves the org directory and this node's procedure
+// delegation from the DHT; a procedure in this node's own namespace needs
+// neither, and another node's namespace is record.ErrNotOwnNamespace. It signs
+// the advertisement with this node's identity key, naming the connected
+// station as the serving station and living no longer than the records it
+// carries nor 5 minutes, and checks its authorization, against o.RealmKey for
+// an org procedure, before sending it in an ADVERTISE and putting it in the
+// DHT. The advertisement is renewed at half its lifetime.
 func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
-	if (o.Handler == nil) == (o.Stream == nil || o.Stream.Handler == nil) || len(o.RealmKey) == 0 {
+	own := record.InOwnNamespace(o.Procedure)
+	if (o.Handler == nil) == (o.Stream == nil || o.Stream.Handler == nil) || (!own && len(o.RealmKey) == 0) {
 		return nil, ErrInvalidOffer
 	}
 	if o.Gated {
@@ -173,10 +180,19 @@ func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 	return s, nil
 }
 
-// advertisement is o's signed procedure_advertisement and its wire form, with
-// the authorization resolved from the DHT and verified against o.RealmKey,
-// living at most maxTTL.
+// advertisement is o's signed procedure_advertisement and its wire form,
+// living at most maxTTL: with the authorization resolved from the DHT and
+// verified against o.RealmKey for an org procedure, with none in this node's
+// own namespace.
 func (l *Link) advertisement(ctx context.Context, o Offer, maxTTL time.Duration) (record.Record, []byte, error) {
+	if record.InOwnNamespace(o.Procedure) {
+		unsigned, err := record.NewProcedureAdvertisement(l.self, o.Realm, o.Procedure, l.station.NodeID,
+			record.ProcedureAdvertisementOptions{TTLMs: uint64(maxTTL / time.Millisecond)})
+		if err != nil {
+			return record.Record{}, nil, err
+		}
+		return l.signedAdvertisement(unsigned, o)
+	}
 	org, _, _ := record.ProcedureOrg(o.Procedure)
 	directory, err := l.FindRecord(ctx, record.OrgDirectoryKey(o.Realm, org))
 	if err != nil {
@@ -213,6 +229,13 @@ func (l *Link) advertisement(ctx context.Context, o Offer, maxTTL time.Duration)
 	if err != nil {
 		return record.Record{}, nil, err
 	}
+	return l.signedAdvertisement(unsigned, o)
+}
+
+// signedAdvertisement signs an unsigned advertisement with this node's key and
+// checks it as a caller will, its authorization against o.RealmKey (none is
+// needed in this node's own namespace), before it is sent anywhere.
+func (l *Link) signedAdvertisement(unsigned record.Record, o Offer) (record.Record, []byte, error) {
 	signed, err := record.Sign(unsigned, l.key)
 	if err != nil {
 		return record.Record{}, nil, err
@@ -221,6 +244,7 @@ func (l *Link) advertisement(ctx context.Context, o Offer, maxTTL time.Duration)
 	if err != nil {
 		return record.Record{}, nil, err
 	}
+	now := time.Now().UnixMilli()
 	verified, err := record.Verify(wire, l.profile, now)
 	if err != nil {
 		return record.Record{}, nil, err

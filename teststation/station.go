@@ -540,7 +540,9 @@ func (s *Station) find(match func(slot, []byte) bool) [][]byte {
 }
 
 // advertised routes an advertisement's procedure to the connection that sent
-// it; a renewal replaces the one before it.
+// it; a renewal replaces the one before it. An advertisement in a node's own
+// namespace is admitted as macula-station admits one (0.6.4): only by the
+// node it names, with no authorization.
 func (s *Station) advertised(c *conn, v cbor.Value) {
 	wire, _ := field(v, "advertisement").AsBytes()
 	verified, err := record.Verify(wire, s.Profile, time.Now().UnixMilli())
@@ -552,6 +554,12 @@ func (s *Station) advertised(c *conn, v cbor.Value) {
 	if err != nil || ad.AdvertiserNode != c.nodeID {
 		s.t.Errorf("teststation: an advertisement for another node: %v", err)
 		return
+	}
+	if record.InOwnNamespace(ad.Procedure) {
+		if err := record.OwnNamespace(verified); err != nil {
+			s.t.Errorf("teststation: an own-namespace advertisement the station would not admit: %v", err)
+			return
+		}
 	}
 	s.mu.Lock()
 	s.routes[routeKey{ad.RealmID, ad.Procedure}] = c

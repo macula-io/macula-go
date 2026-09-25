@@ -37,7 +37,8 @@ without being a station itself. It speaks the same protocol as
 reference SDK, version 12. Macula is a federated mesh for sovereign
 application networks: a **station** routes and holds the DHT, a **realm**
 admits orgs, and an org's providers serve procedures that any node in the
-realm can call.
+realm can call. Any node can also serve procedures in its own namespace,
+`~<node_id>/<name>`, with no org or realm to vouch for it.
 
 Everything on the wire is post-quantum:
 
@@ -58,6 +59,7 @@ Everything on the wire is post-quantum:
 | Unary RPC (signed CALL, RESULT, ERROR) | ✅ | ✅ | `pool.Call` by direct dial; `pool.Serve` answers with `handler_error`, `temporary_relay_failure` or `unknown_next_peer` |
 | Request admission | — | ✅ | Deadline window, each request run once, a copy answered from the stored reply, bounded as macula bounds it |
 | Provider authorization | ✅ | ✅ | The realm's org directory and the org's delegation, checked against the realm key the pool pins |
+| A node's own namespace (`~<node_id>/<name>`) | ✅ | ✅ | No authorization and no realm key: the advertisement's signature by that node authorizes it; checked against macula's shared fixtures |
 | PubSub (signed PUBLISH, SUBSCRIBE, EVENT) | ✅ | ✅ | Published once over several links, delivered once |
 | DHT (`_dht.*`) | ✅ | — | Records verified before they are handed on |
 | Pool of station links | ✅ | ✅ | Pinned seeds, redial with subscriptions and procedures replayed |
@@ -100,6 +102,10 @@ result, err := p.Call(ctx, pool.Call{Realm: realm, Procedure: "mcl-echo/echo", P
 // Serve one: the realm must have admitted the org, and the org delegated its
 // procedures to this node.
 served, err := p.Serve(ctx, pool.Offer{Realm: realm, Procedure: "acme/echo",
+	Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return r.Payload, nil }})
+
+// Or serve one in this node's own namespace: no org, no realm key.
+ring, err := p.Serve(ctx, pool.Offer{Realm: realm, Procedure: record.OwnProcedure(p.NodeID(), "ring"),
 	Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return r.Payload, nil }})
 
 // Stream: a server stream's chunks arrive as events until its end.

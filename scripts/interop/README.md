@@ -36,6 +36,14 @@ and deterministic CBOR as a CALL payload carries them) to `manifest/testdata/erl
 escript scripts/interop/emit_erlang_manifest.escript <macula lib dir> manifest/testdata/erlang_manifests.json
 ```
 
+`copy_own_namespace_fixtures.sh` copies macula's own-namespace fixtures (signed advertisements under
+`~<node_id>/<name>`, and the verdicts `macula_record` reaches on them) to `record/testdata/own_namespace`, which
+`record/own_namespace_fixtures_test.go` holds macula-go to in every `go test`:
+
+```sh
+scripts/interop/copy_own_namespace_fixtures.sh <macula checkout> [git ref, origin/main by default]
+```
+
 ## Running
 
 Compile macula at the revision to check, then point the script at the compiled application:

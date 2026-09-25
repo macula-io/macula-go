@@ -40,6 +40,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Blake3`, and a wire manifest that names no hash algorithm, or any but
   `sha384`, is refused. Checked byte for byte against manifests macula
   built. The BLAKE3 dependency is gone.
+- A node's own namespace, `~<node_id>/<name>` (macula 12.5.0, D25 item 6):
+  `record.OwnNamespace` and `VerifyAuthorization` decide it as
+  `macula_record` does (the 64 lowercase hex characters after `~` must be
+  the advertiser, which the signature binds; no authorization may be
+  attached; another node's namespace is `ErrNotOwnNamespace`, a mis-spelled
+  one `ErrMalformed`), held to macula's shared fixtures under both profiles
+  (`record/testdata/own_namespace`, copied by
+  `scripts/interop/copy_own_namespace_fixtures.sh`). `Serve` serves one with
+  no realm key and no chain from the DHT; `Call`, `Providers` and
+  `OpenStream` reach one with no realm key pinned. `record.InOwnNamespace`,
+  `NamespaceNode` and `OwnProcedure` name the form. The teststation admits
+  an own-namespace advertisement only from the node it names, as
+  macula-station 0.6.4 does.
 - Streaming RPC on the macula 12 wire: `stationlink.Link.OpenStream` and
   `pool.OpenStream` (by direct dial) open a session on a QUIC stream of its
   own; `Offer.Stream` serves one with a `StreamHandler`. `Stream` sends

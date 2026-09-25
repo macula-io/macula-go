@@ -6,8 +6,24 @@ import (
 	"sync"
 	"time"
 
+	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
 )
+
+// realmKeyFor is the key procedure's authorization is checked against: the
+// realm's pinned key, or none for a procedure in a node's own namespace,
+// which its advertisement's signature alone authorizes. An org procedure in a
+// realm with no pinned key is ErrNoRealmKey.
+func (p *Pool) realmKeyFor(realm [32]byte, procedure string) ([]byte, error) {
+	if record.InOwnNamespace(procedure) {
+		return nil, nil
+	}
+	realmKey, pinned := p.opts.RealmTrust[realm]
+	if !pinned {
+		return nil, ErrNoRealmKey
+	}
+	return realmKey, nil
+}
 
 // ErrNoRealmKey is a realm the pool pins no key for: nothing in it can be
 // served or trusted.
@@ -41,9 +57,9 @@ type Served struct {
 // its own station, and renews and puts it in the DHT as stationlink.Serve
 // does.
 func (p *Pool) Serve(ctx context.Context, o Offer) (*Served, error) {
-	realmKey, pinned := p.opts.RealmTrust[o.Realm]
-	if !pinned {
-		return nil, ErrNoRealmKey
+	realmKey, err := p.realmKeyFor(o.Realm, o.Procedure)
+	if err != nil {
+		return nil, err
 	}
 	if o.Gated {
 		return nil, stationlink.ErrGatedUnsupported

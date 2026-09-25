@@ -418,3 +418,46 @@ func TestAStreamDialsTheProvidersStation(t *testing.T) {
 	}
 	eventually(t, "every relayed stream released", func() bool { return serving.Relayed() == 0 })
 }
+
+// A procedure in the provider's own namespace, ~<node_id>/<name>, is served
+// and called with no realm key pinned on either side, and an advertisement
+// for that namespace signed by any other node is not trusted.
+func TestAProcedureInTheNodesOwnNamespaceNeedsNoRealmKey(t *testing.T) {
+	serving := teststation.Start(t, profile.PQPure, "own serving")
+	callers := teststation.Start(t, profile.PQPure, "own callers")
+	teststation.ShareDHT(serving, callers)
+	realm := [32]byte{0x42}
+	untrusting := func(o *Opts) { o.RealmTrust = nil }
+	provider := connectWith(t, "own provider", teststation.Realm{}, untrusting, serving)
+	ring := record.OwnProcedure(provider.NodeID(), "ring")
+	if _, err := provider.Serve(t.Context(), Offer{Realm: realm, Procedure: ring, Handler: echo}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	mallory := teststation.Key(t, profile.PQPure, "own impostor")
+	malloryID, _ := mallory.NodeID()
+	forged, err := record.NewProcedureAdvertisement(malloryID, realm, ring, callers.NodeID, record.ProcedureAdvertisementOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := record.Sign(forged, mallory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := record.Encode(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callers.Put(wire)
+	caller := connectWith(t, "own caller", teststation.Realm{}, untrusting, callers)
+	result, err := caller.Call(t.Context(), Call{Realm: realm, Procedure: ring, Payload: cbor.Text("ring ring")})
+	if text, _ := result.AsText(); err != nil || text != "ring ring" {
+		t.Fatalf("Call: %q, %v", text, err)
+	}
+	providers, err := caller.Providers(t.Context(), realm, ring)
+	if err != nil || len(providers) != 1 || providers[0].Node != provider.NodeID() {
+		t.Errorf("Providers: %+v, %v, want the provider alone", providers, err)
+	}
+	if _, err := caller.Call(t.Context(), Call{Realm: realm, Procedure: procedure, Payload: cbor.Map(nil)}); !errors.Is(err, ErrNoRealmKey) {
+		t.Errorf("an org procedure in the same realm: %v, want ErrNoRealmKey", err)
+	}
+}

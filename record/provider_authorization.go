@@ -2,6 +2,7 @@ package record
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,9 +19,14 @@ var (
 	// ErrNoAuthorization is a procedure with an org namespace whose
 	// advertisement carries no authorization.
 	ErrNoAuthorization = errors.New("record: a procedure with an org namespace carries no authorization")
-	// ErrAuthorizationNotAllowed is a procedure without an org namespace whose
-	// advertisement carries an authorization.
-	ErrAuthorizationNotAllowed = errors.New("record: a procedure without an org namespace carries an authorization")
+	// ErrAuthorizationNotAllowed is a procedure without an org namespace, or in
+	// its advertiser's own namespace, whose advertisement carries an
+	// authorization.
+	ErrAuthorizationNotAllowed = errors.New("record: the procedure's namespace takes no authorization, but the advertisement carries one")
+	// ErrNotOwnNamespace is an advertisement that is not in its advertiser's own
+	// namespace: an org procedure, a procedure without a namespace, or another
+	// node's namespace.
+	ErrNotOwnNamespace = errors.New("record: the procedure is not in its advertiser's own namespace")
 	// ErrNoRealmKey is an authorization checked without a trusted realm key.
 	ErrNoRealmKey = errors.New("record: the authorization needs the trusted realm key")
 	// ErrOrgDirectoryInvalid is an org directory that does not verify as one.
@@ -63,6 +69,77 @@ func ProcedureOrg(procedure string) (org string, hasOrg bool, err error) {
 	return before, true, nil
 }
 
+// OwnNamespacePrefix starts the namespace of a node's own procedures,
+// ~<node_id>/<name> (macula's D25 item 6, revised 2026-09-24).
+const OwnNamespacePrefix = "~"
+
+// InOwnNamespace is whether procedure names a node's own namespace, ~ before
+// its first slash, spelled well or not: such a procedure is authorized by its
+// advertisement's signature alone, so no realm key is needed to check it.
+func InOwnNamespace(procedure string) bool {
+	org, hasOrg, err := ProcedureOrg(procedure)
+	return err == nil && hasOrg && strings.HasPrefix(org, OwnNamespacePrefix)
+}
+
+// OwnNamespace is whether a verified procedure advertisement is in its
+// advertiser's own namespace, and admissible there, as macula_record's
+// own_namespace/1 decides for the SDKs and the station's admissions alike: a
+// procedure ~<node_id>/<name>, where <node_id> is the 64 lowercase hex
+// characters of the advertisement's advertiser_node, which verifying the
+// record binds to its signer, carrying no authorization. An org procedure, one
+// without a namespace and another node's namespace are ErrNotOwnNamespace; a ~
+// namespace that is not 64 lowercase hex characters is ErrMalformed; an
+// attached authorization is ErrAuthorizationNotAllowed.
+func OwnNamespace(advertisement Verified) error {
+	r := advertisement.held
+	if r.Type != TypeProcedureAdvertisement {
+		return ErrNotOwnNamespace
+	}
+	read, err := ReadProcedureAdvertisement(r)
+	if err != nil {
+		return err
+	}
+	org, hasOrg, err := ProcedureOrg(read.Procedure)
+	if err != nil || !hasOrg || !strings.HasPrefix(org, OwnNamespacePrefix) {
+		return ErrNotOwnNamespace
+	}
+	return ownNode(org[len(OwnNamespacePrefix):], read)
+}
+
+// ownNode checks a ~ namespace's node against the advertiser, as
+// macula_record's own_node/3 does.
+func ownNode(hexNode string, read ProcedureAdvertisement) error {
+	node, err := NamespaceNode(hexNode)
+	switch {
+	case err != nil:
+		return err
+	case node != read.AdvertiserNode:
+		return ErrNotOwnNamespace
+	case read.Authorization.Form != NoAuthorization:
+		return ErrAuthorizationNotAllowed
+	}
+	return nil
+}
+
+// NamespaceNode is the node_id a ~ namespace names: exactly 64 lowercase hex
+// characters, the one spelling of a node_id in a namespace, so a node has one
+// namespace. Anything else is ErrMalformed.
+func NamespaceNode(hexNode string) ([32]byte, error) {
+	var node [32]byte
+	if len(hexNode) != 2*len(node) || strings.ToLower(hexNode) != hexNode {
+		return node, fmt.Errorf("%w: a ~ namespace is 64 lowercase hex characters", ErrMalformed)
+	}
+	if _, err := hex.Decode(node[:], []byte(hexNode)); err != nil {
+		return node, fmt.Errorf("%w: a ~ namespace is 64 lowercase hex characters", ErrMalformed)
+	}
+	return node, nil
+}
+
+// OwnProcedure is name in the own namespace of node: ~<node_id hex>/name.
+func OwnProcedure(node [32]byte, name string) string {
+	return OwnNamespacePrefix + hex.EncodeToString(node[:]) + "/" + name
+}
+
 // VerifyAuthorization is the caller's check of a verified procedure
 // advertisement's provider authorization against the realm it trusts, as
 // macula_record's verify_authorization/3 does for macula 12, with nowMs the
@@ -71,7 +148,9 @@ func ProcedureOrg(procedure string) (org string, hasOrg bool, err error) {
 // signature covers; the zero Verified, like any record that is not a procedure
 // advertisement, is ErrMalformed. A procedure with an org namespace needs an
 // authorization (ErrNoAuthorization), and one without carries none, in any form
-// (ErrAuthorizationNotAllowed).
+// (ErrAuthorizationNotAllowed). A procedure in its advertiser's own namespace,
+// ~<node_id>/<name>, is authorized by the advertisement's signature alone, as
+// OwnNamespace decides, and needs no realm key.
 //
 // The authorization is an org directory and a procedure delegation, and needs
 // Trust.RealmKey (ErrNoRealmKey). The org directory must verify as one at nowMs
@@ -96,6 +175,9 @@ func VerifyAuthorization(advertisement Verified, trust Trust, nowMs int64) error
 	org, hasOrg, err := ProcedureOrg(read.Procedure)
 	if err != nil {
 		return err
+	}
+	if hasOrg && strings.HasPrefix(org, OwnNamespacePrefix) {
+		return ownNode(org[len(OwnNamespacePrefix):], read)
 	}
 	switch form := read.Authorization.Form; {
 	case !hasOrg && form == NoAuthorization:

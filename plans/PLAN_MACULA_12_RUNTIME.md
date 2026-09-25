@@ -2,7 +2,7 @@
 
 **Status:** In Progress
 **Created:** 2026-09-24
-**Last Updated:** 2026-09-24
+**Last Updated:** 2026-09-25
 
 ## End goal
 
@@ -125,6 +125,14 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
   content announcements (type 0x11) and fetch by direct dial. Lesson from
   the leak survey: a manifest from the wire is untrusted input, so its
   counts and sizes are bounded before anything is allocated from them.
+- [x] B8 A node's own namespace, `~<node_id>/<name>` (macula 12.5.0, D25
+  item 6 revised 2026-09-24; Raf's option 4 for org-less serving):
+  `record.OwnNamespace` and the `~` branch of `VerifyAuthorization`, held to
+  macula's 14 shared fixtures (both profiles, `83eb05c4`); `Serve` with no
+  realm key and no DHT chain; `Call`/`Providers`/`OpenStream` with no realm
+  key; the teststation admits it as macula-station 0.6.4 does. Mutations:
+  each of the five guards in the rule, the pool's realm-key rule. Live check
+  waits for a 0.6.4 station.
 - [x] C(i) live against a macula-station 0.6.1 lab station on host00 (every
   chunk above); C(ii) one fleet station, amsterdam (below).
 

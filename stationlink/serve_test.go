@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -424,4 +426,87 @@ func TestTheAdvertisementIsPutInTheDHT(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Errorf("after Stop, stored: %v", stored())
+}
+
+// A procedure in this node's own namespace, ~<node_id>/<name>, is served with
+// no realm key and no chain: its advertisement carries no authorization, and
+// its signature alone authorizes it.
+func TestServeInTheNodesOwnNamespace(t *testing.T) {
+	for _, p := range profiles {
+		t.Run(string(p), func(t *testing.T) {
+			link, s, _ := startServing(t, p)
+			procedure := record.OwnProcedure(link.NodeID(), "ring")
+			if _, err := link.Serve(t.Context(), Offer{Realm: servedRealm, Procedure: procedure, Handler: echo}); err != nil {
+				t.Fatalf("Serve: %v", err)
+			}
+			wire, _ := fieldOfTest(s.nextControl(t), "advertisement").AsBytes()
+			now := time.Now().UnixMilli()
+			verified, err := record.Verify(wire, p, now)
+			if err != nil {
+				t.Fatalf("the advertisement: %v", err)
+			}
+			if err := record.OwnNamespace(verified); err != nil {
+				t.Errorf("OwnNamespace: %v", err)
+			}
+			if err := record.VerifyAuthorization(verified, record.Trust{Profile: p}, now); err != nil {
+				t.Errorf("VerifyAuthorization with no realm key: %v", err)
+			}
+			ad, _ := record.ReadProcedureAdvertisement(verified.Record())
+			if ad.Authorization.Form != record.NoAuthorization || ad.ServingStation != s.nodeID {
+				t.Errorf("advertisement %+v", ad)
+			}
+			_, request := s.call(t, link.NodeID(), procedure, cbor.Text("ring ring"), time.Now().Add(5*time.Second))
+			reply, err := frame.VerifyReply(s.nextOther(t), request, p)
+			if text, _ := reply.Payload.AsText(); err != nil || text != "ring ring" {
+				t.Errorf("the RESULT: %+v, %v", reply, err)
+			}
+		})
+	}
+}
+
+// Another node's namespace, and a ~ namespace that is not 64 lowercase hex
+// characters, are refused before anything reaches the station; an org
+// procedure still needs the realm key.
+func TestServeRefusesANamespaceThatIsNotItsOwn(t *testing.T) {
+	link, s, _ := startServing(t, profile.PQPure)
+	ctx := t.Context()
+	other := [32]byte{0x01}
+	if _, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: record.OwnProcedure(other, "ring"), Handler: echo}); !errors.Is(err, record.ErrNotOwnNamespace) {
+		t.Errorf("another node's namespace: %v, want ErrNotOwnNamespace", err)
+	}
+	self := link.NodeID()
+	upper := "~" + strings.ToUpper(hex.EncodeToString(self[:])) + "/ring"
+	if _, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: upper, Handler: echo}); !errors.Is(err, record.ErrMalformed) {
+		t.Errorf("an uppercase namespace: %v, want ErrMalformed", err)
+	}
+	if _, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: servedProcedure, Handler: echo}); !errors.Is(err, ErrInvalidOffer) {
+		t.Errorf("an org procedure without the realm key: %v, want ErrInvalidOffer", err)
+	}
+	s.quiet(t)
+}
+
+// An own-namespace advertisement is renewed with nothing in the DHT: it
+// depends on no record but itself.
+func TestAnOwnNamespaceAdvertisementIsRenewedWithoutTheDHT(t *testing.T) {
+	shortAdvertisements(t, 2*time.Second, 100*time.Millisecond)
+	link, s, _ := startServing(t, profile.PQPure)
+	s.dht.mu.Lock()
+	clear(s.dht.byKey)
+	s.dht.mu.Unlock()
+	served, err := link.Serve(t.Context(), Offer{Realm: servedRealm, Procedure: record.OwnProcedure(link.NodeID(), "ring"), Handler: echo})
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	versions := map[[16]byte]bool{}
+	for range 3 {
+		wire, _ := fieldOfTest(s.nextControl(t), "advertisement").AsBytes()
+		verified, err := record.Verify(wire, profile.PQPure, time.Now().UnixMilli())
+		if err != nil {
+			t.Fatalf("an advertisement: %v", err)
+		}
+		versions[verified.Record().Version] = true
+	}
+	if len(versions) != 3 || served.Err() != nil {
+		t.Errorf("%d versions, Err %v", len(versions), served.Err())
+	}
 }
