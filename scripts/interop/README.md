@@ -36,6 +36,16 @@ and deterministic CBOR as a CALL payload carries them) to `manifest/testdata/erl
 escript scripts/interop/emit_erlang_manifest.escript <macula lib dir> manifest/testdata/erlang_manifests.json
 ```
 
+`gocontent` and `erlang_content.escript` share and fetch node-served content (macula 12.6.0, D27) through one
+station, each side sharing the same byte pattern, so either checks the other's content by its SHA-384. Share on one
+side, fetch its MCID on the other, then fetch again after it is unshared (`not_shared`). `gocontent -pad-chunk` shares
+as a dishonest sharer would, so macula's fetcher can be seen refusing it (`block_size_mismatch`):
+
+```sh
+go run ./scripts/interop/gocontent -host <host> -port <port> -node <station node_id> -realm <realm hex> -share 600000 -hold 1m
+escript scripts/interop/erlang_content.escript <macula lib dir> <host> <port> <station node_id> <realm hex> fetch <mcid hex>
+```
+
 `copy_own_namespace_fixtures.sh` copies macula's own-namespace fixtures (signed advertisements under
 `~<node_id>/<name>`, and the verdicts `macula_record` reaches on them) to `record/testdata/own_namespace`, which
 `record/own_namespace_fixtures_test.go` holds macula-go to in every `go test`:

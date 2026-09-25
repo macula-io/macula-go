@@ -2,7 +2,7 @@
 
 **Status:** In Progress
 **Created:** 2026-09-24
-**Last Updated:** 2026-09-25
+**Last Updated:** 2026-09-26
 
 ## End goal
 
@@ -105,7 +105,14 @@ The wire, as macula v12.1.0 implements it (read from source, 2026-09-24):
   every dedicated stream is released on every path, success or failure
   (cancel read and write, not just close); an accepted stream that fails
   before a session exists is refused and released; no goroutine per frame.
-- [~] B7c Content transfer. **Done: `manifest` is macula 12's**, SHA-384 and
+- [x] B7c Content transfer, node-served (macula 12.6.0, D27): `pool.ShareContent`,
+  `UnshareContent` and `GetContent` on `~<node_id>/content_v1`, the 0x11
+  announcement as 12.6.0 has it; cross-checked both ways against macula
+  v12.6.0 (8ff6bc04) on the lab station (macula-station main e3f1eb4): raw
+  10000 bytes, 600000 chunked, not_shared after unshare, and a padded chunk
+  refused block_size_mismatch by macula's fetcher. The history below is the
+  station-store attempt D27 replaced; the parked branch is superseded.
+  **Done earlier: `manifest` is macula 12's**, SHA-384 and
   50-byte MCIDs, checked byte for byte against manifests macula built
   (`manifest/testdata/erlang_manifests.json`, from
   `scripts/interop/emit_erlang_manifest.escript`). **Stopped: the transfer.**

@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- A content announcement (0x11) names where the content is served, as macula
+  12.6.0's does: `realm_id`, `serving_station` and a non-empty `procedure`,
+  which the verifier requires; `endpoint` is gone.
+  `record.NewContentAnnouncement` takes them in `ContentAnnouncementOptions`,
+  and `ContentAnnouncement` reads them.
+
+### Added
+
+- Node-served content (macula 12.6.0, D27). `pool.ShareContent` keeps content,
+  serves it on the node's own `~<node_id>/content_v1` server stream and
+  announces it, renewed at half an hour; `UnshareContent` withdraws it with a
+  tombstone. `pool.GetContent` finds the announcements whose procedure is
+  bound to their announcer (`ContentProcedureBound`), dials each sharer's
+  station from its own endpoint record, and checks a block against its
+  content id, a manifest against its content id before its sizes are read and
+  against `ContentOptions` before a chunk is asked for, each chunk against its
+  own content id (four at a time), and the whole. It needs no realm key.
+  Cross-checked both ways against macula 12.6.0 (v12.6.0 8ff6bc04) through a
+  station: a raw block, 600 KB chunked, a fetch after unsharing, and a padded
+  chunk macula's fetcher refuses (`scripts/interop/gocontent`,
+  `erlang_content.escript`).
+
+## [0.11.0] - 2026-09-25
+
+### Breaking
+
 - **macula-go speaks the macula 12 wire and nothing older.** Removed with
   the 10.x path, which cannot reach a macula 12 station: `connection`,
   `dht`, `directdial`, `stream`, `content`, the Ed25519 `ucan`, `bolt4`, the

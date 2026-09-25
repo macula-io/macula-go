@@ -19,15 +19,13 @@
 
 ---
 
-> **Status, 2026-09-24:** master speaks the **macula 12** wire and nothing
-> older. Handshake, calls, streaming RPC, publish/subscribe, the DHT and
-> serving procedures work against a live macula-station 0.6.1, including calls
-> and streams by direct dial from one node to another's provider. **Content
-> transfer is not on master**: macula 12 stations keep no content (D27), and the
-> node-served protocol that replaces the store is not defined in macula yet
-> (see [Known limitations](#known-limitations)). Manifests and MCIDs are
-> macula 12's, byte for byte. The last release, v0.10.0, speaks the retired 10.x
-> wire and cannot reach the current fleet.
+> **Status, 2026-09-26:** master speaks the **macula 12** wire and nothing
+> older. Handshake, calls, streaming RPC, publish/subscribe, the DHT, serving
+> procedures (under an org or in a node's own namespace) and node-served
+> content work against live macula stations, including calls and streams by
+> direct dial from one node to another's provider. Content is shared and
+> fetched both ways with macula 12.6.0's Erlang sharer and fetcher. Manifests
+> and MCIDs are macula 12's, byte for byte.
 
 ## What is this?
 
@@ -65,7 +63,7 @@ Everything on the wire is post-quantum:
 | Pool of station links | ✅ | ✅ | Pinned seeds, redial with subscriptions and procedures replayed |
 | Streaming RPC (server, client and bidi streams) | ✅ | ✅ | A QUIC stream per session; `pool.OpenStream` by direct dial, `Offer.Stream` to serve; admission, session and inbox bounds as macula's; every stream released on every path |
 | Content manifests and MCIDs | ✅ | ✅ | SHA-384, 50-byte MCIDs, byte for byte with macula's `macula_manifest` |
-| Content transfer | — | — | Not on master: stations keep no content in macula 12 (D27); waits for macula's node-served content |
+| Node-served content (D27) | ✅ | ✅ | `pool.ShareContent` serves on `~<node_id>/content_v1` and announces; `pool.GetContent` checks the block, the manifest and every chunk against their content ids, bounded, with no realm key; cross-checked both ways against macula 12.6.0 |
 | Gated procedures (UCAN) | token carried | — | Serving one is refused by name until the post-quantum UCAN verifier ([#2](https://github.com/macula-io/macula-go/issues/2)) |
 
 No `unsafe` and no cgo anywhere in this module: `grep -rl '"unsafe"'
@@ -186,12 +184,10 @@ GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record -ru
 
 ## Known limitations
 
-- **No content transfer.** In macula 12 a station keeps no content: the node
-  that shares content serves it, and stations only pass it through (D27). The
-  station's content store is gone (macula-station 647dfba), and macula has not
-  yet defined the node-served protocol that replaces it; its own
-  `put_content`/`get_content` still call the removed store. macula-go ports
-  that protocol once it exists, rather than inventing one.
+- **Content is shared in a node's own namespace only**, `~<node_id>/content_v1`;
+  the org form (`<org>/content_v1_<node_id>`) is fetched from but not served.
+  Serving needs stations that admit a node's own namespace (macula-station
+  0.6.4 and later).
 - **Gated procedures cannot be served**: `Serve` refuses one by name until
   macula-go has the post-quantum UCAN verifier macula 12 uses
   ([#2](https://github.com/macula-io/macula-go/issues/2)). A call can carry a
