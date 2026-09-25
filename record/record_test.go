@@ -126,7 +126,9 @@ func contentAnnouncementPayload(announcer [32]byte) cbor.Value {
 	return cbor.Map([]cbor.MapEntry{
 		bytesEntry("announcer_node", announcer[:]),
 		bytesEntry("mcid", mcid),
-		textEntry("endpoint", "quic://a.example:4433"),
+		bytesEntry("realm_id", idBytes(3)),
+		bytesEntry("serving_station", idBytes(4)),
+		textEntry("procedure", "~"+strings.Repeat("ab", 32)+"/content_v1"),
 	})
 }
 
@@ -471,6 +473,12 @@ func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 		{"a procedure as bytes", TypeProcedureAdvertisement, withEntry(advertisement, "procedure", cbor.Bytes([]byte("acme/x"))), 5 * testMinute, ErrMalformed},
 		{"a content announcement", TypeContentAnnouncement, announcement, testHour, nil},
 		{"a content id with tag 1", TypeContentAnnouncement, withEntry(announcement, "mcid", cbor.Bytes(contentID(1))), testHour, ErrMalformed},
+		{"an announcement without realm_id", TypeContentAnnouncement, withoutEntry(announcement, "realm_id"), testHour, ErrMalformed},
+		{"an announcement without serving_station", TypeContentAnnouncement, withoutEntry(announcement, "serving_station"), testHour, ErrMalformed},
+		{"a serving_station of 31 bytes", TypeContentAnnouncement, withEntry(announcement, "serving_station", cbor.Bytes(make([]byte, 31))), testHour, ErrMalformed},
+		{"an announcement without procedure", TypeContentAnnouncement, withoutEntry(announcement, "procedure"), testHour, ErrMalformed},
+		{"an empty procedure", TypeContentAnnouncement, withEntry(announcement, "procedure", cbor.Text("")), testHour, ErrMalformed},
+		{"a procedure as bytes", TypeContentAnnouncement, withEntry(announcement, "procedure", cbor.Bytes([]byte("~x/content_v1"))), testHour, ErrMalformed},
 		{"a tombstone of an advertisement", TypeTombstone, advertisementTombstone, 10 * testMinute, nil},
 		{"a tombstone with a detail", TypeTombstone, withEntry(advertisementTombstone, "detail", cbor.Text("to beam01")), 10 * testMinute, nil},
 		{"a tombstone missing a slot field", TypeTombstone, withoutEntry(advertisementTombstone, "procedure"), 10 * testMinute, ErrMalformed},

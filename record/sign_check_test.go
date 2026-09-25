@@ -89,8 +89,7 @@ func TestEveryBuilderSignsAndVerifies(t *testing.T) {
 		{"a procedure advertisement", must[Record](t)(NewProcedureAdvertisement(nodeID, fill(0x11), "acme/x", fill(2), ProcedureAdvertisementOptions{
 			Authorization: Authorization{Form: DelegationAuthorization, OrgDirectory: []byte("d"), ProcedureDelegation: []byte("p")},
 		}))},
-		{"a content announcement", must[Record](t)(NewContentAnnouncement(nodeID, testContentID(), "quic://h:1",
-			ContentAnnouncementOptions{Name: "a.bin", Size: &size}))},
+		{"a content announcement", must[Record](t)(NewContentAnnouncement(nodeID, testContentID(), ContentAnnouncementOptions{RealmID: fill(3), ServingStation: fill(4), Procedure: testProcedure, Name: "a.bin", Size: &size}))},
 		{"a station endpoint", must[Record](t)(NewStationEndpoint(4433, StationEndpointOptions{HostAdvertised: []string{"beam00.lab"}, ALPN: "macula/1"}))},
 		{"a domain record with a subject", must[Record](t)(Envelope(DomainTypeMin, cbor.Map([]cbor.MapEntry{uintEntry("fact", 1)}), []byte("s1"), 0))},
 		{"a tombstone of a node record", must[Record](t)(NewTombstone(must[Record](t)(Sign(node, keys.node)), ReasonMoved, TombstoneOptions{Detail: "to beam01"}))},

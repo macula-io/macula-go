@@ -38,7 +38,9 @@ func payloadOK(t Type, payload cbor.Value) bool {
 	case TypeFoundationT3Attestation:
 		return isID(field("station_id"))
 	case TypeContentAnnouncement:
-		return isID(field("announcer_node")) && isContentID(field("mcid"))
+		procedure, _ := field("procedure").AsText()
+		return isID(field("announcer_node")) && isContentID(field("mcid")) &&
+			isID(field("realm_id")) && isID(field("serving_station")) && procedure != ""
 	case TypeOrgDirectory:
 		return isID(field("realm_id")) && isText(field("org_name")) && isID(field("org_key"))
 	case TypeProcedureDelegation:

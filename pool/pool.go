@@ -127,6 +127,9 @@ type Pool struct {
 	closed   bool
 	ctx      context.Context
 	cancel   context.CancelFunc
+
+	// sharer is the content this node shares (content.go).
+	sharer contentSharer
 }
 
 // Connect validates seeds and opts, dials every seed, and returns once one link

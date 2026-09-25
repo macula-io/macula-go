@@ -152,7 +152,7 @@ func TestTombstonesShareTheSlotAndKeyIDOfWhatTheyWithdraw(t *testing.T) {
 		{"a foundation seed list", byHand(TypeFoundationSeedList), false},
 		{"a foundation parameter", byHand(TypeFoundationParameter, textEntry("param_name", "max_hops"), uintEntry("param_value", 8)), false},
 		{"a foundation T3 attestation", byHand(TypeFoundationT3Attestation, bytesEntry("station_id", idBytes(3))), false},
-		{"a content announcement", signed(NewContentAnnouncement(keys.node.KeyID(), testContentID(), "quic://h:1", ContentAnnouncementOptions{})), true},
+		{"a content announcement", signed(NewContentAnnouncement(keys.node.KeyID(), testContentID(), ContentAnnouncementOptions{RealmID: fill(3), ServingStation: fill(4), Procedure: testProcedure})), true},
 		{"a station endpoint", signed(NewStationEndpoint(4433, StationEndpointOptions{})), true},
 		{"a domain record with a subject", signed(Envelope(DomainTypeMin, cbor.Map(nil), []byte("s1"), 0)), true},
 		{"a domain record without one", signed(Envelope(DomainTypeMin+1, cbor.Map(nil), nil, 0)), true},
