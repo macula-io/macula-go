@@ -4,6 +4,11 @@
 //
 //	gocontent -host 127.0.0.1 -port 44330 -node <station node_id> -realm <hex> -share 600000 -hold 2m
 //	gocontent -host 127.0.0.1 -port 44330 -node <station node_id> -realm <hex> -fetch <mcid hex>
+//	gocontent -host 127.0.0.1 -port 44330 -node <station node_id> -realm <hex> -share 600000 -pad-chunk -hold 1m
+//
+// -pad-chunk shares as a dishonest sharer would: the true manifest, but its
+// first chunk answered one byte past its declared size, which a fetcher must
+// refuse.
 //
 // Shared bytes are the pattern i mod 251, the same as the Erlang script's, so
 // either side can check the other's content by its SHA-384.
@@ -19,10 +24,14 @@ import (
 	"os"
 	"time"
 
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/manifest"
 	"github.com/macula-io/macula-go/pool"
 	"github.com/macula-io/macula-go/profile"
+	"github.com/macula-io/macula-go/record"
+	"github.com/macula-io/macula-go/stationlink"
 )
 
 func main() {
@@ -35,14 +44,15 @@ func main() {
 	hold := flag.Duration("hold", time.Minute, "how long to share before unsharing")
 	after := flag.Duration("after", 30*time.Second, "how long to stay linked after unsharing")
 	fetch := flag.String("fetch", "", "fetch the content with this MCID, hex")
+	padChunk := flag.Bool("pad-chunk", false, "with -share: answer the first chunk one byte past its declared size")
 	flag.Parse()
-	if err := run(*host, *port, *node, *profileName, *realmHex, *share, *hold, *after, *fetch); err != nil {
+	if err := run(*host, *port, *node, *profileName, *realmHex, *share, *hold, *after, *fetch, *padChunk); err != nil {
 		fmt.Fprintln(os.Stderr, "gocontent:", err)
 		os.Exit(1)
 	}
 }
 
-func run(host string, port int, nodeHex, profileName, realmHex string, share int, hold, after time.Duration, fetch string) error {
+func run(host string, port int, nodeHex, profileName, realmHex string, share int, hold, after time.Duration, fetch string, padChunk bool) error {
 	p, err := profile.Parse(profileName)
 	if err != nil {
 		return err
@@ -68,6 +78,8 @@ func run(host string, port int, nodeHex, profileName, realmHex string, share int
 	self := pl.NodeID()
 	fmt.Printf("node %s\n", hex.EncodeToString(self[:]))
 	switch {
+	case share >= 0 && padChunk:
+		return sharePadded(ctx, pl, key, realm, station, pattern(share), hold)
 	case share >= 0:
 		data := pattern(share)
 		start := time.Now()
@@ -104,6 +116,68 @@ func run(host string, port int, nodeHex, profileName, realmHex string, share int
 		return nil
 	}
 	return errors.New("give -share or -fetch")
+}
+
+// sharePadded serves data's true manifest on this node's content procedure,
+// but answers its first chunk with one byte appended, and announces it.
+func sharePadded(ctx context.Context, pl *pool.Pool, key *identity.NodeKey, realm, station [32]byte, data []byte, hold time.Duration) error {
+	m, chunks := manifest.Create(data, manifest.CreateOptions{Name: "padded.bin", ChunkSize: manifest.DefaultChunkSize})
+	if len(chunks) < 2 {
+		return errors.New("-pad-chunk needs content over one chunk")
+	}
+	byMcid := map[string][]byte{}
+	for i, c := range chunks {
+		chunkMcid, _ := manifest.ChunkMcid(m, i)
+		byMcid[string(chunkMcid[:])] = c
+	}
+	first, _ := manifest.ChunkMcid(m, 0)
+	byMcid[string(first[:])] = append(append([]byte(nil), chunks[0]...), 0)
+	self := pl.NodeID()
+	procedure := record.OwnProcedure(self, pool.ContentProcedureName)
+	body := func(kind string, mcid []byte, entry cbor.MapEntry) cbor.Value {
+		return cbor.Map([]cbor.MapEntry{{Key: cbor.Text("kind"), Val: cbor.Text(kind)},
+			{Key: cbor.Text("mcid"), Val: cbor.Bytes(mcid)}, entry})
+	}
+	if _, err := pl.Serve(ctx, pool.Offer{Realm: realm, Procedure: procedure, Stream: &stationlink.StreamOffer{
+		Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
+			asked, _ := s.Request().Payload.Get("mcid")
+			mcid, _ := asked.AsBytes()
+			if string(mcid) == string(m.Mcid[:]) {
+				if err := s.SendValue(body("manifest", mcid, cbor.MapEntry{Key: cbor.Text("manifest"), Val: manifest.ToWire(m)})); err != nil {
+					return err
+				}
+				return s.Close()
+			}
+			chunk, held := byMcid[string(mcid)]
+			if !held {
+				return s.Abort("not_shared", "this node does not share that content")
+			}
+			if err := s.SendValue(body("block", mcid, cbor.MapEntry{Key: cbor.Text("bytes"), Val: cbor.Bytes(chunk)})); err != nil {
+				return err
+			}
+			return s.Close()
+		}}}); err != nil {
+		return err
+	}
+	unsigned, err := record.NewContentAnnouncement(self, m.Mcid[:], record.ContentAnnouncementOptions{
+		RealmID: realm, ServingStation: station, Procedure: procedure, TTLMs: uint64(time.Hour / time.Millisecond)})
+	if err != nil {
+		return err
+	}
+	signed, err := record.Sign(unsigned, key)
+	if err != nil {
+		return err
+	}
+	wire, err := record.Encode(signed)
+	if err != nil {
+		return err
+	}
+	if err := pl.PutRecord(ctx, wire); err != nil {
+		return err
+	}
+	fmt.Printf("shared %s %d bytes padded-first-chunk\n", hex.EncodeToString(m.Mcid[:]), len(data))
+	time.Sleep(hold)
+	return nil
 }
 
 func pattern(n int) []byte {
