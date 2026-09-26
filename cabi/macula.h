@@ -124,7 +124,10 @@ char *macula_ucan_proof_id(const char *token, char **err_out);
 
 /* seeds_json: [{"host","port","node_id"}]. options_json (NULL for defaults):
  * {"realm_trust": {"<realm hex>": "<realm key hex>"}, "replication_factor",
- * "max_seeds", "max_direct_links", "respawn_delay_ms", "timeout_ms"}. */
+ * "max_seeds", "max_direct_links", "respawn_delay_ms", "timeout_ms",
+ * "kem_advertise"}. kem_advertise (0 or 1, since macula-go v0.18.0) names
+ * this node's KEM key in its confidential procedures' advertisements: enable
+ * it only once every station runs macula 12.11 or later. */
 macula_handle macula_pool_connect(macula_handle key, const char *seeds_json, const char *options_json,
                                   macula_handle cancel, char **err_out);
 /* Closes every link, subscription and served procedure; frees the handle. */
@@ -150,6 +153,12 @@ char *macula_pool_call(macula_handle pool, const uint8_t realm[32], const char *
 char *macula_pool_call_with(macula_handle pool, const uint8_t realm[32], const char *procedure,
                             const char *payload_json, const uint8_t *provider_node_id, const char *ucan,
                             const char *proofs_json, int64_t timeout_ms, macula_handle cancel, char **err_out);
+/* A call with its options as JSON (NULL for none): {"provider": "<node_id
+ * hex>", "ucan", "proofs": [...], "confidential": "preferred"|"required"|"off"}.
+ * A call that cannot be kept confidential fails with the kind
+ * "confidentiality". Since macula-go v0.18.0. */
+char *macula_pool_call_opts(macula_handle pool, const uint8_t realm[32], const char *procedure, const char *payload_json,
+                            const char *options_json, int64_t timeout_ms, macula_handle cancel, char **err_out);
 /* [{"node","station"}], freshest first. */
 char *macula_pool_providers(macula_handle pool, const uint8_t realm[32], const char *procedure, int64_t timeout_ms,
                             macula_handle cancel, char **err_out);
@@ -183,8 +192,15 @@ macula_handle macula_pool_serve_gated(macula_handle pool, const uint8_t realm[32
                                       const char *policy_json, char **err_out);
 macula_handle macula_pool_serve_stream_gated(macula_handle pool, const uint8_t realm[32], const char *procedure,
                                              int32_t mode, const char *policy_json, char **err_out);
+/* Serve with options as JSON (NULL for none): {"policy": <a policy_json>,
+ * "confidential": "preferred"|"required"|"off"}. Since macula-go v0.18.0. */
+macula_handle macula_pool_serve_opts(macula_handle pool, const uint8_t realm[32], const char *procedure,
+                                     const char *options_json, char **err_out);
+macula_handle macula_pool_serve_stream_opts(macula_handle pool, const uint8_t realm[32], const char *procedure,
+                                            int32_t mode, const char *options_json, char **err_out);
 /* The next call (*out_item: a pending call) or stream session (*out_item: a
- * stream), and its request {"caller","realm","procedure","payload","deadline_ms"}. */
+ * stream), and its request {"caller","realm","procedure","payload","deadline_ms",
+ * "sealed"} ("sealed" 0 or 1, since macula-go v0.18.0). */
 char *macula_served_next(macula_handle served, int64_t timeout_ms, macula_handle cancel, macula_handle *out_item,
                          int32_t *closed, char **err_out);
 /* Answer a pending call, once: with a result, or with an error the caller
@@ -211,6 +227,12 @@ macula_handle macula_pool_open_stream_with(macula_handle pool, const uint8_t rea
                                            int32_t mode, const char *payload_json, const uint8_t *provider_node_id,
                                            const char *ucan, const char *proofs_json, int64_t deadline_ms,
                                            int64_t timeout_ms, macula_handle cancel, char **err_out);
+/* macula_pool_open_stream with options as JSON, macula_pool_call_opts'
+ * set. Since macula-go v0.18.0. */
+macula_handle macula_pool_open_stream_opts(macula_handle pool, const uint8_t realm[32], const char *procedure,
+                                           int32_t mode, const char *payload_json, const char *options_json,
+                                           int64_t deadline_ms, int64_t timeout_ms, macula_handle cancel,
+                                           char **err_out);
 char *macula_stream_request(macula_handle stream, char **err_out);
 void macula_stream_send_bytes(macula_handle stream, const uint8_t *data, size_t data_len, char **err_out);
 void macula_stream_send_json(macula_handle stream, const char *value_json, char **err_out);

@@ -15,7 +15,6 @@ import (
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/pool"
 	"github.com/macula-io/macula-go/stationlink"
-	"github.com/macula-io/macula-go/ucan"
 )
 
 // Serving: a served procedure's calls, or a streaming one's sessions, wait in
@@ -76,17 +75,17 @@ func answerPendingHandle(h C.uintptr_t, a pendingAnswer) error {
 	return err
 }
 
-func requestJSON(caller, realm [32]byte, procedure string, payload cbor.Value, deadline time.Time) string {
+func requestJSON(caller, realm [32]byte, procedure string, payload cbor.Value, deadline time.Time, sealed bool) string {
 	text, _ := json.Marshal(map[string]any{
 		"caller": hex.EncodeToString(caller[:]), "realm": hex.EncodeToString(realm[:]), "procedure": procedure,
-		"payload": payloadToJSON(payload), "deadline_ms": deadline.UnixMilli(),
+		"payload": payloadToJSON(payload), "deadline_ms": deadline.UnixMilli(), "sealed": flag(sealed),
 	})
 	return string(text)
 }
 
 func streamRequestJSON(s *stationlink.Stream) string {
 	open := s.Request()
-	return requestJSON(open.Caller, open.Realm, open.Procedure, open.Payload, time.UnixMilli(int64(open.Deadline)))
+	return requestJSON(open.Caller, open.Realm, open.Procedure, open.Payload, time.UnixMilli(int64(open.Deadline)), open.Sealed != nil)
 }
 
 // served is a served procedure with the inbox its calls or sessions wait in,
@@ -122,13 +121,13 @@ func (s *served) hold(pc *pendingCall) C.uintptr_t {
 // serve serves procedure in realm under policy (nil: open): each call it
 // authorizes waits in the inbox as a pending call, answered by the binding or,
 // at its deadline, with an error for it.
-func serve(lp *livePool, realm [32]byte, procedure string, policy ucan.Policy) (*served, error) {
+func serve(lp *livePool, realm [32]byte, procedure string, opts serveOptions) (*served, error) {
 	s := newServed()
 	s.box = newInbox(waitForRoom)
 	handler := func(ctx context.Context, r stationlink.Request) (cbor.Value, error) {
 		pending := &pendingCall{answers: make(chan pendingAnswer, 1)}
 		ph := s.hold(pending)
-		if !s.box.push(ctx, inboxItem{handle: ph, json: requestJSON(r.Caller, r.Realm, r.Procedure, r.Payload, r.Deadline)}) {
+		if !s.box.push(ctx, inboxItem{handle: ph, json: requestJSON(r.Caller, r.Realm, r.Procedure, r.Payload, r.Deadline, r.Sealed)}) {
 			a := pending.expire(pendingAnswer{err: errors.New("the call was not taken by its deadline")})
 			return a.payload, a.err
 		}
@@ -140,13 +139,14 @@ func serve(lp *livePool, realm [32]byte, procedure string, policy ucan.Policy) (
 			return a.payload, a.err
 		}
 	}
-	return offer(lp, s, pool.Offer{Realm: realm, Procedure: procedure, Handler: handler, Policy: policy})
+	return offer(lp, s, pool.Offer{Realm: realm, Procedure: procedure, Handler: handler, Policy: opts.policy,
+		Confidential: opts.confidential})
 }
 
 // serveStream serves procedure in realm as a stream of mode under policy (nil:
 // open): each session it authorizes waits in the inbox as a stream handle,
 // which the binding drives and ends.
-func serveStream(lp *livePool, realm [32]byte, procedure string, mode frame.StreamMode, policy ucan.Policy) (*served, error) {
+func serveStream(lp *livePool, realm [32]byte, procedure string, mode frame.StreamMode, opts serveOptions) (*served, error) {
 	s := newServed()
 	s.box = newInbox(waitForRoom)
 	handler := func(ctx context.Context, st *stationlink.Stream) error {
@@ -159,7 +159,7 @@ func serveStream(lp *livePool, realm [32]byte, procedure string, mode frame.Stre
 		return nil
 	}
 	return offer(lp, s, pool.Offer{Realm: realm, Procedure: procedure,
-		Stream: &stationlink.StreamOffer{Mode: mode, Handler: handler}, Policy: policy})
+		Stream: &stationlink.StreamOffer{Mode: mode, Handler: handler}, Policy: opts.policy, Confidential: opts.confidential})
 }
 
 func offer(lp *livePool, s *served, o pool.Offer) (*served, error) {
@@ -210,7 +210,7 @@ func streamMode(mode C.int32_t) (frame.StreamMode, error) {
 
 //export macula_pool_serve
 func macula_pool_serve(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, errOut **C.char) C.uintptr_t {
-	return poolServe(h, realm32, procedure, nil, errOut)
+	return poolServe(h, realm32, procedure, serveOptions{}, errOut)
 }
 
 //export macula_pool_serve_gated
@@ -221,10 +221,10 @@ func macula_pool_serve_gated(h C.uintptr_t, realm32 *C.uint8_t, procedure, polic
 		setErr(errOut, err)
 		return 0
 	}
-	return poolServe(h, realm32, procedure, policy, errOut)
+	return poolServe(h, realm32, procedure, serveOptions{policy: policy}, errOut)
 }
 
-func poolServe(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, policy ucan.Policy, errOut **C.char) C.uintptr_t {
+func poolServe(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, opts serveOptions, errOut **C.char) C.uintptr_t {
 	lp := poolOf(h, errOut)
 	if lp == nil {
 		return 0
@@ -234,7 +234,7 @@ func poolServe(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, policy ucan
 		setErr(errOut, err)
 		return 0
 	}
-	s, err := serve(lp, realm, goString(procedure), policy)
+	s, err := serve(lp, realm, goString(procedure), opts)
 	if err != nil {
 		setErr(errOut, err)
 		return 0
@@ -245,7 +245,7 @@ func poolServe(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, policy ucan
 //export macula_pool_serve_stream
 func macula_pool_serve_stream(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, mode C.int32_t,
 	errOut **C.char) C.uintptr_t {
-	return poolServeStream(h, realm32, procedure, mode, nil, errOut)
+	return poolServeStream(h, realm32, procedure, mode, serveOptions{}, errOut)
 }
 
 //export macula_pool_serve_stream_gated
@@ -256,10 +256,10 @@ func macula_pool_serve_stream_gated(h C.uintptr_t, realm32 *C.uint8_t, procedure
 		setErr(errOut, err)
 		return 0
 	}
-	return poolServeStream(h, realm32, procedure, mode, policy, errOut)
+	return poolServeStream(h, realm32, procedure, mode, serveOptions{policy: policy}, errOut)
 }
 
-func poolServeStream(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, mode C.int32_t, policy ucan.Policy,
+func poolServeStream(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, mode C.int32_t, opts serveOptions,
 	errOut **C.char) C.uintptr_t {
 	lp := poolOf(h, errOut)
 	if lp == nil {
@@ -275,7 +275,7 @@ func poolServeStream(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, mode 
 		setErr(errOut, err)
 		return 0
 	}
-	s, err := serveStream(lp, realm, goString(procedure), m, policy)
+	s, err := serveStream(lp, realm, goString(procedure), m, opts)
 	if err != nil {
 		setErr(errOut, err)
 		return 0

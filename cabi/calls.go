@@ -15,16 +15,16 @@ import (
 // call calls procedure in realm at provider (any trusted one when nil),
 // presenting creds, and returns its result's JSON. timeout bounds the call on
 // the wire too: it is the CALL's deadline.
-func call(ctx context.Context, p *pool.Pool, realm [32]byte, procedure, payloadJSON string, provider *[32]byte,
-	timeout time.Duration, creds credentials) (string, error) {
+func call(ctx context.Context, p *pool.Pool, realm [32]byte, procedure, payloadJSON string, timeout time.Duration,
+	opts callOptions) (string, error) {
 	payload, err := payloadFromJSON(payloadJSON)
 	if err != nil {
 		return "", err
 	}
-	c := pool.Call{Realm: realm, Procedure: procedure, Payload: payload, Timeout: timeout, Token: creds.token,
-		Proofs: creds.proofs}
-	if provider != nil {
-		c.Provider = *provider
+	c := pool.Call{Realm: realm, Procedure: procedure, Payload: payload, Timeout: timeout, Token: opts.creds.token,
+		Proofs: opts.creds.proofs, Confidential: opts.confidential}
+	if opts.provider != nil {
+		c.Provider = *opts.provider
 	}
 	result, err := p.Call(ctx, c)
 	if err != nil {
@@ -72,7 +72,7 @@ func optionalID(p *C.uint8_t) *[32]byte {
 //export macula_pool_call
 func macula_pool_call(h C.uintptr_t, realm32 *C.uint8_t, procedure, payloadJSON *C.char, provider32 *C.uint8_t,
 	timeoutMs C.int64_t, token C.uintptr_t, errOut **C.char) *C.char {
-	return poolCall(h, realm32, procedure, payloadJSON, provider32, credentials{}, timeoutMs, token, errOut)
+	return poolCall(h, realm32, procedure, payloadJSON, callOptions{provider: optionalID(provider32)}, timeoutMs, token, errOut)
 }
 
 //export macula_pool_call_with
@@ -83,11 +83,12 @@ func macula_pool_call_with(h C.uintptr_t, realm32 *C.uint8_t, procedure, payload
 		setErr(errOut, err)
 		return nil
 	}
-	return poolCall(h, realm32, procedure, payloadJSON, provider32, creds, timeoutMs, token, errOut)
+	return poolCall(h, realm32, procedure, payloadJSON, callOptions{provider: optionalID(provider32), creds: creds}, timeoutMs,
+		token, errOut)
 }
 
-func poolCall(h C.uintptr_t, realm32 *C.uint8_t, procedure, payloadJSON *C.char, provider32 *C.uint8_t,
-	creds credentials, timeoutMs C.int64_t, token C.uintptr_t, errOut **C.char) *C.char {
+func poolCall(h C.uintptr_t, realm32 *C.uint8_t, procedure, payloadJSON *C.char, opts callOptions, timeoutMs C.int64_t,
+	token C.uintptr_t, errOut **C.char) *C.char {
 	lp := poolOf(h, errOut)
 	if lp == nil {
 		return nil
@@ -103,8 +104,8 @@ func poolCall(h C.uintptr_t, realm32 *C.uint8_t, procedure, payloadJSON *C.char,
 		return nil
 	}
 	defer cancel()
-	result, err := call(ctx, lp.pool, realm, goString(procedure), goString(payloadJSON), optionalID(provider32),
-		time.Duration(timeoutMs)*time.Millisecond, creds)
+	result, err := call(ctx, lp.pool, realm, goString(procedure), goString(payloadJSON),
+		time.Duration(timeoutMs)*time.Millisecond, opts)
 	if err != nil {
 		setCtxErr(ctx, errOut, err)
 		return nil

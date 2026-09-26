@@ -81,6 +81,7 @@ the call. The string is a JSON object:
 | `answered` | a pending call was answered already | |
 | `closed` | the pool, subscription, served procedure or stream has ended, including a call in flight when its own pool closes | |
 | `refused` | the network refused it (an advertisement, an admission, a key) | |
+| `confidentiality` | a call or stream that could not be kept confidential (since v0.18.0; see "Confidentiality") | `reason`, `named`, `found` (key ids as hex, or null) |
 | `failed` | anything else | |
 
 ## Threads and blocking
@@ -206,6 +207,44 @@ and macula-go's `ucan` package passes its vectors):
   is a `provider_error` of code `unauthorized`, or `malformed_frame` for a
   proof no token names; a refused open is a stream `error` of the same code.
   An open procedure ignores any token.
+
+## Confidentiality
+
+Since v0.18.0 (macula 13's end-to-end payload confidentiality, E2E seal
+scheme 1). A provider opts in by naming its KEM key in its advertisements, and
+callers seal to that key; stations route what they cannot read.
+
+- `macula_pool_connect`'s `kem_advertise: 1` gives the node a KEM keyring (in
+  memory only, rotated every 24 hours, a replaced key kept 30 minutes) and names
+  its current key in the advertisements of its confidential procedures. Enable
+  it only once every station runs macula 12.11 or later (the station floor);
+  it is off by default.
+- `macula_pool_serve_opts` and `_serve_stream_opts` take `confidential`:
+  `preferred` (the default: the key is named, and a clear call is still taken
+  while the procedure's last keyless advertisement could be served),
+  `required` (every clear call is refused `sealed_required`; needs
+  `kem_advertise`, or the serve fails with the kind `confidentiality`, reason
+  `kem_advertise_disabled`) or `off` (served in the clear).
+- `macula_pool_call_opts` and `macula_pool_open_stream_opts` take
+  `confidential`, decided from the provider's verified advertisement only:
+  `preferred` seals whenever it names a key, `required` never calls one that
+  names none, `off` sends in the clear. A sealed call never falls back to the
+  clear. A request's `sealed` (0 or 1) in `macula_served_next` says whether it
+  came sealed; its payload is the opened plaintext either way.
+- A call that could not be kept confidential fails with the kind
+  `confidentiality`: `reason` `no_kem_key` (the provider names no key where
+  one is required, or one this node cannot seal to), `key_mismatch` (after a
+  `sealed_refused`, the provider's advertisement names another key than its
+  refusal did: `named` and `found`), `reply_not_opened` (a sealed answer that
+  does not open), `clear_answer_to_sealed` (a clear answer that nothing clear
+  may give), or `kem_advertise_disabled`.
+- A provider that cannot open a request answers `sealed_refused`, naming the key
+  it holds now; the pool looks the provider's advertisement up once more and
+  seals again only to exactly that key. A second refusal is a `provider_error`
+  of code `sealed_refused`, its `detail` the key id named.
+- What stays visible: a request's `token` and `proofs`, sizes, timing and
+  routing fields. Content (`macula_pool_share_content`) is served and fetched in
+  the clear, as it is public by design.
 
 ## Content
 

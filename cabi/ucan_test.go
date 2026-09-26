@@ -139,7 +139,7 @@ func TestAGatedProcedureThroughTheABI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := serve(g.provider, g.realm.ID, procedure, policy)
+	s, err := serve(g.provider, g.realm.ID, procedure, serveOptions{policy: policy})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestAGatedProcedureThroughTheABI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := callUntilProvided(ctx, g.caller, g.realm.ID, procedure, creds)
+		result, err := callUntilProvided(ctx, g.caller, g.realm.ID, procedure, callOptions{creds: creds})
 		switch e := classify(ctx, err); {
 		case c.want == "" && (err != nil || result != `"served"`):
 			t.Errorf("%s: %q, %v", name, result, err)
@@ -176,11 +176,12 @@ func TestAGatedProcedureThroughTheABI(t *testing.T) {
 }
 
 // callUntilProvided calls until a provider answers, with a result or an
-// error: the advertisement reaches the other station's DHT in its own time.
-func callUntilProvided(ctx context.Context, lp *livePool, realm [32]byte, procedure string, creds credentials) (string, error) {
+// error, or the pool decides the call cannot be kept confidential: the
+// advertisement reaches the other station's DHT in its own time.
+func callUntilProvided(ctx context.Context, lp *livePool, realm [32]byte, procedure string, opts callOptions) (string, error) {
 	for {
-		result, err := call(ctx, lp.pool, realm, procedure, `null`, nil, 5*time.Second, creds)
-		if err == nil || classify(ctx, err).kind == kindProviderError || ctx.Err() != nil {
+		result, err := call(ctx, lp.pool, realm, procedure, `null`, 5*time.Second, opts)
+		if kind := classify(ctx, err).kind; err == nil || kind == kindProviderError || kind == kindConfidentiality || ctx.Err() != nil {
 			return result, err
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -197,7 +198,7 @@ func TestAGatedStreamThroughTheABI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := serveStream(g.provider, g.realm.ID, procedure, frame.ServerStream, policy)
+	s, err := serveStream(g.provider, g.realm.ID, procedure, frame.ServerStream, serveOptions{policy: policy})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +224,7 @@ func TestAGatedStreamThroughTheABI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		first := openUntilProvided(ctx, t, g.caller, g.realm.ID, procedure, creds)
+		first := openUntilProvided(ctx, t, g.caller, g.realm.ID, procedure, callOptions{creds: creds})
 		switch {
 		case c.want == "" && !strings.Contains(first, `"payload":"served"`):
 			t.Errorf("%s: %s", name, first)
@@ -235,10 +236,10 @@ func TestAGatedStreamThroughTheABI(t *testing.T) {
 
 // openUntilProvided opens the stream until its provider, not a relay, answers,
 // and returns the first frame it sends.
-func openUntilProvided(ctx context.Context, t *testing.T, lp *livePool, realm [32]byte, procedure string, creds credentials) string {
+func openUntilProvided(ctx context.Context, t *testing.T, lp *livePool, realm [32]byte, procedure string, opts callOptions) string {
 	t.Helper()
 	for {
-		stream, err := openStream(ctx, lp.pool, realm, procedure, frame.ServerStream, `null`, nil, 10*time.Second, creds)
+		stream, err := openStream(ctx, lp.pool, realm, procedure, frame.ServerStream, `null`, 10*time.Second, opts)
 		if err == nil {
 			out, err := recvJSON(ctx, stream)
 			_ = stream.Close()

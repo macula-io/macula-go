@@ -3,7 +3,7 @@
  * keys, a pool per node, serving and calling in a node's own namespace,
  * answering from the inbox, a cancel from another thread, publish and
  * subscribe, a server stream, content, device request and ownership proofs,
- * UCAN-gated serving, error kinds, and freeing. The realm is named "abi", which a UCAN grants in. abi_test.go
+ * UCAN-gated serving, sealed calls and streams, error kinds, and freeing. The realm is named "abi", which a UCAN grants in. abi_test.go
  * builds it against the built library and runs it with two in-process
  * stations:
  *
@@ -111,6 +111,22 @@ static void *provide_one(void *p) {
   /* The handle ended with its first answer. */
   macula_pending_reply(pending, "null", &err);
   expect_kind("a second answer", &err, "invalid_handle");
+  return NULL;
+}
+
+/* provide_sealed answers one sealed call, checking it says it came sealed. */
+static void *provide_sealed(void *p) {
+  struct provider_args *args = p;
+  macula_handle pending = 0;
+  int32_t closed = 0;
+  char *err = NULL;
+  char *request = macula_served_next(args->served, 20000, 0, &pending, &closed, &err);
+  check("served_next of a sealed call", err);
+  expect_contains("the sealed request", request, "\"sealed\":1");
+  expect_contains("the sealed request", request, "\"payload\":{\"n\":9007199254740993}");
+  macula_free_string(request);
+  macula_pending_reply(pending, "{\"echo\":{\"$bytes\":\"AQI=\"}}", &err);
+  check("pending_reply to a sealed call", err);
   return NULL;
 }
 
@@ -435,6 +451,72 @@ int main(int argc, char **argv) {
     macula_served_stop(streaming, &err);
     check("served_stop of the gated stream", err);
     macula_free_string(ucan);
+  }
+
+  /* Sealed end to end (macula 13): a node that names its KEM key, a procedure
+   * that takes sealed calls only, a sealed call and a sealed stream to it, and
+   * a clear call refused. */
+  {
+    char vault[128], watch[128];
+    size_t len = strlen(options);
+    if (len == 0 || options[len - 1] != '}') fail("the options to extend", NULL);
+    char *keyed_options = malloc(len + 32);
+    memcpy(keyed_options, options, len - 1);
+    strcpy(keyed_options + len - 1, ", \"kem_advertise\": 1}");
+    macula_handle keyed = join(dir, "keyed", seeds, keyed_options);
+    free(keyed_options);
+    own_procedure(keyed, "vault", vault);
+    macula_pool_serve_opts(keyed, realm, vault, "{\"confidential\":\"maybe\"}", &err);
+    expect_kind("a confidentiality outside its set", &err, "invalid_argument");
+    macula_handle sealed = macula_pool_serve_opts(keyed, realm, vault, "{\"confidential\":\"required\"}", &err);
+    check("pool_serve_opts", err);
+    struct provider_args sealed_args = {sealed};
+    pthread_create(&thread, NULL, provide_sealed, &sealed_args);
+    char *answer = NULL;
+    for (int i = 0; i < 100 && !answer; i++) {
+      answer = macula_pool_call_opts(caller, realm, vault, "{\"n\":9007199254740993}", "{}", 20000, 0, &err);
+      if (err && strstr(err, "\"kind\":\"no_provider\"")) {
+        macula_free_string(err);
+        err = NULL;
+        struct timespec pause = {0, 100 * 1000 * 1000};
+        nanosleep(&pause, NULL);
+      }
+    }
+    check("pool_call_opts", err);
+    expect_contains("the sealed call's result", answer, "\"echo\":{\"$bytes\":\"AQI=\"}");
+    macula_free_string(answer);
+    pthread_join(thread, NULL);
+    macula_pool_call_opts(caller, realm, vault, "null", "{\"confidential\":\"off\"}", 20000, 0, &err);
+    if (!err || !strstr(err, "\"code\":\"sealed_required\"")) fail("a clear call to a required procedure", err);
+    expect_kind("a clear call to a required procedure", &err, "provider_error");
+    macula_served_stop(sealed, &err);
+    check("served_stop of the sealed procedure", err);
+
+    own_procedure(keyed, "watch", watch);
+    streaming = macula_pool_serve_stream_opts(keyed, realm, watch, MACULA_STREAM_SERVER, "{\"confidential\":\"required\"}", &err);
+    check("pool_serve_stream_opts", err);
+    stream = macula_pool_open_stream_opts(caller, realm, watch, MACULA_STREAM_SERVER, "{\"to\":1}", NULL, 20000, 20000, 0, &err);
+    check("pool_open_stream_opts", err);
+    open = macula_served_next(streaming, 20000, 0, &session, &closed, &err);
+    check("served_next of a sealed session", err);
+    expect_contains("the sealed session's request", open, "\"sealed\":1");
+    expect_contains("the sealed session's request", open, "\"payload\":{\"to\":1}");
+    macula_free_string(open);
+    macula_stream_reply(session, "\"sealed reply\"", &err);
+    check("stream_reply on a sealed stream", err);
+    char *reply = NULL;
+    for (int i = 0; i < 4 && !reply; i++) {
+      char *frame = macula_stream_recv(stream, 10000, 0, &err);
+      check("stream_recv of a sealed stream", err);
+      if (strstr(frame, "\"kind\":\"reply\"")) reply = frame; else macula_free_string(frame);
+    }
+    expect_contains("the sealed stream's reply", reply, "\"payload\":\"sealed reply\"");
+    macula_free_string(reply);
+    macula_stream_free(stream);
+    macula_stream_free(session);
+    macula_served_stop(streaming, &err);
+    check("served_stop of the sealed stream", err);
+    macula_pool_close(keyed);
   }
 
   /* Closing a pool ends what it owns. */

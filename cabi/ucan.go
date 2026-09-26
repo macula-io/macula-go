@@ -85,6 +85,11 @@ func policyOf(text string) (ucan.Policy, error) {
 	if err := decodeStrict("policy_json", text, &p); err != nil {
 		return nil, err
 	}
+	return policyValue(p)
+}
+
+// policyValue is the policy p names.
+func policyValue(p policyJSON) (ucan.Policy, error) {
 	switch p.Kind {
 	case "ucan_required":
 		if p.KeyID != "" || p.Can != "" {

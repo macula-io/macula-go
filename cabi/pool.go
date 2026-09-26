@@ -74,6 +74,9 @@ type connectOptions struct {
 	MaxDirectLinks    int               `json:"max_direct_links"`
 	RespawnDelayMs    int64             `json:"respawn_delay_ms"`
 	TimeoutMs         int64             `json:"timeout_ms"`
+	// KEMAdvertise (0 or 1) names this node's KEM key in its confidential
+	// procedures' advertisements. Since macula-go v0.18.0.
+	KEMAdvertise int `json:"kem_advertise"`
 }
 
 // decodeStrict decodes JSON text into v, refusing unknown fields, so a
@@ -109,6 +112,9 @@ func connect(base context.Context, key *identity.NodeKey, seedsJSON, optionsJSON
 			return nil, err
 		}
 	}
+	if opts.KEMAdvertise != 0 && opts.KEMAdvertise != 1 {
+		return nil, invalidArgument("kem_advertise is 0 or 1, not %d", opts.KEMAdvertise)
+	}
 	poolSeeds := make([]pool.Seed, len(seeds))
 	for i, s := range seeds {
 		id, err := hexID("a seed's node_id", s.NodeID)
@@ -142,6 +148,7 @@ func connect(base context.Context, key *identity.NodeKey, seedsJSON, optionsJSON
 	p, err := pool.Connect(ctx, poolSeeds, pool.Opts{IdentityKey: key, RealmTrust: trust,
 		ReplicationFactor: opts.ReplicationFactor, MaxSeeds: opts.MaxSeeds, MaxDirectLinks: opts.MaxDirectLinks,
 		RespawnDelay:  time.Duration(opts.RespawnDelayMs) * time.Millisecond,
+		KEMAdvertise:  opts.KEMAdvertise == 1,
 		OnLinkEvent:   lp.linkEvent,
 		OnIssuerError: lp.issuerError})
 	if err != nil {

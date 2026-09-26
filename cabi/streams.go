@@ -20,15 +20,15 @@ import (
 // trusted one when nil), with payload as the open's, living deadline (the
 // stationlink default when 0).
 func openStream(ctx context.Context, p *pool.Pool, realm [32]byte, procedure string, mode frame.StreamMode,
-	payloadJSON string, provider *[32]byte, deadline time.Duration, creds credentials) (*stationlink.Stream, error) {
+	payloadJSON string, deadline time.Duration, opts callOptions) (*stationlink.Stream, error) {
 	payload, err := payloadFromJSON(payloadJSON)
 	if err != nil {
 		return nil, err
 	}
 	c := pool.StreamCall{Realm: realm, Procedure: procedure, Mode: mode, Payload: payload, Deadline: deadline,
-		Token: creds.token, Proofs: creds.proofs}
-	if provider != nil {
-		c.Provider = *provider
+		Token: opts.creds.token, Proofs: opts.creds.proofs, Confidential: opts.confidential}
+	if opts.provider != nil {
+		c.Provider = *opts.provider
 	}
 	return p.OpenStream(ctx, c)
 }
@@ -77,7 +77,7 @@ func streamOf(h C.uintptr_t, errOut **C.char) *stationlink.Stream {
 //export macula_pool_open_stream
 func macula_pool_open_stream(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, mode C.int32_t, payloadJSON *C.char,
 	provider32 *C.uint8_t, deadlineMs C.int64_t, timeoutMs C.int64_t, token C.uintptr_t, errOut **C.char) C.uintptr_t {
-	return poolOpenStream(h, realm32, procedure, mode, payloadJSON, provider32, credentials{}, deadlineMs, timeoutMs,
+	return poolOpenStream(h, realm32, procedure, mode, payloadJSON, callOptions{provider: optionalID(provider32)}, deadlineMs, timeoutMs,
 		token, errOut)
 }
 
@@ -90,13 +90,13 @@ func macula_pool_open_stream_with(h C.uintptr_t, realm32 *C.uint8_t, procedure *
 		setErr(errOut, err)
 		return 0
 	}
-	return poolOpenStream(h, realm32, procedure, mode, payloadJSON, provider32, creds, deadlineMs, timeoutMs, token,
+	return poolOpenStream(h, realm32, procedure, mode, payloadJSON, callOptions{provider: optionalID(provider32), creds: creds},
+		deadlineMs, timeoutMs, token,
 		errOut)
 }
 
 func poolOpenStream(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, mode C.int32_t, payloadJSON *C.char,
-	provider32 *C.uint8_t, creds credentials, deadlineMs C.int64_t, timeoutMs C.int64_t, token C.uintptr_t,
-	errOut **C.char) C.uintptr_t {
+	opts callOptions, deadlineMs C.int64_t, timeoutMs C.int64_t, token C.uintptr_t, errOut **C.char) C.uintptr_t {
 	lp := poolOf(h, errOut)
 	if lp == nil {
 		return 0
@@ -121,8 +121,8 @@ func poolOpenStream(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, mode C
 		return 0
 	}
 	defer cancel()
-	s, err := openStream(ctx, lp.pool, realm, goString(procedure), m, goString(payloadJSON), optionalID(provider32),
-		time.Duration(deadlineMs)*time.Millisecond, creds)
+	s, err := openStream(ctx, lp.pool, realm, goString(procedure), m, goString(payloadJSON),
+		time.Duration(deadlineMs)*time.Millisecond, opts)
 	if err != nil {
 		setCtxErr(ctx, errOut, err)
 		return 0

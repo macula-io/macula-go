@@ -5,6 +5,7 @@ import "C"
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,10 @@ const (
 	kindAnswered        errorKind = "answered"
 	kindClosed          errorKind = "closed"
 	kindRefused         errorKind = "refused"
+	// kindConfidentiality is a call that could not be kept confidential
+	// (macula 13's E2E design): not made, or failed rather than be taken in
+	// the clear. Since macula-go v0.18.0.
+	kindConfidentiality errorKind = "confidentiality"
 	kindFailed          errorKind = "failed"
 )
 
@@ -91,7 +96,22 @@ func classify(ctx context.Context, err error) *abiError {
 	}
 	var provider *stationlink.ProviderError
 	var relay *stationlink.RelayError
+	var confidentiality *stationlink.ConfidentialityError
+	var sealedRefused *stationlink.SealedRefusedError
 	switch {
+	case errors.As(err, &confidentiality):
+		return &abiError{kind: kindConfidentiality, message: err.Error(), fields: map[string]any{
+			"reason": confidentiality.Reason, "named": keyIDHex(confidentiality.Named), "found": keyIDHex(confidentiality.Found)}}
+	case errors.Is(err, stationlink.ErrKEMAdvertiseDisabled):
+		return &abiError{kind: kindConfidentiality, message: err.Error(), fields: map[string]any{
+			"reason": "kem_advertise_disabled", "named": nil, "found": nil}}
+	case errors.Is(err, stationlink.ErrClearAnswerToSealed):
+		return &abiError{kind: kindConfidentiality, message: err.Error(), fields: map[string]any{
+			"reason": "clear_answer_to_sealed", "named": nil, "found": nil}}
+	case errors.As(err, &sealedRefused):
+		// The provider still could not open the call after the one reseal.
+		return &abiError{kind: kindProviderError, message: err.Error(),
+			fields: map[string]any{"code": "sealed_refused", "detail": keyIDHex(sealedRefused.Named)}}
 	case errors.As(err, &provider):
 		var detail any
 		if provider.Detail != nil {
@@ -142,4 +162,12 @@ func setCtxErr(ctx context.Context, errOut **C.char, err error) {
 		return
 	}
 	*errOut = cString(classify(ctx, err).JSON())
+}
+
+// keyIDHex is a KEM key id as lowercase hex, nil for none.
+func keyIDHex(id *[8]byte) any {
+	if id == nil {
+		return nil
+	}
+	return hex.EncodeToString(id[:])
 }
