@@ -1,0 +1,47 @@
+name: Release
+
+# A v* tag publishes libmacula for every platform, with macula.h and
+# SHA256SUMS, each file with a GitHub build provenance attestation, as the
+# tag's GitHub release (cabi/CONTRACT.md "Release artifacts"). Go modules
+# need no publishing: the tag itself is the Go release.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  libmacula:
+    uses: ./.github/workflows/libmacula.yml
+
+  publish:
+    needs: libmacula
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: libmacula-*
+          merge-multiple: true
+      - name: Gather the release files
+        run: |
+          mkdir release
+          cp artifacts/* cabi/macula.h release/
+          test "$(ls release | wc -l)" -eq 6
+          (cd release && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/*
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes "macula-go $GITHUB_REF_NAME. libmacula (cabi, the shared C ABI) for Linux (glibc 2.28+), macOS (12.0+) and Windows, with macula.h and SHA256SUMS. Check each file against SHA256SUMS and verify its attestation (gh attestation verify <file> --repo $GITHUB_REPOSITORY) before using it; see cabi/CONTRACT.md."

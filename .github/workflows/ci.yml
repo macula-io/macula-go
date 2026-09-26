@@ -5,6 +5,9 @@ on:
     branches: [master]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   fmt:
     name: gofmt
@@ -39,7 +42,15 @@ jobs:
       # real production fleet, which has no uptime guarantee, and must
       # never block an unrelated PR. Run explicitly:
       #   go test -tags=live ./... -run TestLive -v
+      # cabi's tests include building libmacula and driving it from C, which
+      # must not quietly skip here.
       - run: go test ./...
+        env:
+          MACULA_ABI_TEST: required
+      # cabi hands values between goroutines and a binding's threads.
+      - run: go test -race ./cabi
+        env:
+          MACULA_ABI_TEST: required
       # The decoding packages read peer bytes, so their tests also run with a
       # 32-bit int.
       - run: GOARCH=386 CGO_ENABLED=0 go test ./cbor ./frame ./manifest
@@ -54,3 +65,6 @@ jobs:
           for name in TestAKeyOperationSaysWhetherTheBinaryHasMLDSA TestAVerifierSaysWhetherTheBinaryHasMLDSA TestReadStatusSaysWhetherTheBinaryHasMLDSA TestDialTargetSaysWhetherTheBinaryHasMLDSA TestASignedFrameVerifierSaysWhetherTheBinaryHasMLDSA TestARecordVerifierSaysWhetherTheBinaryHasMLDSA; do
             grep -q -- "--- PASS: $name " gofips140.log || { echo "no PASS line for $name"; exit 1; }
           done
+
+  libmacula:
+    uses: ./.github/workflows/libmacula.yml

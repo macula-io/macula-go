@@ -146,6 +146,8 @@ hex> -realm <hex> -realm-key <file> -key <node key file>`):
 | [`cbor`](cbor) | The deterministic CBOR codec and its decoding rule |
 | [`profile`](profile) | The `pq_pure` and `pq_hybrid` crypto profiles |
 | [`manifest`](manifest) | Content manifests and MCIDs, as macula 12 makes them |
+| [`cabi`](cabi) | The C ABI every non-Go binding uses (.NET, Python, PHP, TypeScript): `macula.h`, its [contract](cabi/CONTRACT.md), and libmacula on each release |
+| [`teststation`](teststation) | In-process macula 12 stations for tests; `teststation/cmd/teststation` serves them to a binding's tests |
 | [`seal`](seal) | End-to-end payload sealing, scheme 1: the key agreement, keys, AAD and AES-256-GCM (no frame carries a sealed payload yet) |
 
 ## The CBOR codec is hand-rolled on purpose

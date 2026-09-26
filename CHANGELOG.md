@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cabi`: macula-go's macula 12 API behind one C ABI (`cabi/macula.h`,
+  ABI 1), shared by every binding not written in Go; `cabi/CONTRACT.md` says
+  what every call means. Poll-only (inboxes drained by `*_next`, no callback
+  into a binding), a cancel token and a timeout on every blocking call,
+  errors as JSON with a fixed kind, and payloads mapped exactly between JSON
+  and macula's CBOR (int64 integers, floats, `{"$bytes": ...}`, no
+  booleans). Tested from Go against in-process stations and from C against
+  the built library, the header held to the exports.
+- Each `v*` release carries libmacula for Linux x64/arm64 (glibc 2.28+),
+  macOS x64/arm64 (12.0+) and Windows x64, with `macula.h` and `SHA256SUMS`,
+  every file with a build provenance attestation. CI builds all five on
+  every push.
+- `teststation/cmd/teststation`: in-process stations for a binding's tests,
+  over stdin and stdout.
+- `identity.GenerateIdentityKeyContext`: key generation that gives up when
+  its context ends.
+
 - `seal`: end-to-end payload sealing, scheme 1 (macula's
   `test/vectors/E2E_SEAL_V1.md`), the primitives only; no frame carries a
   sealed payload yet. ML-KEM-1024, with an ephemeral P-384 ECDH in
