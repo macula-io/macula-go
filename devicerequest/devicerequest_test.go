@@ -115,3 +115,30 @@ func TestSignedProofVerifiesOverItsMessage(t *testing.T) {
 		}
 	}
 }
+
+// A request's caller is its verified signer, never one of its fields: the
+// realm drops a "caller" when it rebuilds the signed request, on either
+// transport, so a proof over one would fail there as bad_proof. Sign refuses
+// such a request at the source, whichever rule built it.
+func TestSignRefusesARequestCarryingACaller(t *testing.T) {
+	key := teststation.Key(t, profile.PQPure, "device caller")
+	realm := sha256.Sum256([]byte("io.macula"))
+	http, err := JSONRequest([]byte(`{"public_key": "a2V5", "caller": "me"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mesh := cbor.Map([]cbor.MapEntry{{Key: cbor.Text("caller"), Val: cbor.Bytes(make([]byte, 32))},
+		{Key: cbor.Text("public_key"), Val: cbor.Text("a2V5")}})
+	for name, request := range map[string]cbor.Value{"an HTTP body": http, "a mesh payload": mesh} {
+		if _, err := Sign(key, realm, ProcedureJoinSession, request); !errors.Is(err, ErrCallerInRequest) {
+			t.Errorf("%s: %v, want ErrCallerInRequest", name, err)
+		}
+	}
+	nested, err := JSONRequest([]byte(`{"public_key": "a2V5", "device_info": {"caller": "a field of its own"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Sign(key, realm, ProcedureJoinSession, nested); err != nil {
+		t.Errorf("a nested caller is a field like any other: %v", err)
+	}
+}

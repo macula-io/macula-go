@@ -163,6 +163,9 @@ hex strings, and flags as 0 or 1.
   whether that answer went or was `answered`; an answer after it is
   `invalid_handle`. Stopping the procedure answers each call still pending
   with an error and ends its handle.
+- A request's `payload`, of a call or a session, never holds a "caller"
+  its sender wrote into it (since v0.17.0), as macula's handlers never see
+  one: who called is the request's own `caller`, which the signature proves.
 - A served stream session is a stream handle like one the node opened. The
   provider sends, replies or aborts, and ends it; `macula_stream_free`
   aborts one not ended.

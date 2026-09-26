@@ -33,6 +33,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   realm's is, so a UCAN grants in a test realm by name. The harness's realm is
   `binding-tests`.
 
+- `devicerequest.Sign` refuses a request with a "caller" field
+  (`ErrCallerInRequest`; cabi: `invalid_argument`). The realm drops one when
+  it rebuilds the signed request, so a proof over it failed there as
+  `bad_proof`; now it fails at the source.
+
+### Fixed
+
+- A served procedure's handler saw a "caller" its sender wrote into the
+  payload of a CALL or STREAM_OPEN, where macula's handlers never do
+  (with_caller/2). `Request.Payload` and a served stream's
+  `Request().Payload` now drop a top-level text "caller": who called is
+  `Request.Caller`, the verified signer, alone.
+
 ### Removed
 
 - `Offer.Gated` and `stationlink.ErrGatedUnsupported`: `Offer.Policy` serves

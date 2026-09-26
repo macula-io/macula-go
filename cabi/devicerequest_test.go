@@ -76,3 +76,17 @@ func TestADeviceRequestProofVerifies(t *testing.T) {
 		t.Fatalf("proof %s does not verify", text)
 	}
 }
+
+// A request carrying a "caller" is refused invalid_argument under either rule:
+// the realm drops one, so a proof over it would fail there.
+func TestADeviceRequestCarryingACallerIsRefused(t *testing.T) {
+	key := teststation.Key(t, profile.PQPure, "device")
+	realm := sha256.Sum256([]byte("io.macula"))
+	for _, rule := range []int32{requestHTTP, requestMesh} {
+		_, err := deviceRequestProof(key, realm, devicerequest.ProcedureMembershipUCAN,
+			`{"public_key": "a2V5", "caller": "me"}`, rule)
+		if kindOf(err) != kindInvalidArgument {
+			t.Errorf("rule %d: %v, want invalid_argument", rule, err)
+		}
+	}
+}

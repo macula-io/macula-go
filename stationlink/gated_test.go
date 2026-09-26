@@ -237,3 +237,78 @@ func TestServeRefusesARealmMemberPolicyWithoutACan(t *testing.T) {
 		t.Errorf("%v, want ErrInvalidOffer", err)
 	}
 }
+
+// payloadCaller is whether payload, a map, has a text "caller", and its "n".
+func payloadCaller(t *testing.T, payload cbor.Value) (bool, int64) {
+	t.Helper()
+	entries, ok := payload.AsMap()
+	if !ok {
+		t.Fatalf("the payload is not a map: %v", payload)
+	}
+	has, n := false, int64(-1)
+	for _, e := range entries {
+		switch key, _ := e.Key.AsText(); key {
+		case "caller":
+			has = true
+		case "n":
+			n, _ = e.Val.AsInt64()
+		}
+	}
+	return has, n
+}
+
+// forged is a payload whose sender wrote a "caller" into it.
+var forged = cbor.Map([]cbor.MapEntry{
+	{Key: cbor.Text("caller"), Val: cbor.Text("someone else")},
+	{Key: cbor.Text("n"), Val: cbor.Uint64(1)},
+})
+
+// A handler never sees a "caller" its sender wrote into a CALL's or a
+// STREAM_OPEN's payload, as macula's handlers never do (with_caller/2): who
+// called is the verified Request.Caller alone. The rest of the payload is
+// untouched.
+func TestAHandlerNeverSeesASenderWrittenCaller(t *testing.T) {
+	w := newGatedWorld(t, profile.PQPure, "caller")
+	seen := make(chan cbor.Value, 2)
+	_, err := w.provider.Serve(t.Context(), stationlink.Offer{Realm: w.realm.ID, Procedure: gatedCall,
+		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
+			if r.Caller != w.caller.NodeID() {
+				t.Errorf("the handler saw caller %x", r.Caller)
+			}
+			seen <- r.Payload
+			return cbor.Map(nil), nil
+		}, RealmKey: w.realm.RealmKey()})
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	_, err = w.provider.Serve(t.Context(), stationlink.Offer{Realm: w.realm.ID, Procedure: gatedStream,
+		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
+			seen <- s.Request().Payload
+			return s.Send([]byte("granted"))
+		}}, RealmKey: w.realm.RealmKey()})
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if _, err := w.caller.Call(ctx, stationlink.Call{Realm: w.realm.ID, Procedure: gatedCall, Target: w.provider.NodeID(),
+		Payload: forged, Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: gatedStream,
+		Target: w.provider.NodeID(), Mode: frame.ServerStream, Payload: forged})
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	if _, err := recv(t, stream); err != nil {
+		t.Fatalf("the stream: %v", err)
+	}
+	for _, what := range []string{"the CALL", "the STREAM_OPEN"} {
+		if has, n := payloadCaller(t, <-seen); has || n != 1 {
+			t.Errorf("%s's payload: caller %v, n %d; want no caller and n 1", what, has, n)
+		}
+	}
+	if has, _ := payloadCaller(t, stream.Request().Payload); !has {
+		t.Error("the caller's own stream lost the payload it sent")
+	}
+}

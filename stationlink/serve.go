@@ -443,7 +443,7 @@ func (l *Link) handled(handler Handler, request frame.VerifiedRequest) (reply cb
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	payload, err := handler(ctx, Request{Caller: request.Caller, Realm: request.Realm, Procedure: request.Procedure,
-		Payload: request.Payload, Token: request.Token, Proofs: request.Proofs, Deadline: deadline})
+		Payload: withoutCaller(request.Payload), Token: request.Token, Proofs: request.Proofs, Deadline: deadline})
 	if err != nil {
 		detail := boundedDetail(err.Error())
 		return l.providerError(request, codeHandlerError, &detail)
@@ -456,6 +456,28 @@ func (l *Link) handled(handler Handler, request frame.VerifiedRequest) (reply cb
 		return l.providerError(request, codeUnsendable, nil)
 	}
 	return signed
+}
+
+// withoutCaller is an inbound payload as a handler sees it: a map loses the
+// text "caller" its sender may have written into it, as macula's with_caller/2
+// removes one, so no handler reads a sender-chosen identity where macula's
+// handlers read the verified one. Who called is Request.Caller alone. Any
+// other payload is untouched.
+func withoutCaller(payload cbor.Value) cbor.Value {
+	entries, ok := payload.AsMap()
+	if !ok {
+		return payload
+	}
+	kept := make([]cbor.MapEntry, 0, len(entries))
+	for _, e := range entries {
+		if key, isText := e.Key.AsText(); !isText || key != "caller" {
+			kept = append(kept, e)
+		}
+	}
+	if len(kept) == len(entries) {
+		return payload
+	}
+	return cbor.Map(kept)
 }
 
 // providerError is this node's signed ERROR for request. The request verified

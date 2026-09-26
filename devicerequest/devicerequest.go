@@ -54,6 +54,11 @@ var (
 	// ErrNotAJSONObject is a body that is not one JSON object (400
 	// not_a_json_object).
 	ErrNotAJSONObject = errors.New("devicerequest: the request is not one JSON object")
+	// ErrCallerInRequest is a request with a "caller" field. Who asks is the
+	// verified signer, never a field: the realm drops a "caller" when it
+	// rebuilds the signed request, on either transport, so a proof over one
+	// fails there (bad_proof).
+	ErrCallerInRequest = errors.New("devicerequest: a request carries no \"caller\"; the caller is its verified signer")
 )
 
 // Proof is the proof as it goes on the wire, beside the request's own
@@ -85,13 +90,27 @@ func Message(publicKey []byte, realm [32]byte, procedure string, timestampMs uin
 // Sign signs request for procedure in realm with key, now and with a fresh
 // nonce. request is the request in its signed form: JSONRequest's for an
 // HTTP body; for a mesh payload, the payload as it goes on the wire without
-// its proof.
+// its proof. A request with a "caller" field is ErrCallerInRequest.
 func Sign(key *identity.NodeKey, realm [32]byte, procedure string, request cbor.Value) (Proof, error) {
+	if carriesCaller(request) {
+		return Proof{}, ErrCallerInRequest
+	}
 	var nonce [NonceSize]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return Proof{}, err
 	}
 	return signAt(key, realm, procedure, request, uint64(time.Now().UnixMilli()), nonce)
+}
+
+// carriesCaller is whether request, a map, has a text "caller" field.
+func carriesCaller(request cbor.Value) bool {
+	entries, _ := request.AsMap()
+	for _, e := range entries {
+		if key, _ := e.Key.AsText(); key == "caller" {
+			return true
+		}
+	}
+	return false
 }
 
 func signAt(key *identity.NodeKey, realm [32]byte, procedure string, request cbor.Value, timestampMs uint64,

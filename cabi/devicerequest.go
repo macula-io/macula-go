@@ -6,6 +6,7 @@ import "C"
 
 import (
 	"encoding/json"
+	"errors"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/devicerequest"
@@ -62,6 +63,9 @@ func deviceRequestProof(key *identity.NodeKey, realm [32]byte, procedure, reques
 		return "", err
 	}
 	proof, err := devicerequest.Sign(key, realm, procedure, request)
+	if errors.Is(err, devicerequest.ErrCallerInRequest) {
+		return "", invalidArgument("%v", err)
+	}
 	if err != nil {
 		return "", err
 	}

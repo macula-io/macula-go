@@ -119,8 +119,16 @@ func newStream(link *Link, qs *quic.Stream, open frame.VerifiedRequest, caller b
 }
 
 // Request is the stream's verified STREAM_OPEN: its caller, procedure, mode and
-// payload.
-func (s *Stream) Request() frame.VerifiedRequest { return s.open }
+// payload. On a served stream the payload has no "caller" its sender wrote
+// into it, as a CALL's handler sees none: who called is Caller alone.
+func (s *Stream) Request() frame.VerifiedRequest {
+	if s.caller {
+		return s.open
+	}
+	open := s.open
+	open.Payload = withoutCaller(open.Payload)
+	return open
+}
 
 // Done is closed when the stream has ended and been released.
 func (s *Stream) Done() <-chan struct{} { return s.done }

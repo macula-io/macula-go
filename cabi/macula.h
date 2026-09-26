@@ -77,7 +77,8 @@ void macula_key_free(macula_handle key);
 
 /* A v2 proof that key made request_json (a JSON object, its "proof" left
  * out) for procedure in realm, now, with a fresh nonce:
- * {"v":2,"timestamp","nonce","signature"}. */
+ * {"v":2,"timestamp","nonce","signature"}. A request with a "caller" field is
+ * invalid_argument (since macula-go v0.17.0): the caller is the signer. */
 char *macula_key_device_request_proof(macula_handle key, const uint8_t realm[32], const char *procedure,
                                       const char *request_json, int32_t rule, char **err_out);
 /* The exact bytes such a proof signs, for a given timestamp and nonce: what a
