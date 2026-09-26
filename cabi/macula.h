@@ -86,6 +86,22 @@ uint8_t *macula_device_request_message(const uint8_t *public_key, size_t public_
                                        const char *procedure, int64_t timestamp_ms, const uint8_t nonce[16],
                                        const char *request_json, int32_t rule, size_t *out_len, char **err_out);
 
+/* ---- Ownership proofs (v2, mcl-om#7) ----------------------------------- */
+/* Since macula-go v0.16.0. */
+
+/* payload_json (a JSON object) with an "asserted_by" block by which key's
+ * node authorises every other field for procedure in realm, now, with a
+ * fresh nonce; an asserted_by already there is replaced. Send the result as
+ * the payload. */
+char *macula_key_ownership_proof(macula_handle key, const uint8_t realm[32], const char *procedure,
+                                 const char *payload_json, char **err_out);
+/* The exact bytes such a proof signs, for a given identity (node_id),
+ * timestamp and nonce, over fields_json (the payload less asserted_by): what a
+ * binding checks mcl_om's vector with. */
+uint8_t *macula_ownership_proof_message(const uint8_t identity[32], const uint8_t realm[32], const char *procedure,
+                                        int64_t timestamp_ms, const uint8_t nonce[16], const char *fields_json,
+                                        size_t *out_len, char **err_out);
+
 /* ---- Pool -------------------------------------------------------------- */
 
 /* seeds_json: [{"host","port","node_id"}]. options_json (NULL for defaults):

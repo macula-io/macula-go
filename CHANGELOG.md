@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ownershipproof`: an ownership proof v2 (mcl-om#7), the `asserted_by`
+  block by which an identity authorises exactly one request. `Attach` signs a
+  payload's every field, the procedure, the realm, a timestamp and a nonce
+  under the tag `macula.ownership_proof`; `Verify` follows mcl_om's own
+  verifier step for step and leaves replay to its caller. The signed bytes are
+  mcl_om 0.32.0's `mcl_om_ownership_proof:message/6`, byte for byte:
+  `ownershipproof/testdata/vector` is that module's output and an Erlang key's
+  signature over it, and `scripts/interop` has mcl_om verify a payload
+  macula-go signed, delivered through macula's frame codec.
+- cabi: `macula_key_ownership_proof` (a payload with its `asserted_by` block)
+  and `macula_ownership_proof_message` (the signed bytes, for the vector).
+  New functions, so the ABI stays at version 1.
+
 ## [0.15.0] - 2026-09-26
 
 ### Fixed
