@@ -1,0 +1,170 @@
+// Command gosealed is macula-go's side of sealed calls and streams across
+// macula 13 and macula-go (E2E seal scheme 1), for
+// scripts/interop/erlang_sealed.escript, through one station.
+//
+//	gosealed -station host:port@<node_id hex> -profile pq_hybrid -realm <hex> -hold 60s serve
+//	gosealed -station host:port@<node_id hex> -profile pq_hybrid -realm <hex> -provider <node_id hex> call
+//
+// serve connects a pool with KEMAdvertise, serves ~<self>/vault (a call) and
+// ~<self>/watch (a server stream), both ConfidentialRequired, prints
+// "node <hex>" and holds. call calls ~<provider>/vault and opens
+// ~<provider>/watch sealed to the key the provider's advertisement names, then
+// calls vault with ConfidentialOff, which a required provider refuses
+// sealed_required. It prints each outcome and exits 1 on any other.
+package main
+
+import (
+	"context"
+	"encoding/hex"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/pool"
+	"github.com/macula-io/macula-go/profile"
+	"github.com/macula-io/macula-go/stationlink"
+)
+
+func main() {
+	station := flag.String("station", "", "host:port@<node_id hex>")
+	profileName := flag.String("profile", "pq_hybrid", "crypto profile")
+	realmHex := flag.String("realm", "", "realm id, hex")
+	hold := flag.Duration("hold", time.Minute, "how long serve holds")
+	provider := flag.String("provider", "", "call: the provider's node_id, hex")
+	flag.Parse()
+	if err := run(flag.Arg(0), *station, *profileName, *realmHex, *hold, *provider); err != nil {
+		fmt.Fprintln(os.Stderr, "gosealed:", err)
+		os.Exit(1)
+	}
+}
+
+func run(mode, station, profileName, realmHex string, hold time.Duration, provider string) error {
+	p, err := profile.Parse(profileName)
+	if err != nil {
+		return err
+	}
+	seed, err := parseSeed(station)
+	if err != nil {
+		return err
+	}
+	realm, err := id32(realmHex)
+	if err != nil {
+		return err
+	}
+	key, err := identity.GenerateIdentityKey(p, identity.PuzzleDifficulty)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), hold+2*time.Minute)
+	defer cancel()
+	node, err := pool.Connect(ctx, []pool.Seed{seed}, pool.Opts{IdentityKey: key, KEMAdvertise: mode == "serve"})
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer node.Close()
+	self := node.NodeID()
+	fmt.Printf("node %s\n", hex.EncodeToString(self[:]))
+	switch mode {
+	case "serve":
+		return serve(ctx, node, realm, hold)
+	case "call":
+		target, err := id32(provider)
+		if err != nil {
+			return err
+		}
+		return call(ctx, node, realm, target)
+	}
+	return fmt.Errorf("mode %q is serve or call", mode)
+}
+
+func own(node [32]byte, name string) string { return "~" + hex.EncodeToString(node[:]) + "/" + name }
+
+func serve(ctx context.Context, node *pool.Pool, realm [32]byte, hold time.Duration) error {
+	self := node.NodeID()
+	if _, err := node.Serve(ctx, pool.Offer{Realm: realm, Procedure: own(self, "vault"), Confidential: stationlink.ConfidentialRequired,
+		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
+			if !r.Sealed {
+				return cbor.Value{}, errors.New("a clear request reached the handler")
+			}
+			return cbor.Text("kept by go"), nil
+		}}); err != nil {
+		return fmt.Errorf("serve vault: %w", err)
+	}
+	if _, err := node.Serve(ctx, pool.Offer{Realm: realm, Procedure: own(self, "watch"), Confidential: stationlink.ConfidentialRequired,
+		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
+			if err := s.Send([]byte("chunk from go")); err != nil {
+				return err
+			}
+			return s.Reply(cbor.Text("streamed by go"))
+		}}}); err != nil {
+		return fmt.Errorf("serve watch: %w", err)
+	}
+	fmt.Println("serving")
+	select {
+	case <-time.After(hold):
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+func call(ctx context.Context, node *pool.Pool, realm, provider [32]byte) error {
+	vault, watch := own(provider, "vault"), own(provider, "watch")
+	var result cbor.Value
+	var err error
+	for range 150 {
+		if result, err = node.Call(ctx, pool.Call{Realm: realm, Procedure: vault, Payload: cbor.Map(nil)}); !errors.Is(err, pool.ErrNoProvider) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	text, _ := result.AsText()
+	fmt.Printf("sealed call: %q, %v\n", text, err)
+	if err != nil || text != "kept by erlang" {
+		return errors.New("the sealed call")
+	}
+	stream, err := node.OpenStream(ctx, pool.StreamCall{Realm: realm, Procedure: watch, Mode: frame.ServerStream, Payload: cbor.Map(nil)})
+	if err != nil {
+		return fmt.Errorf("the sealed stream: %w", err)
+	}
+	chunk, err := stream.Recv(ctx)
+	body, _ := chunk.Body.AsBytes()
+	reply, rerr := stream.Recv(ctx)
+	replied, _ := reply.Payload.AsText()
+	fmt.Printf("sealed stream: chunk %q (%v), reply %q (%v)\n", body, err, replied, rerr)
+	if err != nil || rerr != nil || string(body) != "chunk from erlang" || replied != "streamed by erlang" {
+		return errors.New("the sealed stream")
+	}
+	_, err = node.Call(ctx, pool.Call{Realm: realm, Procedure: vault, Payload: cbor.Map(nil), Confidential: stationlink.ConfidentialOff})
+	fmt.Printf("clear call: %v\n", err)
+	var refused *stationlink.ProviderError
+	if !errors.As(err, &refused) || refused.Code != "sealed_required" {
+		return errors.New("the clear call was not refused sealed_required")
+	}
+	return nil
+}
+
+func id32(text string) ([32]byte, error) {
+	b, err := hex.DecodeString(text)
+	if err != nil || len(b) != 32 {
+		return [32]byte{}, fmt.Errorf("%q is not 64 hex characters", text)
+	}
+	return [32]byte(b), nil
+}
+
+func parseSeed(text string) (pool.Seed, error) {
+	address, node, ok := strings.Cut(text, "@")
+	host, portText, found := strings.Cut(address, ":")
+	raw, err := hex.DecodeString(node)
+	port, perr := strconv.ParseUint(portText, 10, 16)
+	if !ok || !found || err != nil || len(raw) != 32 || perr != nil {
+		return pool.Seed{}, fmt.Errorf("-station is host:port@<node_id hex>, not %q", text)
+	}
+	return pool.Seed{Host: host, Port: uint16(port), NodeID: [32]byte(raw)}, nil
+}

@@ -128,3 +128,27 @@ escript scripts/interop/erlang_ownership_proof.escript verify <macula lib dir>/e
 escript scripts/interop/erlang_ownership_proof.escript emit <macula lib dir>/ebin <mcl-om checkout>/src ownershipproof/testdata/vector
 ```
 
+
+## Sealed calls and streams (macula 13, E2E seal scheme 1)
+
+`sealed.sh` runs macula-go's test station and, through it, both directions in
+one profile: an Erlang macula 13 provider (`erlang_sealed.escript serve`,
+`kem_advertise` on, a call and a server stream in its own namespace, both
+`confidential => required`, their advertisements published for direct dial)
+called and streamed to by `gosealed call`, sealed to the key its advertisement
+names, and then called in the clear (`ConfidentialOff`), which it must refuse
+`sealed_required`; then a Go provider (`gosealed serve`, `KEMAdvertise`, both
+procedures `ConfidentialRequired`, a handler that refuses anything that did
+not arrive sealed) called and streamed to by `erlang_sealed.escript call` as
+macula's direct dial does, and called in the clear at its station
+(`call_station/8`, `confidential => off`), which it must refuse. The Erlang side
+runs in macula's pinned CI image with the host's network.
+
+```sh
+MACULA_BUILD=<macula checkout at v13.x, compiled> scripts/interop/sealed.sh pq_hybrid
+MACULA_BUILD=<macula checkout at v13.x, compiled> scripts/interop/sealed.sh pq_pure
+```
+
+Last run (2026-09-27, macula v13.0.0 compiled in `macula-ci-otp@sha256:aff1d39b...`): both
+profiles, both ways, `sealed call` and `sealed stream` answered, `clear call`
+refused `sealed_required`, exit 0.
