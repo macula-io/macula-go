@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- The README describes the wire as TLS 1.3 with a hybrid post-quantum key
+  exchange and names the `pq_hybrid` composite ML-DSA-87 + RSA-PSS-4096,
+  instead of calling everything on the wire post-quantum.
+
+## [0.12.0] - 2026-09-26
+
 ### Breaking
 
 - A content announcement (0x11) names where the content is served, as macula

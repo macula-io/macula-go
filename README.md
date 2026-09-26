@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <strong>Go port of the Macula SDK, on the macula 12 post-quantum wire</strong>
+  <strong>Go port of the Macula SDK, on the macula 12 wire: TLS 1.3 with a hybrid post-quantum key exchange, and ML-DSA-87 signatures</strong>
 </p>
 
 ---
@@ -38,12 +38,14 @@ admits orgs, and an org's providers serve procedures that any node in the
 realm can call. Any node can also serve procedures in its own namespace,
 `~<node_id>/<name>`, with no org or realm to vouch for it.
 
-Everything on the wire is post-quantum:
+On the wire:
 
-- **Transport:** QUIC with the ALPN `macula`, key exchange on macula-pqc's
-  hybrid ML-KEM groups only (SecP384r1MLKEM1024, SecP256r1MLKEM768).
-- **Identity:** an ML-DSA-87 key (`pq_pure`) or the LAMPS composite
-  ML-DSA-87 + RSA-4096-PSS (`pq_hybrid`), whose node_id solves the admission
+- **Transport:** QUIC with the ALPN `macula`, TLS 1.3 with a hybrid
+  post-quantum key exchange, on macula-pqc's hybrid ML-KEM groups only
+  (SecP384r1MLKEM1024, SecP256r1MLKEM768).
+- **Identity:** an ML-DSA-87 key (`pq_pure`) or the composite ML-DSA-87 +
+  RSA-PSS-4096 (`pq_hybrid`, the fleet's profile; LAMPS
+  `id-MLDSA87-RSA4096-PSS-SHA512`), whose node_id solves the admission
   puzzle.
 - **Frames:** requests, replies, publications and records are signed
   objects; in `pq_hybrid` every control frame is also neighbour-signed.
