@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-26
+
 ### Added
 
 - `ownershipproof`: an ownership proof v2 (mcl-om#7), the `asserted_by`
