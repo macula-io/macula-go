@@ -136,7 +136,8 @@ one profile: an Erlang macula 13 provider (`erlang_sealed.escript serve`,
 `kem_advertise` on, a call and a server stream in its own namespace, both
 `confidential => required`, their advertisements published for direct dial)
 called and streamed to by `gosealed call`, sealed to the key its advertisement
-names, and then called in the clear (`ConfidentialOff`), which it must refuse
+names, and then called in the clear from a station link to it as an explicit
+target (the pool itself refuses `ConfidentialOff`), which it must refuse
 `sealed_required`; then a Go provider (`gosealed serve`, `KEMAdvertise`, both
 procedures `ConfidentialRequired`, a handler that refuses anything that did
 not arrive sealed) called and streamed to by `erlang_sealed.escript call` as
@@ -149,6 +150,13 @@ MACULA_BUILD=<macula checkout at v13.x, compiled> scripts/interop/sealed.sh pq_h
 MACULA_BUILD=<macula checkout at v13.x, compiled> scripts/interop/sealed.sh pq_pure
 ```
 
+The Erlang caller also calls with `confidential => off` by direct dial.
+macula 13.0.0 seals that call anyway (it honours `off` only on an explicit
+target), where macula-go's pool refuses it; the macula fix refuses it too.
+With `MACULA_OFF_REFUSED=1` the script requires the refusal, for a macula build
+that carries the fix.
+
 Last run (2026-09-27, macula v13.0.0 compiled in `macula-ci-otp@sha256:aff1d39b...`): both
 profiles, both ways, `sealed call` and `sealed stream` answered, `clear call`
-refused `sealed_required`, exit 0.
+refused `sealed_required`, exit 0; `off by direct dial` sealed, as 13.0.0 does
+(exit 1 under `MACULA_OFF_REFUSED=1`, as it must be before the fix).

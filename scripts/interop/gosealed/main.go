@@ -9,7 +9,8 @@
 // ~<self>/watch (a server stream), both ConfidentialRequired, prints
 // "node <hex>" and holds. call calls ~<provider>/vault and opens
 // ~<provider>/watch sealed to the key the provider's advertisement names, then
-// calls vault with ConfidentialOff, which a required provider refuses
+// checks the pool refuses ConfidentialOff, and calls vault in the clear from a
+// station link to it as an explicit target, which a required provider refuses
 // sealed_required. It prints each outcome and exits 1 on any other.
 package main
 
@@ -30,6 +31,7 @@ import (
 	"github.com/macula-io/macula-go/pool"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/transport"
 )
 
 func main() {
@@ -79,7 +81,7 @@ func run(mode, station, profileName, realmHex string, hold time.Duration, provid
 		if err != nil {
 			return err
 		}
-		return call(ctx, node, realm, target)
+		return call(ctx, node, seed, p, realm, target)
 	}
 	return fmt.Errorf("mode %q is serve or call", mode)
 }
@@ -114,7 +116,7 @@ func serve(ctx context.Context, node *pool.Pool, realm [32]byte, hold time.Durat
 	return nil
 }
 
-func call(ctx context.Context, node *pool.Pool, realm, provider [32]byte) error {
+func call(ctx context.Context, node *pool.Pool, seed pool.Seed, p profile.Profile, realm, provider [32]byte) error {
 	vault, watch := own(provider, "vault"), own(provider, "watch")
 	var result cbor.Value
 	var err error
@@ -141,13 +143,41 @@ func call(ctx context.Context, node *pool.Pool, realm, provider [32]byte) error 
 	if err != nil || rerr != nil || string(body) != "chunk from erlang" || replied != "streamed by erlang" {
 		return errors.New("the sealed stream")
 	}
-	_, err = node.Call(ctx, pool.Call{Realm: realm, Procedure: vault, Payload: cbor.Map(nil), Confidential: stationlink.ConfidentialOff})
+	// Off at the pool is refused, never ignored: a clear call is an explicit
+	// target's, on a station link without SealTo.
+	if _, err := node.Call(ctx, pool.Call{Realm: realm, Procedure: vault, Payload: cbor.Map(nil),
+		Confidential: stationlink.ConfidentialOff}); !errors.Is(err, pool.ErrConfidentialOff) {
+		return fmt.Errorf("off at the pool: %v, want ErrConfidentialOff", err)
+	}
+	link, err := explicitLink(ctx, seed, p)
+	if err != nil {
+		return err
+	}
+	defer link.Close("done")
+	_, err = link.Call(ctx, stationlink.Call{Realm: realm, Procedure: vault, Target: provider, Payload: cbor.Map(nil),
+		Timeout: 10 * time.Second})
 	fmt.Printf("clear call: %v\n", err)
 	var refused *stationlink.ProviderError
 	if !errors.As(err, &refused) || refused.Code != "sealed_required" {
 		return errors.New("the clear call was not refused sealed_required")
 	}
 	return nil
+}
+
+// explicitLink is a station link of a fresh identity, for a call to an
+// explicit target.
+func explicitLink(ctx context.Context, seed pool.Seed, p profile.Profile) (*stationlink.Link, error) {
+	key, err := identity.GenerateIdentityKey(p, identity.PuzzleDifficulty)
+	if err != nil {
+		return nil, err
+	}
+	issuer, err := identity.NewStatementIssuer(key, func() int64 { return time.Now().UnixMilli() })
+	if err != nil {
+		return nil, err
+	}
+	go issuer.Run(ctx, nil)
+	return stationlink.Dial(ctx, stationlink.Config{Target: transport.Target{Host: seed.Host, Port: seed.Port, Profile: p,
+		ExpectedNodeID: seed.NodeID}, IdentityKey: key, Issuer: issuer})
 }
 
 func id32(text string) ([32]byte, error) {

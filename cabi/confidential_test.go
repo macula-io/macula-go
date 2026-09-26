@@ -20,7 +20,7 @@ import (
 
 func TestConfidentialOptionsAreChecked(t *testing.T) {
 	for _, text := range []string{`{"confidential":"maybe"}`, `{"confidential":1}`, `{"sealed":1}`, `{"provider":"00"}`,
-		`{"proofs":"one"}`} {
+		`{"proofs":"one"}`, `{"confidential":"off"}`} {
 		if _, err := callOptionsOf(text); kindOf(err) != kindInvalidArgument {
 			t.Errorf("call options %s: %v, want invalid_argument", text, err)
 		}
@@ -94,12 +94,6 @@ func TestASealedCallThroughTheABI(t *testing.T) {
 	}
 	if request := <-requests; request["sealed"] != float64(1) {
 		t.Errorf("the served request says sealed %v", request["sealed"])
-	}
-	if _, err := callUntilProvided(ctx, caller, f.realm.ID, procedure, callOptions{confidential: stationlink.ConfidentialOff}); err != nil {
-		t.Fatalf("an off call inside the keyless window: %v", err)
-	}
-	if request := <-requests; request["sealed"] != float64(0) {
-		t.Errorf("a clear request says sealed %v", request["sealed"])
 	}
 
 	keyless := f.join(t, "keyless abi provider", f.stations[0])

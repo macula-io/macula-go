@@ -158,7 +158,7 @@ func TestCallsReachAServedProcedure(t *testing.T) {
 
 	go answerNext(t, s, func(pc *pendingCall, request map[string]any) {
 		result, _ := payloadFromJSON(`{"echo": 9223372036854775807, "raw": {"$bytes": "AQI="}}`)
-		if request["procedure"] != procedure {
+		if request["procedure"] != procedure || request["sealed"] != float64(0) {
 			t.Errorf("request: %v", request)
 		}
 		if err := pc.answer(pendingAnswer{payload: result}); err != nil {

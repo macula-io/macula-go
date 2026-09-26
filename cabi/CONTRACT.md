@@ -228,8 +228,10 @@ callers seal to that key; stations route what they cannot read.
 - `macula_pool_call_opts` and `macula_pool_open_stream_opts` take
   `confidential`, decided from the provider's verified advertisement only:
   `preferred` seals whenever it names a key, `required` never calls one that
-  names none, `off` sends in the clear. A sealed call never falls back to the
-  clear. A request's `sealed` (0 or 1) in `macula_served_next` says whether it
+  names none. Only an advertisement naming no key is called in the clear
+  (design §8.1): `off` is an explicit target's, and is refused here
+  (`invalid_argument`) rather than ignored. A sealed call never falls back to
+  the clear. A request's `sealed` (0 or 1) in `macula_served_next` says whether it
   came sealed; its payload is the opened plaintext either way.
 - A call that could not be kept confidential fails with the kind
   `confidentiality`: `reason` `no_kem_key` (the provider names no key where

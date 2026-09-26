@@ -154,8 +154,10 @@ char *macula_pool_call_with(macula_handle pool, const uint8_t realm[32], const c
                             const char *payload_json, const uint8_t *provider_node_id, const char *ucan,
                             const char *proofs_json, int64_t timeout_ms, macula_handle cancel, char **err_out);
 /* A call with its options as JSON (NULL for none): {"provider": "<node_id
- * hex>", "ucan", "proofs": [...], "confidential": "preferred"|"required"|"off"}.
- * A call that cannot be kept confidential fails with the kind
+ * hex>", "ucan", "proofs": [...], "confidential": "preferred"|"required"}.
+ * It is sealed whenever the provider's advertisement names a KEM key; "off" is
+ * refused (invalid_argument): only an advertisement naming no key is called in
+ * the clear. A call that cannot be kept confidential fails with the kind
  * "confidentiality". Since macula-go v0.18.0. */
 char *macula_pool_call_opts(macula_handle pool, const uint8_t realm[32], const char *procedure, const char *payload_json,
                             const char *options_json, int64_t timeout_ms, macula_handle cancel, char **err_out);

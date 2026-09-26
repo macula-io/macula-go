@@ -11,8 +11,8 @@ import (
 // End-to-end confidentiality through the ABI (macula 13, E2E design): the
 // *_opts functions take their options as JSON, so options added later need no
 // new function. A call or an open takes {"provider", "ucan", "proofs",
-// "confidential"}; a served procedure {"policy", "confidential"}.
-// "confidential" is "preferred" (the default), "required" or "off".
+// "confidential"}, "confidential" "preferred" (the default) or "required"; a
+// served procedure {"policy", "confidential"}, "confidential" also "off".
 
 // callOptions are a call's or an open's options.
 type callOptions struct {
@@ -39,6 +39,11 @@ func callOptionsOf(text string) (callOptions, error) {
 	conf, err := confidentialityOf(o.Confidential)
 	if err != nil {
 		return callOptions{}, err
+	}
+	if conf == stationlink.ConfidentialOff {
+		// Only an advertisement naming no key is called in the clear; off is
+		// an explicit target's, which the ABI does not offer.
+		return callOptions{}, invalidArgument("confidential off is refused for a call or an open: it is preferred or required")
 	}
 	opts := callOptions{confidential: conf}
 	if o.Provider != "" {

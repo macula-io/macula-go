@@ -73,7 +73,12 @@ run("call", {Pool, Seed}, Realm, _Profile, _Self, [Provider]) ->
     %% direct dial seals whenever the advertisement names a key.
     Clear = macula:call_station(Pool, Seed, Node, Realm, Vault, #{n => 1}, 10_000, #{confidential => off}),
     io:format("clear call: ~p~n", [Clear]),
-    verdict(Called, Streamed, Clear).
+    %% Direct dial with confidential => off: macula 13.0.0 seals it anyway
+    %% (it honours off only on an explicit target); the fix refuses it, as
+    %% macula-go's pool does. Strict once that fix runs (MACULA_OFF_REFUSED).
+    Off = macula:call(Pool, Realm, Vault, #{n => 1}, 10_000, #{confidential => off}),
+    io:format("off by direct dial: ~p~n", [Off]),
+    off_verdict(os:getenv("MACULA_OFF_REFUSED"), Off, verdict(Called, Streamed, Clear)).
 
 %% The provider's advertisement reaches the DHT in its own time.
 until_served(Call, 0) -> Call();
@@ -95,3 +100,7 @@ verdict({ok, {text, <<"kept by go">>}}, {{chunk, <<"chunk from go">>}, {ok, {tex
     0;
 verdict(_Called, _Streamed, _Clear) ->
     1.
+
+off_verdict("1", {error, _}, Verdict) -> Verdict;
+off_verdict("1", _Sealed, _Verdict) -> 1;
+off_verdict(_NotYet, _Off, Verdict) -> Verdict.

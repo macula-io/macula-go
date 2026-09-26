@@ -39,7 +39,8 @@ first_line() {
 info="$(first_line "$work/stations.out" '^\{')"
 read -r host port station realm < <(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); s=d["stations"][0]; print(s["host"], s["port"], s["node_id"], d["realm_id"])' "$info")
 erl() {
-  podman run --rm --name "$erl_name" --network host -v "$MACULA_BUILD:/macula:ro" -v "$root/scripts/interop:/interop:ro" \
+  podman run --rm --name "$erl_name" --network host -e MACULA_OFF_REFUSED="${MACULA_OFF_REFUSED:-}" \
+    -v "$MACULA_BUILD:/macula:ro" -v "$root/scripts/interop:/interop:ro" \
     "$image" escript /interop/erlang_sealed.escript /macula/_build/default/lib/macula "$host" "$port" "$station" "$realm" "$profile" "$@"
 }
 

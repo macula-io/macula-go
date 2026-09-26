@@ -58,10 +58,16 @@ func TestAPoolSealsToAKeyedProvider(t *testing.T) {
 	if text, _ := got.AsText(); err != nil || text != "secret" || !sealed {
 		t.Fatalf("a preferred call: %q, %v, sealed %v", text, err, sealed)
 	}
-	sealed = true
+	// Only an advertisement naming no key is called in the clear (design
+	// §8.1): off exists on an explicit target only, never at the pool, where
+	// it is refused rather than ignored.
 	if _, err := w.caller.Call(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("x"),
-		Confidential: stationlink.ConfidentialOff}); err != nil || sealed {
-		t.Errorf("an off call, inside the keyless window: %v, sealed %v", err, sealed)
+		Confidential: stationlink.ConfidentialOff}); !errors.Is(err, ErrConfidentialOff) {
+		t.Errorf("an off call at the pool: %v, want ErrConfidentialOff", err)
+	}
+	if _, err := w.caller.OpenStream(t.Context(), StreamCall{Realm: w.realm.ID, Procedure: procedure, Mode: frame.ServerStream,
+		Payload: cbor.Map(nil), Confidential: stationlink.ConfidentialOff}); !errors.Is(err, ErrConfidentialOff) {
+		t.Errorf("an off stream at the pool: %v, want ErrConfidentialOff", err)
 	}
 
 	w.serve(t, Offer{Procedure: "mcl-echo/stream", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,

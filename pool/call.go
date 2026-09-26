@@ -23,6 +23,12 @@ var (
 	// ErrNoStationEndpoint is a serving station with no endpoint record it
 	// signed itself.
 	ErrNoStationEndpoint = errors.New("pool: the serving station has no endpoint record of its own")
+	// ErrConfidentialOff is a pool call or stream with ConfidentialOff. A
+	// pool decides from the provider's verified advertisement, and only one
+	// naming no key is called in the clear (macula 13's E2E design §8.1):
+	// off is an explicit target's (stationlink.Call without SealTo), and is
+	// refused here rather than ignored.
+	ErrConfidentialOff = errors.New("pool: confidential off is an explicit target's; a pool call is preferred or required")
 	// ErrDirectLinksFull is a serving station not yet linked while the pool
 	// already holds MaxDirectLinks direct links.
 	ErrDirectLinksFull = errors.New("pool: MaxDirectLinks direct links are held")
@@ -43,8 +49,9 @@ type Call struct {
 	// §8.1), decided from the provider's verified advertisement only:
 	// ConfidentialPreferred (zero) seals whenever it names a KEM key and
 	// sends in the clear only to one that names none; ConfidentialRequired
-	// never calls one that names none (no_kem_key); ConfidentialOff sends in
-	// the clear. A sealed call never falls back to the clear.
+	// never calls one that names none (no_kem_key). ConfidentialOff is
+	// ErrConfidentialOff: a clear call is an explicit target's
+	// (stationlink.Call). A sealed call never falls back to the clear.
 	Confidential stationlink.Confidentiality
 }
 
@@ -83,6 +90,9 @@ type resolvedKey struct {
 // it is. A candidate that answered is remembered until its advertisement
 // expires.
 func (p *Pool) Call(ctx context.Context, c Call) (cbor.Value, error) {
+	if c.Confidential == stationlink.ConfidentialOff {
+		return cbor.Value{}, ErrConfidentialOff
+	}
 	realmKey, err := p.realmKeyFor(c.Realm, c.Procedure)
 	if err != nil {
 		return cbor.Value{}, err
@@ -217,13 +227,10 @@ func (p *Pool) callAt(ctx context.Context, cand candidate, c Call) (cbor.Value, 
 }
 
 // sealTo is the key a call to cand is sealed to under conf, nil for a clear
-// call: the key its advertisement names, unless conf is off; none when it
-// names none, unless conf requires one. A named key not of this pool's
-// profile is no_kem_key.
+// call: the key its advertisement names; none when it names none, unless conf
+// requires one. A named key not of this pool's profile is no_kem_key.
 func (p *Pool) sealTo(cand candidate, conf stationlink.Confidentiality) ([]byte, error) {
 	switch {
-	case conf == stationlink.ConfidentialOff:
-		return nil, nil
 	case cand.kemKey == nil && conf == stationlink.ConfidentialRequired:
 		return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonNoKEMKey}
 	case cand.kemKey == nil:
@@ -461,7 +468,8 @@ type StreamCall struct {
 	Deadline  time.Duration
 	Token     []byte
 	Proofs    [][]byte
-	// Confidential is whether the stream is sealed, as Call.Confidential.
+	// Confidential is whether the stream is sealed, as Call.Confidential
+	// (ConfidentialOff is ErrConfidentialOff).
 	Confidential stationlink.Confidentiality
 }
 
@@ -471,6 +479,9 @@ type StreamCall struct {
 // cannot be reached. The stream is open once its STREAM_OPEN is sent; a
 // provider's or station's refusal arrives on its first Recv.
 func (p *Pool) OpenStream(ctx context.Context, c StreamCall) (*stationlink.Stream, error) {
+	if c.Confidential == stationlink.ConfidentialOff {
+		return nil, ErrConfidentialOff
+	}
 	realmKey, err := p.realmKeyFor(c.Realm, c.Procedure)
 	if err != nil {
 		return nil, err

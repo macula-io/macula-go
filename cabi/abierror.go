@@ -132,6 +132,8 @@ func classify(ctx context.Context, err error) *abiError {
 	case errors.Is(err, pool.ErrClosed), errors.Is(err, stationlink.ErrClosed), errors.Is(err, stationlink.ErrStreamClosed),
 		errors.Is(err, stationlink.ErrStopped):
 		return newError(kindClosed, "%v", err)
+	case errors.Is(err, pool.ErrConfidentialOff):
+		return newError(kindInvalidArgument, "%v", err)
 	case errors.Is(err, pool.ErrNoProvider):
 		return newError(kindNoProvider, "%v", err)
 	}

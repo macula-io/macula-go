@@ -455,7 +455,7 @@ int main(int argc, char **argv) {
 
   /* Sealed end to end (macula 13): a node that names its KEM key, a procedure
    * that takes sealed calls only, a sealed call and a sealed stream to it, and
-   * a clear call refused. */
+   * a pool call with confidential off refused. */
   {
     char vault[128], watch[128];
     size_t len = strlen(options);
@@ -486,9 +486,10 @@ int main(int argc, char **argv) {
     expect_contains("the sealed call's result", answer, "\"echo\":{\"$bytes\":\"AQI=\"}");
     macula_free_string(answer);
     pthread_join(thread, NULL);
+    /* Only an advertisement naming no key is called in the clear: off is an
+     * explicit target's, refused here rather than ignored. */
     macula_pool_call_opts(caller, realm, vault, "null", "{\"confidential\":\"off\"}", 20000, 0, &err);
-    if (!err || !strstr(err, "\"code\":\"sealed_required\"")) fail("a clear call to a required procedure", err);
-    expect_kind("a clear call to a required procedure", &err, "provider_error");
+    expect_kind("a pool call with confidential off", &err, "invalid_argument");
     macula_served_stop(sealed, &err);
     check("served_stop of the sealed procedure", err);
 
