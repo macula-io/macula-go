@@ -29,6 +29,7 @@ import (
 	"github.com/macula-io/macula-go/handshake"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
+	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/transport"
 )
 
@@ -84,6 +85,16 @@ type Config struct {
 	// Share is this link's place in the admission: the station it dialed,
 	// host:port, when empty.
 	Share string
+	// Keyring holds this identity's KEM keys (macula 13, E2E design,
+	// amendment A1): with it the link opens sealed requests; without it it
+	// refuses them, holding no key. Links of one identity share one.
+	Keyring *seal.Keyring
+	// KEMAdvertise names the keyring's current key in the advertisements of
+	// procedures served confidentially (ConfidentialPreferred or
+	// ConfidentialRequired). Off by default: switch it on only once every
+	// station runs macula 12.11 or later, which stores and routes a keyed
+	// advertisement, and every caller runs 13 (the station floor).
+	KEMAdvertise bool
 	// Dedup delivers each publication once; nil gives the link its own.
 	// Links of one node share one.
 	Dedup *EventDedup
@@ -117,6 +128,8 @@ type Link struct {
 	openWait     time.Duration // streamOpenWait when the link was dialed
 	admission    *Admission
 	share        string
+	keyring      *seal.Keyring
+	kemAdvertise bool
 	self         [32]byte
 	seq          *PublicationSeq
 	done         chan struct{}
@@ -128,7 +141,8 @@ type Link struct {
 // link once the station's HELLO accepts it. The handshake is bounded by
 // HandshakeTimeout within ctx.
 func Dial(ctx context.Context, cfg Config) (*Link, error) {
-	if cfg.IdentityKey == nil || cfg.Issuer == nil || cfg.IdentityKey.Profile() != cfg.Target.Profile {
+	if cfg.IdentityKey == nil || cfg.Issuer == nil || cfg.IdentityKey.Profile() != cfg.Target.Profile ||
+		(cfg.Keyring != nil && cfg.Keyring.Profile() != cfg.Target.Profile) || (cfg.KEMAdvertise && cfg.Keyring == nil) {
 		return nil, ErrInvalidConfig
 	}
 	if cfg.Admission != nil {
@@ -221,6 +235,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, pending: map[[16]byte]*pendingCall{},
 		subs: map[topicKey][]*Subscription{}, dedup: dedup, self: self, seq: seq,
 		served: map[servedKey]*Served{}, streams: map[*Stream]struct{}{}, openWait: streamOpenWait, admission: admission, share: share,
+		keyring: cfg.Keyring, kemAdvertise: cfg.KEMAdvertise,
 		done: make(chan struct{}),
 	}
 	link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })

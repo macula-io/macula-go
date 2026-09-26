@@ -11,6 +11,7 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/record"
+	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/ucan"
 )
 
@@ -26,9 +27,9 @@ import (
 // answered with a RESULT or ERROR signed by this node. UNADVERTISE carries a
 // tombstone of the advertisement.
 //
-// Only open procedures are served. A gated procedure needs a post-quantum UCAN
-// verifier, which macula-go does not have yet (macula-io/macula-go#2), and is
-// refused by name rather than served open.
+// A procedure is served open, or gated on a UCAN policy (authorize.go). With
+// kem_advertise on, its advertisement names this node's KEM key, and a request
+// sealed to it is opened and answered sealed (confidential.go).
 
 // The provider codes of a served procedure's ERRORs: a handler's own refusal,
 // a handler that panicked, a procedure this link does not serve, a copy of a
@@ -79,6 +80,9 @@ type Request struct {
 	Token     []byte
 	Proofs    [][]byte
 	Deadline  time.Time
+	// Sealed is whether the request came sealed end to end: Payload is its
+	// opened plaintext, and the answer goes back sealed.
+	Sealed bool
 }
 
 // Handler answers a Request with a result payload, or an error whose text the
@@ -100,6 +104,15 @@ type Offer struct {
 	Stream   *StreamOffer
 	RealmKey []byte
 	Policy   ucan.Policy
+	// Confidential is how the procedure takes its requests
+	// (ConfidentialPreferred when zero): whether its advertisement names this
+	// node's KEM key, with kem_advertise on, and whether it takes clear ones.
+	Confidential Confidentiality
+	// KeyedSince is when the procedure was first advertised naming the key,
+	// from which its keyless window runs; Serve sets it to now when zero. A
+	// pool keeps it across the links it serves on, so no link reopens the
+	// window.
+	KeyedSince time.Time
 }
 
 // StreamOffer is a streaming procedure's mode and handler. The advertisement
@@ -156,6 +169,14 @@ func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 	if _, hasOrg, err := record.ProcedureOrg(o.Procedure); err != nil || !hasOrg {
 		return nil, errors.Join(ErrNoOrg, err)
 	}
+	switch {
+	case o.Confidential < ConfidentialPreferred || o.Confidential > ConfidentialOff:
+		return nil, ErrInvalidOffer
+	case o.Confidential == ConfidentialRequired && !(l.kemAdvertise && l.keyring != nil):
+		return nil, ErrKEMAdvertiseDisabled
+	case l.keyed(o) && o.KeyedSince.IsZero():
+		o.KeyedSince = time.Now()
+	}
 	maxTTL, retry := maxAdvertisementTTL, refreshRetry
 	advertisement, wire, err := l.advertisement(ctx, o, maxTTL)
 	if err != nil {
@@ -185,7 +206,7 @@ func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 func (l *Link) advertisement(ctx context.Context, o Offer, maxTTL time.Duration) (record.Record, []byte, error) {
 	if record.InOwnNamespace(o.Procedure) {
 		unsigned, err := record.NewProcedureAdvertisement(l.self, o.Realm, o.Procedure, l.station.NodeID,
-			record.ProcedureAdvertisementOptions{TTLMs: uint64(maxTTL / time.Millisecond)})
+			record.ProcedureAdvertisementOptions{TTLMs: uint64(maxTTL / time.Millisecond), KEMKey: l.kemKey(o)})
 		if err != nil {
 			return record.Record{}, nil, err
 		}
@@ -222,7 +243,8 @@ func (l *Link) advertisement(ctx context.Context, o Offer, maxTTL time.Duration)
 		record.ProcedureAdvertisementOptions{
 			Authorization: record.Authorization{Form: record.DelegationAuthorization,
 				OrgDirectory: directoryWire, ProcedureDelegation: delegationWire},
-			TTLMs: uint64(ttl),
+			TTLMs:  uint64(ttl),
+			KEMKey: l.kemKey(o),
 		})
 	if err != nil {
 		return record.Record{}, nil, err
@@ -411,51 +433,117 @@ func (l *Link) called(v cbor.Value) {
 	}
 }
 
-// answer runs the request's handler and sends its signed reply, storing it for
-// the request's copies.
+// answer serves a request and sends its signed reply, storing it for the
+// request's copies, in macula 13's order: a sealed request opened first, or
+// refused sealed_refused in the clear when it does not open; a clear one to a
+// procedure past its keyless window refused sealed_required; then the
+// procedure, its policy and its handler, answered sealed when the request was.
 func (l *Link) answer(request frame.VerifiedRequest) {
 	l.mu.Lock()
 	served := l.served[servedKey{request.Realm, request.Procedure}]
 	l.mu.Unlock()
-	var reply cbor.Value
-	if served == nil || served.offer.Handler == nil {
-		reply = l.providerError(request, codeUnknownProcedure, nil)
-	} else if code := l.authorize(served.offer.Policy, request); code != "" {
-		reply = l.providerError(request, code, nil)
-	} else {
-		reply = l.handled(served.offer.Handler, request)
-	}
+	reply := l.reply(request, served)
 	encoded := cbor.Encode(reply)
 	l.admission.store(request, encoded)
 	_ = l.writer.write(encoded, MaxFrameBytes)
 }
 
-// handled is the handler's answer to request as a signed reply: its result, its
-// refusal as handler_error, a panic as temporary_relay_failure, or a result the
-// wire cannot carry as payload_too_large or unknown_error.
-func (l *Link) handled(handler Handler, request frame.VerifiedRequest) (reply cbor.Value) {
+// reply is the signed reply to request, served by served (nil when this link
+// serves no such procedure).
+func (l *Link) reply(request frame.VerifiedRequest, served *Served) cbor.Value {
+	payload := request.Payload
+	var sealed *callSeal
+	if request.Sealed != nil {
+		plain, s, refused := l.openRequest(request)
+		if s == nil {
+			return l.providerError(request, codeSealedRefused, &refused)
+		}
+		payload, sealed = plain, s
+	} else if served != nil && !l.clearAllowed(served.offer, time.Now()) {
+		return l.providerError(request, codeSealedRequired, nil)
+	}
+	if served == nil || served.offer.Handler == nil {
+		return l.answered(request, sealed, outcome{code: codeUnknownProcedure})
+	}
+	if code := l.authorize(served.offer.Policy, request); code != "" {
+		return l.answered(request, sealed, outcome{code: code})
+	}
+	return l.answered(request, sealed, l.handled(served.offer.Handler, request, payload, sealed != nil))
+}
+
+// outcome is what answers a request: a RESULT's payload, or an ERROR's code
+// and detail (nil for none).
+type outcome struct {
+	payload cbor.Value
+	code    string
+	detail  *string
+}
+
+// handled is the handler's answer to request, on payload: its result, its
+// refusal as handler_error, or a panic as temporary_relay_failure.
+func (l *Link) handled(handler Handler, request frame.VerifiedRequest, payload cbor.Value, sealed bool) (answer outcome) {
 	defer func() {
 		if recover() != nil {
-			reply = l.providerError(request, codeHandlerCrashed, nil)
+			answer = outcome{code: codeHandlerCrashed}
 		}
 	}()
 	deadline := time.UnixMilli(int64(request.Deadline))
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	payload, err := handler(ctx, Request{Caller: request.Caller, Realm: request.Realm, Procedure: request.Procedure,
-		Payload: withoutCaller(request.Payload), Token: request.Token, Proofs: request.Proofs, Deadline: deadline})
+	result, err := handler(ctx, Request{Caller: request.Caller, Realm: request.Realm, Procedure: request.Procedure,
+		Payload: withoutCaller(payload), Token: request.Token, Proofs: request.Proofs, Deadline: deadline, Sealed: sealed})
 	if err != nil {
 		detail := boundedDetail(err.Error())
-		return l.providerError(request, codeHandlerError, &detail)
+		return outcome{code: codeHandlerError, detail: &detail}
 	}
-	signed, err := frame.SignResult(request, payload, nil, l.key)
-	if err != nil {
-		if len(cbor.Encode(payload)) > frame.MaxFrameBytes {
+	return outcome{payload: result}
+}
+
+// answered is an outcome as the signed reply to request: clear to a clear
+// request, sealed to a sealed one. A result the wire cannot carry is answered
+// payload_too_large or unknown_error, as macula answers it.
+func (l *Link) answered(request frame.VerifiedRequest, sealed *callSeal, answer outcome) cbor.Value {
+	if sealed == nil {
+		if answer.code != "" {
+			return l.providerError(request, answer.code, answer.detail)
+		}
+		signed, err := frame.SignResult(request, answer.payload, nil, l.key)
+		if err == nil {
+			return signed
+		}
+		if len(cbor.Encode(answer.payload)) > frame.MaxFrameBytes {
 			return l.providerError(request, codePayloadTooLarge, nil)
 		}
 		return l.providerError(request, codeUnsendable, nil)
 	}
-	return signed
+	if answer.code != "" {
+		return l.sealedError(request, sealed, answer.code, answer.detail)
+	}
+	if frame.CheckPayload(answer.payload) != nil {
+		return l.sealedError(request, sealed, codeUnsendable, nil)
+	}
+	reply, err := frame.SignSealedResult(request, sealed.sealedAnswer("result", cbor.Encode(answer.payload), request.RequestHash, l.self),
+		nil, l.key)
+	if err != nil || len(cbor.Encode(reply)) > frame.MaxFrameBytes {
+		return l.sealedError(request, sealed, codePayloadTooLarge, nil)
+	}
+	return reply
+}
+
+// sealedError is this node's ERROR for a sealed request, its code and detail
+// sealed as cbor([code, detail]). Signing it cannot fail on the key, as
+// providerError's cannot.
+func (l *Link) sealedError(request frame.VerifiedRequest, sealed *callSeal, code string, detail *string) cbor.Value {
+	text := ""
+	if detail != nil {
+		text = *detail
+	}
+	reply, err := frame.SignSealedProviderError(request, sealed.sealedAnswer("error", seal.ErrorPlain(code, text), request.RequestHash,
+		l.self), nil, l.key)
+	if err != nil {
+		panic(fmt.Sprintf("stationlink: a sealed provider error that does not sign: %v", err))
+	}
+	return reply
 }
 
 // withoutCaller is an inbound payload as a handler sees it: a map loses the
