@@ -70,14 +70,26 @@ func (l *Link) incoming(qs *quic.Stream) {
 		return
 	}
 	s := newStream(l, qs, open, false)
-	offer, code := l.admitStream(open)
-	if code != "" {
-		s.refuse(code)
+	verdict := l.admission.admit(open, l.share, time.Now().UnixMilli())
+	switch {
+	case verdict.refusal != "":
+		s.refuse(verdict.refusal)
+		return
+	case verdict.copy:
+		s.refuse(codeRequestCopy)
 		return
 	}
 	release, full := l.admission.openSession(open.Caller)
 	if full {
+		// Before the open is opened, so a caller at its cap costs no
+		// decapsulation: in the clear, from the closed set.
 		s.refuse(codeTooManySessions)
+		return
+	}
+	offer, code, message := l.servedStream(s, open)
+	if code != "" {
+		release()
+		s.refuseWith(code, message)
 		return
 	}
 	s.onEnd = release
@@ -91,39 +103,50 @@ func (l *Link) incoming(qs *quic.Stream) {
 	go s.serve(offer.Handler)
 }
 
-// admitStream judges an open as macula's link does, in its order: the
-// admission (one run per request, the deadline window, its bounds), the
-// procedure served here as a stream, its policy, and its mode. It returns the offer, or
-// the code to refuse with.
-func (l *Link) admitStream(open frame.VerifiedRequest) (*StreamOffer, string) {
-	verdict := l.admission.admit(open, l.share, time.Now().UnixMilli())
-	switch {
-	case verdict.refusal != "":
-		return nil, verdict.refusal
-	case verdict.copy:
-		return nil, codeRequestCopy
-	}
+// servedStream judges an admitted open with room for its session as macula
+// 13's link does, in its order: a sealed open opened first, and refused in the
+// clear, sealed_refused naming the key this node holds now, when it does not
+// open; a clear one refused sealed_required by a procedure past its keyless
+// window; then the procedure served here as a stream, its policy and its mode,
+// refused sealed once the open was. It returns the offer, or the code and
+// message to refuse with. An open that opened leaves s sealed.
+func (l *Link) servedStream(s *Stream, open frame.VerifiedRequest) (*StreamOffer, string, string) {
 	l.mu.Lock()
 	served := l.served[servedKey{open.Realm, open.Procedure}]
 	l.mu.Unlock()
+	if open.Sealed != nil {
+		plain, sealing, refused := l.openRequest(open)
+		if sealing == nil {
+			return nil, codeSealedRefused, refused
+		}
+		s.sealing, s.plain = newStreamSeal(sealing, false), plain
+	} else if served != nil && !l.clearAllowed(served.offer, time.Now()) {
+		return nil, codeSealedRequired, "this procedure takes sealed opens only"
+	}
 	if served == nil || served.offer.Stream == nil {
-		return nil, codeStreamNotFound
+		return nil, codeStreamNotFound, ""
 	}
 	if code := l.authorize(served.offer.Policy, open); code != "" {
-		return nil, code
+		return nil, code, ""
 	}
 	if served.offer.Stream.Mode != *open.Mode {
-		return nil, codeModeMismatch
+		return nil, codeModeMismatch, ""
 	}
-	return served.offer.Stream, ""
+	return served.offer.Stream, "", ""
 }
 
 // refuse answers an open with a STREAM_ERROR of code at seq 0 and releases the
 // stream.
 func (s *Stream) refuse(code string) {
+	s.refuseWith(code, "")
+}
+
+// refuseWith is refuse with a message: sealed_refused names the key this node
+// holds now in it.
+func (s *Stream) refuseWith(code, message string) {
 	s.link.count("stream_refused_" + code)
-	_ = s.send(frame.StreamErrorFields{Code: code}, true)
-	s.end(&StreamError{Code: code})
+	_ = s.send(frame.StreamErrorFields{Code: code, Message: message}, true)
+	s.end(&StreamError{Code: code, Message: message})
 }
 
 // serve runs the handler for the session, and ends the stream as the handler

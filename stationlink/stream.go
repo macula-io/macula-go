@@ -89,6 +89,13 @@ type Stream struct {
 	writer *frameWriter
 	open   frame.VerifiedRequest
 	caller bool
+	// sealing is a sealed stream's keys, nil for a clear one, and plain its
+	// opened STREAM_OPEN payload, which a served stream's Request gives.
+	sealing *streamSeal
+	plain   cbor.Value
+	// reopen is a sealed caller stream's call, while it may still reseal
+	// once on sealed_refused (StreamCall.Reseal); nil after, or never.
+	reopen *StreamCall
 	// onEnd, when set, runs once when the stream ends: it gives back the
 	// session's place and what its inbox held against the node's budgets.
 	onEnd  func()
@@ -126,6 +133,9 @@ func (s *Stream) Request() frame.VerifiedRequest {
 		return s.open
 	}
 	open := s.open
+	if s.sealing != nil {
+		open.Payload = s.plain
+	}
 	open.Payload = withoutCaller(open.Payload)
 	return open
 }
@@ -190,6 +200,13 @@ func (s *Stream) send(fields frame.StreamFields, last bool) error {
 		return ErrStreamClosed
 	}
 	fields = withSeq(fields, seq)
+	if s.sealing != nil {
+		sealed, err := s.sealing.sealed(fields, seq)
+		if err != nil {
+			return err
+		}
+		fields = sealed
+	}
 	var signed cbor.Value
 	var err error
 	if s.caller {
@@ -343,6 +360,18 @@ func (s *Stream) received(payload []byte, state frame.StreamState) (frame.Stream
 		s.fail("malformed_frame", err)
 		return state, true
 	}
+	if verified, err = s.unsealed(verified); err != nil {
+		var refused *StreamError
+		if errors.As(err, &refused) {
+			if refused.Code == codeSealedRefused && s.resealed(refused) {
+				return state, true
+			}
+			s.peerFinished(refused)
+		} else {
+			s.fail("malformed_frame", err)
+		}
+		return state, true
+	}
 	switch verified.FrameType {
 	case "stream_error":
 		s.peerFinished(&StreamError{Code: verified.Code, Message: verified.Message})
@@ -427,6 +456,7 @@ func (s *Stream) end(err error) {
 		}
 		graceful := s.sentEnd
 		s.sentEnd = true
+		qs := s.qs
 		held := s.held
 		s.held = 0
 		for i := range s.sizes {
@@ -434,11 +464,11 @@ func (s *Stream) end(err error) {
 		}
 		s.mu.Unlock()
 		if graceful {
-			_ = s.qs.Close()
+			_ = qs.Close()
 		} else {
-			s.qs.CancelWrite(0)
+			qs.CancelWrite(0)
 		}
-		s.qs.CancelRead(0)
+		qs.CancelRead(0)
 		if s.charge != nil && held > 0 {
 			s.charge(-held)
 		}

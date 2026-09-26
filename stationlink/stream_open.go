@@ -11,6 +11,7 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/seal"
 )
 
 // ErrStreamOpenTooLarge is a STREAM_OPEN over the 1 MiB a peer reads of one.
@@ -29,54 +30,95 @@ type StreamCall struct {
 	Deadline  time.Duration
 	Token     []byte
 	Proofs    [][]byte
+	// SealTo is the provider's KEM key as carried, from its verified
+	// advertisement: the open's payload is sealed to it, and every later
+	// frame under the stream's keys. nil opens in the clear.
+	SealTo []byte
+	// Reseal, when set, lets a sealed stream refused sealed_refused before
+	// it has sent anything seal once more: it is given the key id the
+	// provider named (nil for none) and returns the key to seal to, and the
+	// stream reopens under a new request, keeping its session. Its error ends
+	// the stream. Without it, the refusal ends the stream.
+	Reseal func(named *[seal.KeyIDSize]byte) ([]byte, error)
 }
 
 // OpenStream opens a streaming session: a QUIC stream of its own, on which it
 // writes the signed STREAM_OPEN. A stream it opens but cannot write the open
 // on is released before the error returns.
 func (l *Link) OpenStream(ctx context.Context, c StreamCall) (*Stream, error) {
+	opened, err := l.openOn(ctx, c, c.SealTo)
+	if err != nil {
+		return nil, err
+	}
+	s := newStream(l, opened.qs, opened.open, true)
+	s.sealing = opened.sealing
+	if c.SealTo != nil && c.Reseal != nil {
+		s.reopen = &c
+	}
+	if !l.holdStream(s) {
+		abandon(opened.qs)
+		return nil, ErrClosed
+	}
+	go s.read(opened.state)
+	return s, nil
+}
+
+// openedStream is a STREAM_OPEN written on a QUIC stream of its own.
+type openedStream struct {
+	qs      *quic.Stream
+	open    frame.VerifiedRequest
+	state   frame.StreamState
+	sealing *streamSeal
+}
+
+// openOn signs c as a STREAM_OPEN under a fresh request id, sealed to sealTo
+// when it is set, and writes it on a new QUIC stream, released again when the
+// write fails.
+func (l *Link) openOn(ctx context.Context, c StreamCall, sealTo []byte) (openedStream, error) {
 	deadline := c.Deadline
 	if deadline <= 0 {
 		deadline = DefaultStreamDeadline
 	}
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
-		return nil, err
+		return openedStream{}, err
 	}
 	mode := c.Mode
-	signed, err := frame.SignStreamOpen(frame.RequestSpec{RequestID: id, Realm: c.Realm, Procedure: c.Procedure,
-		Target: c.Target, Deadline: uint64(time.Now().Add(deadline).UnixMilli()), Payload: c.Payload, Mode: &mode,
-		Token: c.Token, Proofs: c.Proofs}, l.key)
+	spec := frame.RequestSpec{RequestID: id, Realm: c.Realm, Procedure: c.Procedure, Target: c.Target,
+		Deadline: uint64(time.Now().Add(deadline).UnixMilli()), Payload: c.Payload, Mode: &mode, Token: c.Token, Proofs: c.Proofs}
+	var sealing *streamSeal
+	if sealTo != nil {
+		keys, err := l.sealRequest(&spec, seal.FrameStreamOpen, sealTo)
+		if err != nil {
+			return openedStream{}, err
+		}
+		sealing = newStreamSeal(keys, true)
+	}
+	signed, err := frame.SignStreamOpen(spec, l.key)
 	if err != nil {
-		return nil, err
+		return openedStream{}, err
 	}
 	encoded := cbor.Encode(signed)
 	if len(encoded) > streamOpenBytes {
-		return nil, fmt.Errorf("%w: %d bytes", ErrStreamOpenTooLarge, len(encoded))
+		return openedStream{}, fmt.Errorf("%w: %d bytes", ErrStreamOpenTooLarge, len(encoded))
 	}
 	open, err := frame.VerifyRequest(signed, l.profile)
 	if err != nil {
-		return nil, err
+		return openedStream{}, err
 	}
 	state, err := frame.OpenStream(open)
 	if err != nil {
-		return nil, err
+		return openedStream{}, err
 	}
 	qs, err := l.conn.OpenStreamSync(ctx)
 	if err != nil {
-		return nil, err
+		return openedStream{}, err
 	}
-	s := newStream(l, qs, open, true)
-	if err := s.writer.write(encoded, streamOpenBytes); err != nil {
+	if err := (&frameWriter{w: qs}).write(encoded, streamOpenBytes); err != nil {
 		abandon(qs)
-		return nil, err
+		return openedStream{}, err
 	}
-	if !l.holdStream(s) {
-		abandon(qs)
-		return nil, ErrClosed
-	}
-	go s.read(state)
-	return s, nil
+	return openedStream{qs: qs, open: open, state: state, sealing: sealing}, nil
 }
 
 // abandon releases a QUIC stream no session holds, in both directions.

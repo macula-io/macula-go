@@ -9,6 +9,7 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/seal"
 )
 
 // The bounds on a call's timeout: macula's default of 5 seconds for a station
@@ -48,6 +49,11 @@ type Call struct {
 	Timeout   time.Duration
 	Token     []byte
 	Proofs    [][]byte
+	// SealTo is the provider's KEM key as carried, from its verified
+	// advertisement: the call's payload is sealed to it, and only a sealed
+	// answer, or from the clear a relay error, a refusal from the closed set
+	// or sealed_refused, answers it. nil sends in the clear.
+	SealTo []byte
 }
 
 // ProviderError is a provider's ERROR for the call, verified for its request.
@@ -77,6 +83,8 @@ func (e *RelayError) Error() string {
 // pendingCall is a call waiting for its reply.
 type pendingCall struct {
 	request frame.VerifiedRequest
+	// seal is a sealed call's keys, nil for a clear one.
+	seal    *callSeal
 	outcome chan callOutcome
 }
 
@@ -103,10 +111,19 @@ func (l *Link) Call(ctx context.Context, c Call) (cbor.Value, error) {
 	if _, err := rand.Read(id[:]); err != nil {
 		return cbor.Value{}, err
 	}
-	signed, err := frame.SignCall(frame.RequestSpec{
+	spec := frame.RequestSpec{
 		RequestID: id, Realm: c.Realm, Procedure: c.Procedure, Target: target,
 		Deadline: uint64(time.Now().Add(timeout).UnixMilli()), Payload: c.Payload, Token: c.Token, Proofs: c.Proofs,
-	}, l.key)
+	}
+	var sealing *callSeal
+	if c.SealTo != nil {
+		s, err := l.sealRequest(&spec, seal.FrameCall, c.SealTo)
+		if err != nil {
+			return cbor.Value{}, err
+		}
+		sealing = s
+	}
+	signed, err := frame.SignCall(spec, l.key)
 	if err != nil {
 		return cbor.Value{}, err
 	}
@@ -114,7 +131,7 @@ func (l *Link) Call(ctx context.Context, c Call) (cbor.Value, error) {
 	if err != nil {
 		return cbor.Value{}, err
 	}
-	pending := &pendingCall{request: request, outcome: make(chan callOutcome, 1)}
+	pending := &pendingCall{request: request, seal: sealing, outcome: make(chan callOutcome, 1)}
 	l.mu.Lock()
 	l.pending[id] = pending
 	l.mu.Unlock()
@@ -155,7 +172,7 @@ func (l *Link) replied(v cbor.Value) {
 		l.count("unmatched_reply")
 		return
 	}
-	outcome, verified := l.verifiedOutcome(v, pending.request)
+	outcome, verified := l.verifiedOutcome(v, pending)
 	if !verified {
 		l.count("unverified_reply")
 		return
@@ -166,11 +183,20 @@ func (l *Link) replied(v cbor.Value) {
 	}
 }
 
-func (l *Link) verifiedOutcome(v cbor.Value, request frame.VerifiedRequest) (callOutcome, bool) {
+func (l *Link) verifiedOutcome(v cbor.Value, pending *pendingCall) (callOutcome, bool) {
+	request := pending.request
 	if _, isReply := v.Get("reply"); isReply {
 		reply, err := frame.VerifyReply(v, request, l.profile)
 		if err != nil {
 			return callOutcome{}, false
+		}
+		if pending.seal != nil {
+			return pending.seal.sealedOutcome(reply, request.RequestHash), true
+		}
+		if reply.Sealed != nil {
+			// This node sealed nothing, so a sealed reply answers no request
+			// it made as the provider sealed it.
+			return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: codeSealedRefused}}, true
 		}
 		if reply.FrameType == "result" {
 			return callOutcome{payload: reply.Payload}, true

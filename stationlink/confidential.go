@@ -150,3 +150,134 @@ func (s *callSeal) sealedAnswer(frameType string, plain []byte, requestHash [48]
 	ct := seal.Seal(s.kRep, nonce, seal.ReplyAAD(s.request, frameType, requestHash, respondedBy), plain)
 	return frame.Sealed{KeyID: s.keyID, Nonce: nonce[:], Ct: ct}
 }
+
+// The reasons a ConfidentialityError gives, as macula's
+// {error, {confidentiality, Reason}} names them.
+const (
+	// ReasonNoKEMKey: the provider names a key the caller cannot seal to,
+	// or none where one is required.
+	ReasonNoKEMKey = "no_kem_key"
+	// ReasonKeyMismatch: the provider's sealed_refused named one key and
+	// its advertisement another.
+	ReasonKeyMismatch = "key_mismatch"
+	// ReasonReplyNotOpened: a sealed answer that does not open. It is
+	// signed by the provider and bound to its request, so it is the only
+	// answer the request gets: the call fails.
+	ReasonReplyNotOpened = "reply_not_opened"
+	// ReasonNoSignedState: an explicit target without a verified
+	// advertisement to seal from, nor a stated clear.
+	ReasonNoSignedState = "no_signed_state"
+)
+
+// ConfidentialityError is a call that could not be kept confidential, and so
+// was not made, or failed rather than be taken in the clear. Named and Found
+// are a key_mismatch's two key ids.
+type ConfidentialityError struct {
+	Reason string
+	Named  *[seal.KeyIDSize]byte
+	Found  *[seal.KeyIDSize]byte
+}
+
+func (e *ConfidentialityError) Error() string {
+	if e.Reason == ReasonKeyMismatch && e.Named != nil && e.Found != nil {
+		return "stationlink: confidentiality: the provider named key " + hex.EncodeToString(e.Named[:]) +
+			" and advertises " + hex.EncodeToString(e.Found[:])
+	}
+	return "stationlink: confidentiality: " + e.Reason
+}
+
+// SealedRefusedError is a provider's sealed_refused: it could not open the
+// request. Named is the key it holds now, which the caller may seal to once
+// more under a new request, or nil when it holds none.
+type SealedRefusedError struct {
+	Named *[seal.KeyIDSize]byte
+}
+
+func (e *SealedRefusedError) Error() string {
+	if e.Named == nil {
+		return "stationlink: the provider opens no sealed payload"
+	}
+	return "stationlink: the provider could not open the request; it holds key " + hex.EncodeToString(e.Named[:])
+}
+
+// ErrClearAnswerToSealed is a clear answer to a sealed request that nothing
+// clear may give: not a relay error, not a refusal from the closed set, not
+// sealed_refused. It is refused, never taken as the answer.
+var ErrClearAnswerToSealed = errors.New("stationlink: a clear answer to a sealed request")
+
+// refusedKey is the key id a sealed_refused's detail names, nil for none.
+func refusedKey(detail *string) *[seal.KeyIDSize]byte {
+	if detail == nil || len(*detail) != 2*seal.KeyIDSize {
+		return nil
+	}
+	b, err := hex.DecodeString(*detail)
+	if err != nil {
+		return nil
+	}
+	id := [seal.KeyIDSize]byte(b)
+	return &id
+}
+
+// sealRequest seals spec's payload to the provider key carried as sealTo, for
+// frameType, and returns the keys the caller keeps. A key that is not one of
+// this profile's is no_kem_key.
+func (l *Link) sealRequest(spec *frame.RequestSpec, frameType string, sealTo []byte) (*callSeal, error) {
+	pub, err := seal.ParsePublicKey(l.profile, sealTo)
+	if err != nil {
+		return nil, &ConfidentialityError{Reason: ReasonNoKEMKey}
+	}
+	if err := frame.CheckPayload(spec.Payload); err != nil {
+		return nil, err
+	}
+	ss, kemCt, err := seal.SenderSecret(pub)
+	if err != nil {
+		return nil, &ConfidentialityError{Reason: ReasonNoKEMKey}
+	}
+	caller := l.key.KeyID()
+	parties := seal.Parties{RequestID: spec.RequestID, Caller: caller, Target: spec.Target}
+	kReq, kRep := seal.CallKeys(ss, frameType, parties)
+	s := &callSeal{keyID: seal.KeyID(sealTo), kRep: kRep, request: seal.Request{FrameType: frameType, Realm: spec.Realm,
+		Procedure: spec.Procedure, Caller: caller, Target: spec.Target, RequestID: spec.RequestID, Deadline: spec.Deadline}}
+	if frameType == seal.FrameStreamOpen {
+		s.kC2P, s.kP2C = seal.StreamKeys(ss, parties)
+	}
+	spec.Sealed = &frame.Sealed{KeyID: s.keyID, KemCt: kemCt,
+		Ct: seal.Seal(kReq, [seal.NonceSize]byte{}, seal.RequestAAD(s.request), cbor.Encode(spec.Payload))}
+	return s, nil
+}
+
+// sealedOutcome is what a verified provider reply means to a sealed call, as
+// macula's answer_of/2 reads it: a sealed answer opened, a clear sealed_refused
+// naming the provider's key, a clear refusal from the closed set, and nothing
+// else.
+func (s *callSeal) sealedOutcome(reply frame.VerifiedReply, requestHash [48]byte) callOutcome {
+	switch {
+	case reply.Sealed != nil:
+		plain, err := seal.Open(s.kRep, [seal.NonceSize]byte(reply.Sealed.Nonce),
+			seal.ReplyAAD(s.request, reply.FrameType, requestHash, reply.RespondedBy), reply.Sealed.Ct)
+		if err != nil {
+			return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
+		}
+		if reply.FrameType == "result" {
+			payload, err := cbor.Decode(plain)
+			if err != nil {
+				return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
+			}
+			return callOutcome{payload: payload}
+		}
+		code, detail, err := seal.OpenErrorPlain(plain)
+		if err != nil {
+			return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
+		}
+		var d *string
+		if detail != "" {
+			d = &detail
+		}
+		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: code, Detail: d}}
+	case reply.FrameType == "error" && reply.Code == codeSealedRefused:
+		return callOutcome{err: &SealedRefusedError{Named: refusedKey(reply.Detail)}}
+	case reply.FrameType == "error" && IsClearRefusal(reply.Code):
+		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: reply.Code, Detail: reply.Detail}}
+	}
+	return callOutcome{err: ErrClearAnswerToSealed}
+}
