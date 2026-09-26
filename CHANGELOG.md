@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `devicerequest`: a device's request to a realm, signed (realm proof v2,
+  macula-realm#29): the join session over HTTP and the membership UCAN over
+  the mesh. The signed bytes are macula-realm's own message, byte for byte
+  (its vector is in `devicerequest/testdata`): the carried key, the realm, the
+  procedure, a timestamp, a nonce and every field of the request, so the
+  device_info an admitter reads and the ttl_seconds a realm grants are
+  signed. `JSONRequest` applies the realm's JSON rule to an HTTP body.
+- cabi: `macula_key_device_request_proof` and `macula_device_request_message`
+  (since v0.14.0; ABI 1 still). A new function no longer changes
+  `MACULA_ABI_VERSION`, only a change to an existing declaration does; and a
+  binding treats an error kind it does not know as `failed`.
+
 ## [0.13.0] - 2026-09-26
 
 ### Added

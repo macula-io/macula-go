@@ -6,7 +6,7 @@
  * builds it against the built library and runs it with two in-process
  * stations:
  *
- *   abi_test <key dir> <seeds json> <realm hex> <options json>
+ *   abi_test <key dir> <seeds json> <realm hex> <options json> <device request vector hex>
  *
  * It prints "ok" last, or fails with the step that went wrong.
  */
@@ -120,8 +120,8 @@ static void *cancel_later(void *p) {
 }
 
 int main(int argc, char **argv) {
-  if (argc != 5) {
-    fprintf(stderr, "usage: abi_test <key dir> <seeds json> <realm hex> <options json>\n");
+  if (argc != 6) {
+    fprintf(stderr, "usage: abi_test <key dir> <seeds json> <realm hex> <options json> <device request vector hex>\n");
     return 2;
   }
   const char *dir = argv[1], *seeds = argv[2], *options = argv[4];
@@ -283,6 +283,41 @@ int main(int argc, char **argv) {
   macula_free_bytes(sig);
   macula_free_bytes(pub);
   macula_key_free(key);
+
+  /* The realm's device request vector, through the ABI; then a proof. */
+  {
+    const char *vector_hex = argv[5];
+    size_t vector_len = strlen(vector_hex) / 2;
+    uint8_t *vector = malloc(vector_len);
+    hex_to(vector_hex, vector, vector_len);
+    uint8_t pub[2592], io_macula[32], nonce[16] = {0};
+    memset(pub, 0x07, sizeof pub);
+    hex_to("abb81b5a614b63551b400b810648c0c8a78efad845442630c94b46cc95d2fcd1", io_macula, 32);
+    size_t message_len = 0;
+    uint8_t *message = macula_device_request_message(pub, sizeof pub, io_macula, "macula_realm.join_session",
+        1790000000000, nonce, "{\"device_info\": {\"hostname\": \"laptop.local\", \"note\": null}, \"n\": 1e2, \"z\": -0.0, \"f\": 1.5}",
+        MACULA_REQUEST_HTTP, &message_len, &err);
+    check("device_request_message", err);
+    if (message_len != vector_len || memcmp(message, vector, vector_len) != 0) fail("the device request message is not the realm's vector", NULL);
+    macula_free_bytes(message);
+    free(vector);
+    macula_device_request_message(pub, sizeof pub, io_macula, "macula_realm.join_session", 1, nonce, "{\"ok\": true}",
+        MACULA_REQUEST_HTTP, &message_len, &err);
+    expect_kind("a boolean in a device request", &err, "invalid_argument");
+
+    char keypath[512];
+    snprintf(keypath, sizeof keypath, "%s/device.key", dir);
+    macula_handle device = macula_key_load_or_create(keypath, "pq_pure", 0, &err);
+    check("device key", err);
+    char *proof = macula_key_device_request_proof(device, io_macula, "macula_realm.membership_ucan",
+        "{\"public_key\": \"a2V5\", \"ttl_seconds\": 3600}", MACULA_REQUEST_MESH, &err);
+    check("device_request_proof", err);
+    expect_contains("the proof", proof, "\"v\":2");
+    expect_contains("the proof", proof, "\"nonce\":\"");
+    expect_contains("the proof", proof, "\"signature\":\"");
+    macula_free_string(proof);
+    macula_key_free(device);
+  }
 
   /* Closing a pool ends what it owns. */
   sub = macula_pool_subscribe(caller, realm, "abi.after", &err);

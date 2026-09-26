@@ -8,7 +8,8 @@
  *
  * This header is the contract; cabi/CONTRACT.md says what every call means.
  * cabi's tests fail if the exported functions and this header disagree.
- * Any change to a declaration here changes MACULA_ABI_VERSION.
+ * A change to an existing declaration changes MACULA_ABI_VERSION; a new
+ * function does not, and says since which macula-go version it exists.
  */
 #ifndef MACULA_H
 #define MACULA_H
@@ -67,6 +68,23 @@ uint8_t *macula_key_sign(macula_handle key, const uint8_t *data, size_t data_len
 int32_t macula_verify(const uint8_t *data, size_t data_len, const uint8_t *signature, size_t signature_len,
                       const uint8_t *public_key, size_t public_key_len, const char *profile, char **err_out);
 void macula_key_free(macula_handle key);
+
+/* ---- Device request proofs (realm proof v2, macula-realm#29) ----------- */
+/* Since macula-go v0.14.0. */
+
+#define MACULA_REQUEST_HTTP 0 /* an HTTP body, under the realm's JSON rule */
+#define MACULA_REQUEST_MESH 1 /* a mesh payload, as it goes on the wire */
+
+/* A v2 proof that key made request_json (a JSON object, its "proof" left
+ * out) for procedure in realm, now, with a fresh nonce:
+ * {"v":2,"timestamp","nonce","signature"}. */
+char *macula_key_device_request_proof(macula_handle key, const uint8_t realm[32], const char *procedure,
+                                      const char *request_json, int32_t rule, char **err_out);
+/* The exact bytes such a proof signs, for a given timestamp and nonce: what a
+ * binding checks the realm's vector with. */
+uint8_t *macula_device_request_message(const uint8_t *public_key, size_t public_key_len, const uint8_t realm[32],
+                                       const char *procedure, int64_t timestamp_ms, const uint8_t nonce[16],
+                                       const char *request_json, int32_t rule, size_t *out_len, char **err_out);
 
 /* ---- Pool -------------------------------------------------------------- */
 

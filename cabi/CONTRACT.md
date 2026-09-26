@@ -10,8 +10,13 @@ nothing else.
 
 `macula_abi_version()` returns the library's `MACULA_ABI_VERSION`. A binding
 compares it with the version it was written against and refuses a library
-built for another. Any change to a declaration in `macula.h` changes the
-version; the set of declarations is fixed per macula-go tag.
+built for another. A change to an existing declaration in `macula.h` changes
+the version; a new function does not, and `macula.h` says since which
+macula-go version it exists, so a binding that uses one pins at least that
+version. The set of declarations is fixed per macula-go tag.
+
+An error `kind` a binding does not know is `failed` to it: kinds may be added
+without a new version.
 
 ## Handles
 

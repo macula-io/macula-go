@@ -157,8 +157,13 @@ func TestACProgramDrivesTheLibrary(t *testing.T) {
 	realm := teststation.NewRealm(t, profile.PQPure, "abi", "mcl-abi")
 	f := fleet{stations: []*teststation.Station{a, b}, realm: realm}
 
+	vector, err := os.ReadFile(filepath.Join("..", "devicerequest", "testdata", "device_request_proof_vector.hex"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	keys := t.TempDir()
-	run := exec.Command(program, keys, f.seedsJSON(a), hex.EncodeToString(realm.ID[:]), f.optionsJSON())
+	run := exec.Command(program, keys, f.seedsJSON(a), hex.EncodeToString(realm.ID[:]), f.optionsJSON(),
+		strings.TrimSpace(string(vector)))
 	out, err := run.CombinedOutput()
 	if err != nil || !strings.HasSuffix(strings.TrimSpace(string(out)), "ok") {
 		t.Fatalf("abi_test: %v\n%s", err, out)
