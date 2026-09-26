@@ -19,8 +19,10 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -36,6 +38,7 @@ import (
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/transport"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 func main() {
@@ -125,10 +128,14 @@ func stationTarget(host string, port uint16, p profile.Profile, nodeID [32]byte)
 // it from a second link every every, for serve.
 func serveCheck(provider *stationlink.Link, providerKey *identity.NodeKey, target transport.Target, serve, every time.Duration) error {
 	p := target.Profile
-	var realm [32]byte
-	if _, err := rand.Read(realm[:]); err != nil {
+	var suffix [6]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
 		return err
 	}
+	// A named throwaway realm, its id the name's SHA-256 as a realm's is, so
+	// the gated check's UCANs grant in it by name.
+	realmName := "golivelink-" + hex.EncodeToString(suffix[:])
+	realm := sha256.Sum256([]byte(realmName))
 	const org, procedure = "golivelink", "golivelink/echo"
 	realmKey, err := identity.GenerateKey(identity.PurposeIdentity, p)
 	if err != nil {
@@ -176,6 +183,11 @@ func serveCheck(provider *stationlink.Link, providerKey *identity.NodeKey, targe
 	}
 	defer caller.Close()
 	if err := streamCheck(ctx, provider, caller, realm, realmKey.PublicKey()); err != nil {
+		return err
+	}
+	gated, cancelGated := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelGated()
+	if err := gatedCheck(gated, provider, caller, p, realmName, realmKey.PublicKey()); err != nil {
 		return err
 	}
 	ticker := time.NewTicker(every)
@@ -392,4 +404,99 @@ func clientStreamCheck(ctx context.Context, provider *stationlink.Link, caller *
 	total, _ := event.Payload.AsInt64()
 	fmt.Printf("stream %s: reply %d bytes at %s\n", count, total, time.Since(started).Round(time.Millisecond))
 	return nil
+}
+
+// gatedCheck serves golivelink/gated and golivelink/gated_watch on provider
+// gated on a fresh root node, and presents them what a gated provider must
+// judge as macula's link does, through the live station: no token
+// (unauthorized), the root's grant to the caller (served), and that grant with
+// a proof no token names (malformed_frame). Any other answer fails the run.
+func gatedCheck(ctx context.Context, provider *stationlink.Link, caller *pool.Pool, p profile.Profile, realmName string,
+	realmKey []byte) error {
+	const call, watch = "golivelink/gated", "golivelink/gated_watch"
+	realm := sha256.Sum256([]byte(realmName))
+	root, err := identity.GenerateIdentityKey(p, identity.PuzzleDifficulty)
+	if err != nil {
+		return err
+	}
+	rootID, err := root.NodeID()
+	if err != nil {
+		return err
+	}
+	policy := ucan.UCANRequired{Issuer: rootID}
+	calls, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: call, RealmKey: realmKey, Policy: policy,
+		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return cbor.Text("served"), nil }})
+	if err != nil {
+		return fmt.Errorf("serve %s: %w", call, err)
+	}
+	defer func() { _ = calls.Stop() }()
+	streams, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: watch, RealmKey: realmKey, Policy: policy,
+		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
+			return s.Send([]byte("served"))
+		}}})
+	if err != nil {
+		return fmt.Errorf("serve %s: %w", watch, err)
+	}
+	defer func() { _ = streams.Stop() }()
+	grant := func(audience [32]byte) ([]byte, error) {
+		return ucan.Create(root, audience, []ucan.Capability{{With: "mri:org:" + realmName + "/golivelink", Can: "invoke"}},
+			ucan.Options{Exp: time.Now().Unix() + 300})
+	}
+	token, err := grant(caller.NodeID())
+	if err != nil {
+		return err
+	}
+	stray, err := grant(provider.NodeID())
+	if err != nil {
+		return err
+	}
+	cases := []struct {
+		name   string
+		token  []byte
+		proofs [][]byte
+		want   string
+	}{
+		{"no token", nil, nil, "unauthorized"},
+		{"the root's grant", token, nil, ""},
+		{"a proof no token names", token, [][]byte{stray}, "malformed_frame"},
+	}
+	for _, c := range cases {
+		_, err := caller.Call(ctx, pool.Call{Realm: realm, Procedure: call, Payload: cbor.Map(nil), Timeout: 10 * time.Second,
+			Token: c.token, Proofs: c.proofs})
+		got := refusedWith(err)
+		fmt.Printf("gated call, %s: %s\n", c.name, outcome(err))
+		if got != c.want {
+			return fmt.Errorf("gated call, %s: %v, want %q", c.name, err, c.want)
+		}
+		stream, err := caller.OpenStream(ctx, pool.StreamCall{Realm: realm, Procedure: watch, Mode: frame.ServerStream,
+			Payload: cbor.Map(nil), Token: c.token, Proofs: c.proofs})
+		if err != nil {
+			return fmt.Errorf("gated open, %s: %w", c.name, err)
+		}
+		recvCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_, err = stream.Recv(recvCtx)
+		cancel()
+		_ = stream.Close()
+		fmt.Printf("gated open, %s: %s\n", c.name, outcome(err))
+		if got := refusedWith(err); got != c.want {
+			return fmt.Errorf("gated open, %s: %v, want %q", c.name, err, c.want)
+		}
+	}
+	return nil
+}
+
+// refusedWith is the code a provider refused a call or an open with, "" for
+// none, or the error's text for any other failure, which matches no code.
+func refusedWith(err error) string {
+	var provided *stationlink.ProviderError
+	var stream *stationlink.StreamError
+	switch {
+	case err == nil:
+		return ""
+	case errors.As(err, &provided):
+		return provided.Code
+	case errors.As(err, &stream) && !stream.Relay:
+		return stream.Code
+	}
+	return err.Error()
 }

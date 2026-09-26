@@ -102,7 +102,10 @@ leaf), a `_macula.ping`, `_dht.*` finds and a put of its own signed node record,
 event. With `-serve` it then serves `golivelink/echo` under a throwaway test realm, whose org directory and delegation it
 signs and puts in the station's DHT, and calls it every `-every` for `-serve` from a second node's `pool`, by direct
 dial. Before the calls it serves and opens two streams the same way: `golivelink/watch`, a server stream of three chunks,
-and `golivelink/count`, a client stream the provider answers with a reply:
+and `golivelink/count`, a client stream the provider answers with a reply. Its throwaway realm is named
+(`golivelink-<hex>`, its id the name's SHA-256), so it also serves `golivelink/gated` and `golivelink/gated_watch`
+gated on a fresh root node, and checks the provider's answers through the station: no token `unauthorized`, the root's
+grant served, and a proof no token names `malformed_frame`, for a call and an open alike:
 
 ```sh
 go run ./scripts/interop/golivelink -host 127.0.0.1 -port 44330 -profile pq_hybrid -node <station node_id, 64 hex>
