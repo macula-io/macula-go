@@ -58,6 +58,13 @@ type vectorReply struct {
 	RespondedBy hexBytes `json:"responded_by"`
 }
 
+// vectorErrorReply is a sealed ERROR: its plaintext is cbor([code, detail]).
+type vectorErrorReply struct {
+	vectorReply
+	Code   string `json:"code"`
+	Detail string `json:"detail"`
+}
+
 type vectorFrame struct {
 	vectorSealed
 	Direction uint8  `json:"direction"`
@@ -91,9 +98,11 @@ type vectorCall struct {
 	KC2P hexBytes `json:"k_c2p"`
 	KP2C hexBytes `json:"k_p2c"`
 
-	Request vectorSealed  `json:"request"`
-	Reply   *vectorReply  `json:"reply"`
-	Frames  []vectorFrame `json:"frames"`
+	Request vectorSealed `json:"request"`
+	Reply   *vectorReply `json:"reply"`
+	// ErrorReply is a call's sealed ERROR.
+	ErrorReply *vectorErrorReply `json:"error_reply"`
+	Frames     []vectorFrame     `json:"frames"`
 }
 
 type vectorEvent struct {
@@ -284,6 +293,20 @@ func TestVectorCalls(t *testing.T) {
 				aad := ReplyAAD(request, c.Reply.FrameType, [48]byte(c.Reply.RequestHash), id32(t, c.Reply.RespondedBy))
 				equal(t, "reply aad", aad, c.Reply.Aad)
 				checkSealed(t, "reply", kRep, c.Reply.vectorSealed)
+			}
+			if c.FrameType == FrameCall {
+				e := c.ErrorReply
+				if e == nil || e.FrameType != "error" {
+					t.Fatalf("a call vector without its sealed ERROR")
+				}
+				equal(t, "error plaintext", ErrorPlain(e.Code, e.Detail), e.Plain)
+				code, detail, err := OpenErrorPlain(e.Plain)
+				if err != nil || code != e.Code || detail != e.Detail {
+					t.Fatalf("error plaintext reads as %q, %q, %v", code, detail, err)
+				}
+				aad := ReplyAAD(request, e.FrameType, [48]byte(e.RequestHash), id32(t, e.RespondedBy))
+				equal(t, "error aad", aad, e.Aad)
+				checkSealed(t, "error", kRep, e.vectorSealed)
 			}
 
 			if c.FrameType != FrameStreamOpen {

@@ -444,6 +444,36 @@ func expand(prk, info []byte, length int) []byte {
 // encode is the CBOR array of the items in cbor's deterministic encoding,
 // which for arrays of byte strings, text and unsigned integers is RFC 8949's
 // core deterministic one.
+// ErrorPlain is a sealed ERROR's plaintext: cbor([code, detail]), both text,
+// detail the empty text when there is none. A sealed ERROR carries no code or
+// detail of its own; both travel sealed.
+func ErrorPlain(code, detail string) []byte {
+	return encode(cbor.Text(code), cbor.Text(detail))
+}
+
+// ErrNotAnErrorPlain is an opened ERROR plaintext that is not
+// cbor([code, detail]) with both text: the provider sealed something else.
+var ErrNotAnErrorPlain = errors.New("seal: an ERROR's plaintext is not cbor([code, detail])")
+
+// OpenErrorPlain reads a sealed ERROR's opened plaintext as its code and
+// detail. An empty detail is none.
+func OpenErrorPlain(plain []byte) (code, detail string, err error) {
+	v, err := cbor.Decode(plain)
+	if err != nil {
+		return "", "", errors.Join(ErrNotAnErrorPlain, err)
+	}
+	items, ok := v.AsList()
+	if !ok || len(items) != 2 {
+		return "", "", ErrNotAnErrorPlain
+	}
+	code, codeOK := items[0].AsText()
+	detail, detailOK := items[1].AsText()
+	if !codeOK || !detailOK {
+		return "", "", ErrNotAnErrorPlain
+	}
+	return code, detail, nil
+}
+
 func encode(items ...cbor.Value) []byte {
 	return cbor.Encode(cbor.List(items))
 }
