@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-26
+
 ### Added
 
 - `cabi`: macula-go's macula 12 API behind one C ABI (`cabi/macula.h`,
