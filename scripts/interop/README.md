@@ -152,11 +152,15 @@ MACULA_BUILD=<macula checkout at v13.x, compiled> scripts/interop/sealed.sh pq_p
 
 The Erlang caller also calls with `confidential => off` by direct dial.
 macula 13.0.0 seals that call anyway (it honours `off` only on an explicit
-target), where macula-go's pool refuses it; the macula fix refuses it too.
-With `MACULA_OFF_REFUSED=1` the script requires the refusal, for a macula build
-that carries the fix.
+target), where macula-go's pool refuses it; macula 13.0.1 refuses it too, as
+`{error, {confidentiality, off_needs_explicit_target}}`. With
+`MACULA_OFF_REFUSED=1` the script requires exactly that refusal.
 
-Last run (2026-09-27, macula v13.0.0 compiled in `macula-ci-otp@sha256:aff1d39b...`): both
-profiles, both ways, `sealed call` and `sealed stream` answered, `clear call`
-refused `sealed_required`, exit 0; `off by direct dial` sealed, as 13.0.0 does
-(exit 1 under `MACULA_OFF_REFUSED=1`, as it must be before the fix).
+Last run (2026-09-27, `macula-ci-otp@sha256:aff1d39b...`):
+
+- macula 13.0.1 at 92137b94 (before its hex release), with
+  `MACULA_OFF_REFUSED=1`: both profiles, both ways, `sealed call` and
+  `sealed stream` answered, `clear call` refused `sealed_required`,
+  `off by direct dial` refused `off_needs_explicit_target`, exit 0.
+- macula v13.0.0: the same, except `off by direct dial` sealed (exit 1 under
+  `MACULA_OFF_REFUSED=1`, as it must be).

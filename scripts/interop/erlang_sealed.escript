@@ -74,8 +74,8 @@ run("call", {Pool, Seed}, Realm, _Profile, _Self, [Provider]) ->
     Clear = macula:call_station(Pool, Seed, Node, Realm, Vault, #{n => 1}, 10_000, #{confidential => off}),
     io:format("clear call: ~p~n", [Clear]),
     %% Direct dial with confidential => off: macula 13.0.0 seals it anyway
-    %% (it honours off only on an explicit target); the fix refuses it, as
-    %% macula-go's pool does. Strict once that fix runs (MACULA_OFF_REFUSED).
+    %% (it honours off only on an explicit target); 13.0.1 refuses it, as
+    %% macula-go's pool does. Strict against 13.0.1 (MACULA_OFF_REFUSED=1).
     Off = macula:call(Pool, Realm, Vault, #{n => 1}, 10_000, #{confidential => off}),
     io:format("off by direct dial: ~p~n", [Off]),
     off_verdict(os:getenv("MACULA_OFF_REFUSED"), Off, verdict(Called, Streamed, Clear)).
@@ -101,6 +101,6 @@ verdict({ok, {text, <<"kept by go">>}}, {{chunk, <<"chunk from go">>}, {ok, {tex
 verdict(_Called, _Streamed, _Clear) ->
     1.
 
-off_verdict("1", {error, _}, Verdict) -> Verdict;
+off_verdict("1", {error, {confidentiality, off_needs_explicit_target}}, Verdict) -> Verdict;
 off_verdict("1", _Sealed, _Verdict) -> 1;
 off_verdict(_NotYet, _Off, Verdict) -> Verdict.
