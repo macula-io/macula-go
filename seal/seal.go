@@ -172,6 +172,16 @@ func (k *PublicKey) Carried() []byte {
 	return carried
 }
 
+// CarriedSize is the size of a key as carried in profile p: the ML-KEM-1024
+// encapsulation key, followed in pq_hybrid by the uncompressed P-384 point
+// (macula_seal:carried_key_size/1).
+func CarriedSize(p profile.Profile) int {
+	if p == profile.PQHybrid {
+		return mlkem.EncapsulationKeySize1024 + P384PointSize
+	}
+	return mlkem.EncapsulationKeySize1024
+}
+
 // KeyHash is the SHA-384 of a key as carried, which the combiner binds.
 func KeyHash(carried []byte) [KeyHashSize]byte {
 	return sha512.Sum384(carried)

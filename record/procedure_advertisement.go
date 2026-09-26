@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/seal"
 )
 
 // ErrAuthorizationFormUnsupported is a provider authorization in a form
@@ -48,6 +49,9 @@ type Authorization struct {
 type ProcedureAdvertisementOptions struct {
 	Authorization Authorization
 	TTLMs         uint64
+	// KEMKey is the provider's KEM key as carried, which the advertisement
+	// names with its key id (E2E design, amendment A1); none when nil.
+	KEMKey []byte
 }
 
 // NewProcedureAdvertisement is an unsigned advertisement, by the node
@@ -74,6 +78,13 @@ func NewProcedureAdvertisement(advertiserNode, realmID [32]byte, procedure strin
 	default:
 		return Record{}, fmt.Errorf("%w: an authorization in no form", ErrMalformed)
 	}
+	if opts.KEMKey != nil {
+		if !kemKeySized(len(opts.KEMKey)) {
+			return Record{}, fmt.Errorf("%w: a KEM key of %d bytes is no profile's key as carried", ErrMalformed, len(opts.KEMKey))
+		}
+		id := seal.KeyID(opts.KEMKey)
+		entries = append(entries, bytesEntry("kem_key", bytes.Clone(opts.KEMKey)), bytesEntry("kem_key_id", id[:]))
+	}
 	return unsigned(TypeProcedureAdvertisement, cbor.Map(entries), opts.TTLMs)
 }
 
@@ -86,6 +97,10 @@ type ProcedureAdvertisement struct {
 	AdvertiserNode [32]byte
 	ServingStation [32]byte
 	Authorization  Authorization
+	// KEMKey is the KEM key the provider names, as carried, and KEMKeyID its
+	// id: a caller seals to it. Nil when the provider names none.
+	KEMKey   []byte
+	KEMKeyID [8]byte
 }
 
 // ReadProcedureAdvertisement reads a procedure advertisement's payload. A record
@@ -99,6 +114,12 @@ func ReadProcedureAdvertisement(r Record) (ProcedureAdvertisement, error) {
 	readID(advertisement.RealmID[:], payloadField(r.Payload, "realm_id"))
 	readID(advertisement.AdvertiserNode[:], payloadField(r.Payload, "advertiser_node"))
 	readID(advertisement.ServingStation[:], payloadField(r.Payload, "serving_station"))
+	if key, ok := payloadField(r.Payload, "kem_key").AsBytes(); ok {
+		advertisement.KEMKey = bytes.Clone(key)
+		if id, ok := payloadField(r.Payload, "kem_key_id").AsBytes(); ok && len(id) == len(advertisement.KEMKeyID) {
+			copy(advertisement.KEMKeyID[:], id)
+		}
+	}
 	return advertisement, nil
 }
 

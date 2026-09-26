@@ -1,9 +1,12 @@
 package record
 
 import (
+	"bytes"
 	"slices"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/profile"
+	"github.com/macula-io/macula-go/seal"
 )
 
 // payloadOK reports whether a record's payload holds what its type's rules
@@ -51,7 +54,8 @@ func payloadOK(t Type, payload cbor.Value) bool {
 
 // advertisementPayloadOK reports whether a procedure advertisement's payload is
 // exactly realm_id, procedure (text), advertiser_node and serving_station, with
-// authorization (a map) when it carries one.
+// authorization (a map) when it carries one, and with a KEM key pair when it
+// names one (kemKeyFields).
 func advertisementPayloadOK(payload cbor.Value, size int) bool {
 	realmID, _ := payload.Get("realm_id")
 	procedure, _ := payload.Get("procedure")
@@ -62,7 +66,40 @@ func advertisementPayloadOK(payload cbor.Value, size int) bool {
 	}
 	authorization, hasAuthorization := payload.Get("authorization")
 	_, isMap := authorization.AsMap()
-	return (size == 4 && !hasAuthorization) || (size == 5 && hasAuthorization && isMap)
+	kem, kemOK := kemKeyFields(payload)
+	if !kemOK || (hasAuthorization && !isMap) {
+		return false
+	}
+	want := 4 + kem
+	if hasAuthorization {
+		want++
+	}
+	return size == want
+}
+
+// kemKeyFields is how many payload fields a KEM key pair takes, as
+// macula_record's kem_key_pair/1 counts them (E2E design, amendment A1): 2 for
+// kem_key, a key as carried of a profile's size, with kem_key_id, its seal key
+// id; 0 for neither; and not ok for a lone field, a key of another size, or an
+// id that is not its key's.
+func kemKeyFields(payload cbor.Value) (int, bool) {
+	keyValue, hasKey := payload.Get("kem_key")
+	idValue, hasID := payload.Get("kem_key_id")
+	if !hasKey && !hasID {
+		return 0, true
+	}
+	key, keyBytes := keyValue.AsBytes()
+	id, idBytes := idValue.AsBytes()
+	if !hasKey || !hasID || !keyBytes || !idBytes || !kemKeySized(len(key)) {
+		return 0, false
+	}
+	want := seal.KeyID(key)
+	return 2, bytes.Equal(id, want[:])
+}
+
+// kemKeySized is whether n is the size of a key as carried in some profile.
+func kemKeySized(n int) bool {
+	return n == seal.CarriedSize(profile.PQPure) || n == seal.CarriedSize(profile.PQHybrid)
 }
 
 // tombstoneFields are a tombstone's own payload fields; the rest are the slot
