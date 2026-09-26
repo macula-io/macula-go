@@ -39,8 +39,10 @@ as received, never over re-encoded JSON.
 
 - Header: `{"alg", "typ": "JWT", "ucv": "0.10.0"}`. `alg` is `ML-DSA-87` in
   pq_pure, and `ML-DSA-87-PS384` (the LAMPS composite
-  `id-MLDSA87-RSA4096-PSS-SHA512`) in pq_hybrid. Anything else in `alg` is
-  `wrong_algorithm`; a header without those three is `malformed`.
+  `id-MLDSA87-RSA4096-PSS-SHA512`) in pq_hybrid. A header whose `alg` is a
+  string but which is not exactly the profile's `alg` with `typ` `JWT` and
+  `ucv` `0.10.0` is `wrong_algorithm` (another `typ` or `ucv` included); a
+  header with no string `alg` is `malformed`.
 - Payload:
   - `iss`: `did:key:z` + base58btc (Bitcoin alphabet, each leading zero byte a
     leading `1`) of the unsigned LEB128 varint of the key type, then the key
@@ -54,12 +56,19 @@ as received, never over re-encoded JSON.
   - `exp`: seconds. At or past `exp` the token is `expired`.
   - Optional `nbf` (before it, `not_yet_valid`), `nnc`, `fct`, `prf`.
   - `iss`, `aud`, `cap` and `exp` must have their types before anything is
-    verified: `malformed` otherwise.
+    verified: `malformed` otherwise. `exp` is required: a token without one
+    is `malformed`, never a token that does not expire.
+
+A key's node_id and key id, and the key as carried in each profile (the
+pq_hybrid composite's ML-DSA-87 and RSA halves), are macula's
+`macula_node_keys` (`node_id/2`, `key_id/2`, `public_key/1`); an SDK checks
+its own against the `keys` table.
 
 ## Policies
 
 - `ucan_required` names an issuer node_id: the chain's root must be signed by
-  the identity key whose node_id it is (`not_the_issuer`).
+  the identity key whose node_id it is (`not_the_issuer`). It names no `can`:
+  any `can` answers a request, and the chain then holds it fixed.
 - `realm_member_required` names a realm key's key id and a `can`: the chain's
   root must be signed by that key, and the capability must have that `can`.
 
@@ -97,6 +106,54 @@ then as its child's proof: its `aud` is the node_id of the child's issuer key
 (`grants_more_than_proof`, or `wrong_realm` for another realm). The root of the
 chain is checked against the policy: `not_the_issuer` includes a chain whose
 every link holds but whose root is another issuer.
+
+What the child hands on is not every capability it names:
+
+- With a request (a realm and a procedure), exactly one capability answers
+  it: the first in `cap` order that covers the request (with the policy's
+  `can`, for `realm_member_required`). That one alone is carried up the
+  chain; no other capability of the token is tried, at the leaf or above
+  it. A token that names a capability its parent does not cover is still
+  authorized when another capability, earlier or later, answers the request
+  (`ok_delegated_chain_with_an_extra_capability`).
+- With no request, `ucan_required` carries every capability of the token;
+  `realm_member_required` carries the first with the policy's `can`
+  (`missing_capability` when none has it).
+- Above the leaf, a parent carries up, for each capability its child hands
+  on, the first of its own capabilities that covers it with the same `can`.
+
+## The order of the checks
+
+The first refusal wins, so an SDK takes the checks in this order:
+
+1. The token's three parts, base64url, and JSON objects: `malformed`.
+2. The header: `wrong_algorithm`, or `malformed` (above).
+3. The types of `iss`, `aud`, `cap` and `exp`, and `iss` a did:key well
+   formed for the profile: `malformed`.
+4. The signature: `signature_invalid`.
+5. `aud` against the verified caller: `not_the_audience`.
+6. `exp` (`expired`), then `nbf` (`not_yet_valid`, or `malformed` when it is
+   not an integer).
+7. With a request, the request's procedure: `procedure_without_org`.
+8. The token's own capability (above): `missing_capability`, `wrong_realm`,
+   `realm_name_not_canonical`. Where no capability answers, the first
+   capability in `cap` order with a text `with` gives the reason, whatever
+   the rest would give: the refusal its `with` is refused as an MRI with
+   (`realm_name_not_canonical`, say), `wrong_realm` when it names another
+   realm, and `missing_capability` otherwise, a `with` that is no MRI at all
+   included.
+9. The chain, a link at a time from the leaf: the shape of `prf`
+   (`chain_not_linear` for more than one id, `malformed` when it is not a
+   list); the parent among the proofs (`missing_proof`); the parent as a
+   token (steps 1 to 4 and 6, never 5 or 8); then `not_the_delegate`; then
+   the narrowing (`can_changed`, `wrong_realm`, `grants_more_than_proof`),
+   whose reason, where several capabilities fail, is the first failing one in
+   the child's order, each explained by the first of the parent's
+   capabilities in `cap` order.
+10. The root against the policy: `not_the_issuer`.
+11. Last, a proof no link used: `unreferenced_proof`. So an expired token sent
+    with a proof nothing names is `expired`
+    (`expired_before_unreferenced_proof`).
 
 ## A provider's answers
 

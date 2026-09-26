@@ -11,8 +11,9 @@ import (
 	"github.com/macula-io/macula-go/profile"
 )
 
-// The vectors are macula's test/vectors/ucan_v1.json (UCAN_V1.md beside it),
-// copied by scripts/interop/copy_ucan_vectors.sh: tokens macula_ucan minted,
+// The vectors are macula's test/vectors/ucan_v1.json (UCAN_V1.md beside it)
+// at 0e2724cc97a5689542b8da7b06d392cf0d34b205, copied by
+// scripts/interop/copy_ucan_vectors.sh: tokens macula_ucan minted,
 // each with its policy, context and the verdict macula_ucan:authorize/3
 // reaches. Every verdict here must be macula's.
 
