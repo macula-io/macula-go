@@ -8,15 +8,19 @@
 # platform is linux-x64, linux-arm64, macos-x64, macos-arm64 or windows-x64.
 # The Linux builds run inside the manylinux_2_28 image of their architecture
 # (the workflow runs this script there), and no GLIBC_ symbol version above
-# 2.28 may appear. The macOS builds target macOS 12.0, which vtool must
-# report as the library's minos. Run from the repository root with a Go
+# 2.28 may appear. The macOS builds target macOS 13.0, which vtool must
+# report as the library's minos. Each library records its own file name as
+# its SONAME or install name (@rpath/<file> on macOS), so a program linked
+# against it finds it through its rpath. Run from the repository root with a Go
 # toolchain on PATH.
 set -euo pipefail
 
 platform=$1
 out=$2
 glibc_floor=2.28
-macos_floor=12.0
+# Go 1.27's linker targets macOS 13.0 (cmd/link's macOS macVersionFlag), so
+# no lower floor can be claimed honestly.
+macos_floor=13.0
 
 mkdir -p "$out"
 export CGO_ENABLED=1
@@ -42,7 +46,12 @@ case "$platform" in
     ;;
 esac
 
-go build -buildmode=c-shared -trimpath -ldflags=-s -o "$out/$file" ./cabi
+case "$platform" in
+  linux-*) name_flag="-Wl,-soname,$file" ;;
+  macos-*) name_flag="-Wl,-install_name,@rpath/$file" ;;
+  *) name_flag="" ;;
+esac
+go build -buildmode=c-shared -trimpath -ldflags="-s -extldflags '$name_flag'" -o "$out/$file" ./cabi
 # cgo's own header is not released: cabi/macula.h is the contract.
 rm -f "$out/${file%.*}.h"
 

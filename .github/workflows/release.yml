@@ -44,4 +44,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" release/* --verify-tag --title "$GITHUB_REF_NAME" \
-            --notes "macula-go $GITHUB_REF_NAME. libmacula (cabi, the shared C ABI) for Linux (glibc 2.28+), macOS (12.0+) and Windows, with macula.h and SHA256SUMS. Check each file against SHA256SUMS and verify its attestation (gh attestation verify <file> --repo $GITHUB_REPOSITORY) before using it; see cabi/CONTRACT.md."
+            --notes "macula-go $GITHUB_REF_NAME. libmacula (cabi, the shared C ABI) for Linux (glibc 2.28+), macOS (13.0+) and Windows, with macula.h and SHA256SUMS. Check each file against SHA256SUMS and verify its attestation (gh attestation verify <file> --repo $GITHUB_REPOSITORY) before using it; see cabi/CONTRACT.md."

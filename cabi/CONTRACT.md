@@ -193,18 +193,20 @@ runners:
 
 | File | Platform |
 |---|---|
-| `libmacula-linux-x64.so` | Linux x86-64 (glibc) |
-| `libmacula-linux-arm64.so` | Linux arm64 (glibc) |
-| `libmacula-macos-x64.dylib` | macOS x86-64 |
-| `libmacula-macos-arm64.dylib` | macOS arm64 |
+| `libmacula-linux-x64.so` | Linux x86-64 (glibc 2.28 or later) |
+| `libmacula-linux-arm64.so` | Linux arm64 (glibc 2.28 or later) |
+| `libmacula-macos-x64.dylib` | macOS x86-64 (13.0 or later) |
+| `libmacula-macos-arm64.dylib` | macOS arm64 (13.0 or later) |
 | `macula-windows-x64.dll` | Windows x86-64 |
 | `macula.h` | the header |
 | `SHA256SUMS` | every file above |
 
 The Linux libraries are built in the manylinux_2_28 images and need glibc
-2.28 or later; the macOS libraries are built for macOS 12.0 or later. Each
-release job checks its file against that floor (no `GLIBC_` symbol version
-above 2.28; `vtool -show-build` reporting `minos 12.0`) before hashing it.
+2.28 or later; the macOS libraries are built for macOS 13.0 or later, the
+floor of the Go toolchain that builds them. Each release job checks its file
+against that floor (no `GLIBC_` symbol version above 2.28; `vtool
+-show-build` reporting `minos 13.0`) before hashing it. Each library records
+its own file name as its SONAME (Linux) or `@rpath/` install name (macOS).
 
 Each file has a GitHub build provenance attestation. A binding downloads
 the files for its tag, checks each against `SHA256SUMS`, and verifies its

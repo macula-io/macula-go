@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   booleans). Tested from Go against in-process stations and from C against
   the built library, the header held to the exports.
 - Each `v*` release carries libmacula for Linux x64/arm64 (glibc 2.28+),
-  macOS x64/arm64 (12.0+) and Windows x64, with `macula.h` and `SHA256SUMS`,
+  macOS x64/arm64 (13.0+) and Windows x64, with `macula.h` and `SHA256SUMS`,
   every file with a build provenance attestation. CI builds all five on
   every push.
 - `teststation/cmd/teststation`: in-process stations for a binding's tests,

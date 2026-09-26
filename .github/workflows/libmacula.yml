@@ -65,13 +65,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build for macOS 12.0
+      - name: Build for macOS 13.0
         run: scripts/libmacula/build.sh ${{ matrix.platform }} out
       - name: Load it here
         run: |
           arch=arm64
           if [ "${{ matrix.platform }}" = macos-x64 ]; then arch=x86_64; fi
-          clang -arch "$arch" -mmacosx-version-min=12.0 -I cabi -o load_check scripts/libmacula/load_check.c \
+          clang -arch "$arch" -mmacosx-version-min=13.0 -I cabi -o load_check scripts/libmacula/load_check.c \
             "$PWD/out/libmacula-${{ matrix.platform }}.dylib" -Wl,-rpath,"$PWD/out"
           arch -"$arch" ./load_check
       - uses: actions/upload-artifact@v4
