@@ -2,7 +2,7 @@
 
 **Status:** In Progress
 **Created:** 2026-09-24
-**Last Updated:** 2026-09-26
+**Last Updated:** 2026-09-27
 
 ## End goal
 
@@ -239,6 +239,38 @@ TS until `cabi` moves to this API.** Where each export lands:
 | `macula_dht_put_procedure_advertisement`, `_put_content_announcement` | dht | `pool.PutRecord` (a procedure advertisement comes from `Serve`; a content announcement waits for D27 content) | B6 |
 | `macula_content_put`, `_get` | content, manifest | node-served content, once macula defines it (D27); `manifest` is ready | no |
 | `macula_ucan_mint`, `_decode`, `macula_session_call_with_ucan` | ucan (Ed25519) | PQ UCAN, macula-go#2; `pool.Call` carries a token | no |
+
+## Sealing (macula 13, v0.18.0)
+
+So a Go node's calls and streams cross the fleet as ciphertext, as macula
+13's do. BUILD, scope approved 2026-09-26:
+
+- records (A1: `kem_key` and `kem_key_id`, both or neither); macula
+  13.0.0's `e2e_seal_v1` vectors, error_reply included; frames with `sealed`;
+- caller and provider for calls and streams, with the §5.1 clear-refusal set
+  and no fallback to the clear; the keyring; the pool;
+- cabi options-JSON functions (ABI stays 1);
+- interop both ways against macula 13.0.0 in the pinned CI image.
+
+Decisions:
+
+- `kem_advertise` off by default, the station floor (macula 12.11, callers
+  on 13) documented, no Go-only guard; the fleet meets it (station 0.6.8 on
+  macula 12.11.1).
+- A sealed unknown-procedure ERROR and a sealed unauthorized ERROR differ on
+  the wire only in the sealed body (a test).
+- Design §8.1 (2026-09-27): only an advertisement naming no key is called in
+  the clear. `pool.Call` and `OpenStream` take preferred and required, and
+  refuse `off` (`ErrConfidentialOff`; cabi `invalid_argument`). The clear
+  path to a keyed provider is `stationlink` without `SealTo`.
+
+Open:
+
+- [ ] macula refuses `off` by direct dial too (Mercurius); then
+  `scripts/interop/sealed.sh` runs with `MACULA_OFF_REFUSED=1` against it.
+- [ ] macula's A1 advertisement vectors (keyed, mismatched id, lone field),
+  test-only after 13.0.1 (Mercurius); `record` tests against them.
+- [ ] macula-py and macula-dotnet take sealing in their next minor.
 
 ## Found in macula and macula-station
 

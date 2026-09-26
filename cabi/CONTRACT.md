@@ -217,8 +217,8 @@ callers seal to that key; stations route what they cannot read.
 - `macula_pool_connect`'s `kem_advertise: 1` gives the node a KEM keyring (in
   memory only, rotated every 24 hours, a replaced key kept 30 minutes) and names
   its current key in the advertisements of its confidential procedures. Enable
-  it only once every station runs macula 12.11 or later (the station floor);
-  it is off by default.
+  it only once every station runs macula 12.11 or later and every caller runs
+  macula 13 or macula-go 0.18 (the station floor); it is off by default.
 - `macula_pool_serve_opts` and `_serve_stream_opts` take `confidential`:
   `preferred` (the default: the key is named, and a clear call is still taken
   while the procedure's last keyless advertisement could be served),

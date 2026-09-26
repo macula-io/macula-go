@@ -19,13 +19,15 @@
 
 ---
 
-> **Status, 2026-09-26:** master speaks the **macula 12** wire and nothing
+> **Status, 2026-09-27:** master speaks the **macula 12** wire and nothing
 > older. Handshake, calls, streaming RPC, publish/subscribe, the DHT, serving
 > procedures (under an org or in a node's own namespace) and node-served
 > content work against live macula stations, including calls and streams by
 > direct dial from one node to another's provider. Content is shared and
 > fetched both ways with macula 12.6.0's Erlang sharer and fetcher. Manifests
-> and MCIDs are macula 12's, byte for byte.
+> and MCIDs are macula 12's, byte for byte. Calls and streams are sealed end
+> to end as macula 13 seals them (scheme 1), checked both ways against
+> macula 13.0.0 in `pq_pure` and `pq_hybrid`.
 
 ## What is this?
 
@@ -67,6 +69,7 @@ On the wire:
 | Content manifests and MCIDs | ✅ | ✅ | SHA-384, 50-byte MCIDs, byte for byte with macula's `macula_manifest` |
 | Node-served content (D27) | ✅ | ✅ | `pool.ShareContent` serves on `~<node_id>/content_v1` and announces; `pool.GetContent` checks the block, the manifest and every chunk against their content ids, bounded, with no realm key; cross-checked both ways against macula 12.6.0 |
 | Gated procedures (UCAN) | ✅ | ✅ | `ucan.Create` mints macula 12's post-quantum UCAN, `Call.Token` and `Proofs` present it and its chain, `Offer.Policy` gates a procedure as macula's link does (`unauthorized`, or `malformed_frame` for a proof no token names); held to macula's UCAN vectors and checked against `macula_ucan` both ways |
+| End-to-end sealing (macula 13, scheme 1) | ✅ | ✅ | A call's or a stream's payloads sealed to the KEM key the provider's advertisement names, so a station routes what it cannot read; see [Sealing](#sealing) |
 
 No cgo outside `cabi`, which is a C ABI and so cgo by nature, and no
 `unsafe` outside `cabi` and identity's Windows key-file guard, which reads a
@@ -153,7 +156,63 @@ hex> -realm <hex> -realm-key <file> -key <node key file>`):
 | [`ucan`](ucan) | macula 12's UCAN: mint, verify a chain against a policy, proof ids and did:keys, held to macula's vectors |
 | [`devicerequest`](devicerequest) | A device's request to a realm, signed: realm proof v2 (macula-realm#29) |
 | [`ownershipproof`](ownershipproof) | The `asserted_by` block of a payload, signed and verified: ownership proof v2 (mcl-om#7) |
-| [`seal`](seal) | End-to-end payload sealing, scheme 1: the key agreement, keys, AAD and AES-256-GCM (no frame carries a sealed payload yet) |
+| [`seal`](seal) | End-to-end payload sealing, scheme 1: the key agreement, keys, AAD and AES-256-GCM, and a provider's keyring, held to macula 13's vectors |
+
+## Sealing
+
+macula 13 seals a call's and a stream's payloads end to end (scheme 1:
+ML-KEM-1024, with P-384 in `pq_hybrid`, HKDF-SHA-384 and AES-256-GCM), so the
+stations that route them see only ciphertext. macula-go seals and opens them
+as macula 13.0.0 does, held to its `e2e_seal_v1` vectors and checked both
+ways against it (`scripts/interop/sealed.sh`).
+
+A provider names its key by switching `pool.Opts.KEMAdvertise` on. The pool
+then holds a KEM keyring (a new key every 24 hours, a replaced key kept 30
+minutes, in memory only) and names its current key in the advertisement of
+each procedure it serves with `Offer.Confidential`:
+
+| `Offer.Confidential` | Its advertisement | A clear request |
+|---|---|---|
+| `ConfidentialPreferred` (the default) | names the key | taken while an older keyless advertisement could still be served, then refused `sealed_required` |
+| `ConfidentialRequired` (needs `KEMAdvertise`) | names the key | refused `sealed_required` |
+| `ConfidentialOff` | names no key | taken |
+
+A caller seals to the key a provider's verified advertisement names, and
+never falls back to the clear:
+
+| `Call.Confidential`, `StreamCall.Confidential` | Keyed provider | Keyless provider |
+|---|---|---|
+| `ConfidentialPreferred` (the default) | sealed | clear |
+| `ConfidentialRequired` | sealed | refused, `no_kem_key` |
+| `ConfidentialOff` | refused, `pool.ErrConfidentialOff` | refused, `pool.ErrConfidentialOff` |
+
+As in macula's design (§8.1), only an advertisement naming no key is called
+in the clear from a pool. A clear call to a keyed provider is an explicit
+target's decision: a `stationlink.Call` without `SealTo`.
+
+Every answer to a sealed request is sealed, refusals included, so an unknown
+procedure and an unauthorized caller look alike on the wire. A caller of a
+sealed call takes from the clear only a relay's error, the closed set of
+refusals macula names before a request is opened, and `sealed_refused`; it
+takes anything else as `stationlink.ErrClearAnswerToSealed`. After
+`sealed_refused` the pool looks the provider up once more and reseals only
+to exactly the key the refusal named (else `key_mismatch` or `no_kem_key`).
+A stream reseals the same way, once, while it has sent nothing.
+
+`KEMAdvertise` is off by default. Switch it on only once every station runs
+macula 12.11 or later, which stores and routes a keyed advertisement, and
+every caller runs macula 13 or macula-go 0.18 (the station floor). The fleet's
+stations meet it (macula-station 0.6.8, on macula 12.11.1).
+
+Through the C ABI (still ABI 1): the pool option `kem_advertise`, and
+`macula_pool_call_opts`, `macula_pool_open_stream_opts`,
+`macula_pool_serve_opts` and `macula_pool_serve_stream_opts`, whose
+options JSON carries `confidential`; see the
+[contract](cabi/CONTRACT.md#confidentiality).
+
+Not sealed: publications (macula 13 does not seal them yet, and a sealed
+EVENT is counted and not delivered, as macula 13 does), the DHT, and
+node-served content, which stays in the clear by design.
 
 ## The CBOR codec is hand-rolled on purpose
 

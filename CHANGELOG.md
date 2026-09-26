@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-27
+
+### Added
+
+- End-to-end sealing of calls and streams, as macula 13.0.0 seals them
+  (E2E design, scheme 1, with amendment A1), checked both ways against it in
+  `pq_pure` and `pq_hybrid` (`scripts/interop/sealed.sh`). See the README's
+  Sealing section.
+- `seal`: macula 13.0.0's `e2e_seal_v1` vectors, including the sealed ERROR's
+  plaintext (`ErrorPlain`, `OpenErrorPlain`); `ParsePublicKey` and
+  `CarriedSize`, for the key an advertisement carries; `Keyring`, a
+  provider's KEM keys, a new one every 24 hours (`KeyLifetime`), a replaced
+  one kept 30 minutes (`RetiredKeyKept`), in memory only.
+- `record`: a procedure advertisement names its provider's KEM key
+  (`ProcedureAdvertisementOptions.KEMKey`, `ProcedureAdvertisement.KEMKey`
+  and `KEMKeyID`), both fields or neither.
+- `frame`: `Sealed`, a payload sealed end to end, carried in `sealed` in
+  place of the clear field, with the shape each frame's table allows
+  (`ErrSealedShape`): `RequestSpec.Sealed`, `VerifiedRequest.Sealed`,
+  `SignSealedResult`, `SignSealedProviderError`, `VerifiedReply.Sealed`, and
+  `Sealed` on the stream frames.
+- `stationlink`: `Config.Keyring` and `Config.KEMAdvertise`;
+  `Offer.Confidential` (`ConfidentialPreferred`, `ConfidentialRequired`,
+  `ConfidentialOff`) and `Offer.KeyedSince`; `Call.SealTo`,
+  `StreamCall.SealTo` and `StreamCall.Reseal`; `Request.Sealed`. A provider
+  opens a sealed CALL or STREAM_OPEN and seals every answer, refusals
+  included, and refuses a request it cannot open `sealed_refused` and a clear
+  one it does not take `sealed_required`. A caller takes only a sealed answer,
+  or from the clear a relay's error, macula's closed set of early refusals
+  (`IsClearRefusal`) and `sealed_refused` (`SealedRefusedError`); anything
+  else is `ErrClearAnswerToSealed`. `ConfidentialityError` carries
+  `no_kem_key`, `key_mismatch`, `reply_not_opened` or `no_signed_state`.
+  A sealed stream refuses to seal past 2^32 frames
+  (`ErrSealedFramesExhausted`).
+- `pool`: `Opts.KEMAdvertise` gives the node a keyring and names its key in
+  the advertisements of procedures served confidentially; `Offer.Confidential`,
+  `Call.Confidential` and `StreamCall.Confidential`. A call or a stream seals
+  to the key the provider's verified advertisement names, and after
+  `sealed_refused` reseals once, only to exactly the key the refusal named.
+- cabi (ABI 1, new functions): `macula_pool_call_opts`,
+  `macula_pool_open_stream_opts`, `macula_pool_serve_opts` and
+  `macula_pool_serve_stream_opts`, taking their options as JSON (with
+  `confidential`); the pool option `kem_advertise`; the error kind
+  `confidentiality` (`reason`, `named`, `found`; `kem_advertise_disabled`
+  for a required serve without `kem_advertise`); a served request's JSON
+  says whether it came `sealed`.
+
+### Changed
+
+- `pool.Call` and `pool.OpenStream` refuse `ConfidentialOff` with
+  `ErrConfidentialOff`, as macula's design §8.1 has it: only an
+  advertisement naming no key is called in the clear, and a clear call to a
+  keyed provider is an explicit target's (`stationlink.Call` without
+  `SealTo`). The cabi's calls and opens refuse `off` as `invalid_argument`.
+- Node-served content is advertised with no KEM key and served in the clear,
+  under `KEMAdvertise` too.
+
+### Deployment
+
+- `KEMAdvertise` (cabi `kem_advertise`) is off by default. Switch it on only
+  once every station runs macula 12.11 or later and every caller runs
+  macula 13 or macula-go 0.18 (the station floor). The fleet's stations meet
+  it (macula-station 0.6.8, on macula 12.11.1).
+
 ## [0.17.0] - 2026-09-26
 
 ### Added
