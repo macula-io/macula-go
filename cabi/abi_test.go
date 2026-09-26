@@ -161,9 +161,18 @@ func TestACProgramDrivesTheLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ownershipMessage, err := os.ReadFile(filepath.Join("..", "ownershipproof", "testdata", "vector", "message.hex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownershipIdentity, err := os.ReadFile(filepath.Join("..", "ownershipproof", "testdata", "vector", "identity.hex"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	keys := t.TempDir()
 	run := exec.Command(program, keys, f.seedsJSON(a), hex.EncodeToString(realm.ID[:]), f.optionsJSON(),
-		strings.TrimSpace(string(vector)))
+		strings.TrimSpace(string(vector)), strings.TrimSpace(string(ownershipMessage)),
+		strings.TrimSpace(string(ownershipIdentity)))
 	out, err := run.CombinedOutput()
 	if err != nil || !strings.HasSuffix(strings.TrimSpace(string(out)), "ok") {
 		t.Fatalf("abi_test: %v\n%s", err, out)

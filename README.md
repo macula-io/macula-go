@@ -149,6 +149,7 @@ hex> -realm <hex> -realm-key <file> -key <node key file>`):
 | [`cabi`](cabi) | The C ABI every non-Go binding uses (.NET, Python, PHP, TypeScript): `macula.h`, its [contract](cabi/CONTRACT.md), and libmacula on each release |
 | [`teststation`](teststation) | In-process macula 12 stations for tests; `teststation/cmd/teststation` serves them to a binding's tests |
 | [`devicerequest`](devicerequest) | A device's request to a realm, signed: realm proof v2 (macula-realm#29) |
+| [`ownershipproof`](ownershipproof) | The `asserted_by` block of a payload, signed and verified: ownership proof v2 (mcl-om#7) |
 | [`seal`](seal) | End-to-end payload sealing, scheme 1: the key agreement, keys, AAD and AES-256-GCM (no frame carries a sealed payload yet) |
 
 ## The CBOR codec is hand-rolled on purpose

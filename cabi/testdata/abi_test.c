@@ -121,8 +121,9 @@ static void *cancel_later(void *p) {
 }
 
 int main(int argc, char **argv) {
-  if (argc != 6) {
-    fprintf(stderr, "usage: abi_test <key dir> <seeds json> <realm hex> <options json> <device request vector hex>\n");
+  if (argc != 8) {
+    fprintf(stderr, "usage: abi_test <key dir> <seeds json> <realm hex> <options json> <device request vector hex> "
+                    "<ownership proof vector hex> <ownership proof identity hex>\n");
     return 2;
   }
   const char *dir = argv[1], *seeds = argv[2], *options = argv[4];
@@ -318,6 +319,49 @@ int main(int argc, char **argv) {
     expect_contains("the proof", proof, "\"signature\":\"");
     macula_free_string(proof);
     macula_key_free(device);
+  }
+
+  /* mcl_om's ownership proof vector, through the ABI; then a signed payload. */
+  {
+    const char *vector_hex = argv[6];
+    size_t vector_len = strlen(vector_hex) / 2;
+    uint8_t *vector = malloc(vector_len);
+    hex_to(vector_hex, vector, vector_len);
+    uint8_t identity[32], io_macula[32], nonce[16];
+    hex_to(argv[7], identity, 32);
+    hex_to("abb81b5a614b63551b400b810648c0c8a78efad845442630c94b46cc95d2fcd1", io_macula, 32);
+    for (int i = 0; i < 16; i++) nonce[i] = (uint8_t)i;
+    const char *fields = "{\"subject\": \"entity:alpha\", \"predicate\": \"knows\", \"object\": \"entity:beta\", "
+        "\"confidence\": 0.75, \"weight\": 3, \"offset\": -7, \"digest\": {\"$bytes\": \"AQID\"}, \"note\": null, "
+        "\"tags\": [\"a\", \"b\"], \"metadata\": {\"source\": \"field-notes\", \"page\": 12}, "
+        "\"caller\": \"a caller is sent, not signed\"}";
+    size_t message_len = 0;
+    uint8_t *message = macula_ownership_proof_message(identity, io_macula, "mcl-graph/learn_link", 1790000000000,
+        nonce, fields, &message_len, &err);
+    check("ownership_proof_message", err);
+    if (message_len != vector_len || memcmp(message, vector, vector_len) != 0) fail("the ownership proof message is not mcl_om's vector", NULL);
+    macula_free_bytes(message);
+    free(vector);
+    macula_ownership_proof_message(identity, io_macula, "mcl-graph/learn_link", 1, nonce, "[1]", &message_len, &err);
+    expect_kind("ownership fields that are not an object", &err, "invalid_argument");
+
+    char keypath[512];
+    snprintf(keypath, sizeof keypath, "%s/owner.key", dir);
+    macula_handle owner = macula_key_load_or_create(keypath, "pq_pure", 0, &err);
+    check("owner key", err);
+    char *signed_payload = macula_key_ownership_proof(owner, io_macula, "mcl-graph/learn_link",
+        "{\"subject\": \"entity:alpha\", \"weight\": 3}", &err);
+    check("key_ownership_proof", err);
+    expect_contains("the signed payload", signed_payload, "\"asserted_by\":{");
+    expect_contains("the signed payload", signed_payload, "\"v\":2");
+    expect_contains("the signed payload", signed_payload, "\"public\":\"");
+    expect_contains("the signed payload", signed_payload, "\"subject\":\"entity:alpha\"");
+    macula_free_string(signed_payload);
+    macula_key_ownership_proof(owner, io_macula, "mcl-graph/learn_link", "{\"ok\": true}", &err);
+    expect_kind("a boolean in an ownership-proven payload", &err, "invalid_argument");
+    macula_key_ownership_proof(owner, io_macula, "mcl-graph/learn_link", "{\"a\": 1, \"caller\": \"me\"}", &err);
+    expect_kind("a caller in an ownership-proven payload", &err, "invalid_argument");
+    macula_key_free(owner);
   }
 
   /* Closing a pool ends what it owns. */
