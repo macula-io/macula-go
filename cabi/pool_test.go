@@ -418,3 +418,70 @@ func TestClosingAPoolEndsWhatItOwns(t *testing.T) {
 		}
 	}
 }
+
+// A call in flight when its own pool closes ends as closed.
+func TestACallInFlightWhenItsPoolClosesIsClosed(t *testing.T) {
+	f := newFleet(t, "close in flight")
+	provider := f.join(t, "silent", f.stations[0])
+	lp, err := connect(context.Background(), teststation.Key(t, profile.PQPure, "closing caller"), f.seedsJSON(f.stations[1]), f.optionsJSON())
+	if err != nil {
+		t.Fatal(err)
+	}
+	procedure := ownProcedure(provider, "never")
+	s, err := serve(provider, f.realm.ID, procedure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.stop() })
+	done := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	go func() {
+		_, err := call(ctx, lp.pool, f.realm.ID, procedure, `null`, nil, 20*time.Second)
+		done <- err
+	}()
+	// The call has reached the provider when it waits in its inbox.
+	taken, state := s.box.next(ctx)
+	if state != inboxItemReady {
+		t.Fatalf("the call never arrived: %v", state)
+	}
+	_ = taken
+	lp.close()
+	select {
+	case err := <-done:
+		if got := classify(ctx, err); got.kind != kindClosed {
+			t.Fatalf("a call in flight when its pool closed: %s (%v), want closed", got.kind, err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the call did not end when its pool closed")
+	}
+}
+
+// A pending call answered after its deadline is "answered": the call was
+// answered for it. Its handle then ends, like any answered call's.
+func TestALateAnswerIsAnswered(t *testing.T) {
+	f := newFleet(t, "late")
+	provider := f.join(t, "late provider", f.stations[0])
+	caller := f.join(t, "late caller", f.stations[1])
+	procedure := ownProcedure(provider, "slow")
+	s, err := serve(provider, f.realm.ID, procedure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.stop() })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	go func() { _, _ = call(ctx, caller.pool, f.realm.ID, procedure, `null`, nil, time.Second) }()
+	item, state := s.box.next(ctx)
+	if state != inboxItemReady {
+		t.Fatalf("no call: %v", state)
+	}
+	time.Sleep(2 * time.Second)
+	result, _ := payloadFromJSON(`"too late"`)
+	if err := answerPendingHandle(item.handle, pendingAnswer{payload: result}); kindOf(err) != kindAnswered {
+		t.Fatalf("a late answer: %v, want answered", err)
+	}
+	if err := answerPendingHandle(item.handle, pendingAnswer{payload: result}); kindOf(err) != kindInvalidHandle {
+		t.Fatalf("an answer after the handle ended: %v, want invalid_handle", err)
+	}
+}

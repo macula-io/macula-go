@@ -96,6 +96,10 @@ type Stream struct {
 	// inboxBound is streamInbox when the stream began.
 	inboxBound int
 
+	// sendMu orders this side's frames: each is numbered and written in
+	// turn. It is held across the write; mu, which a Recv needs, never is.
+	sendMu sync.Mutex
+
 	mu        sync.Mutex
 	sendSeq   uint64
 	sentEnd   bool // this side sent its last frame, or will send no more
@@ -166,14 +170,18 @@ func (s *Stream) Abort(code, message string) error {
 }
 
 // send signs fields at this side's next seq and writes them; last marks this
-// side's last frame, after which its QUIC direction is finished.
+// side's last frame, after which its QUIC direction is finished. The write
+// happens outside mu, so a send stalled on the network holds up no Recv.
 func (s *Stream) send(fields frame.StreamFields, last bool) error {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.sentEnd {
+	ended, seq := s.sentEnd, s.sendSeq
+	s.mu.Unlock()
+	if ended {
 		return ErrStreamClosed
 	}
-	fields = withSeq(fields, s.sendSeq)
+	fields = withSeq(fields, seq)
 	var signed cbor.Value
 	var err error
 	if s.caller {
@@ -184,15 +192,22 @@ func (s *Stream) send(fields frame.StreamFields, last bool) error {
 	if err != nil {
 		return err
 	}
-	if err := s.writer.write(cbor.Encode(signed), MaxFrameBytes); err != nil {
+	err = s.writer.write(cbor.Encode(signed), MaxFrameBytes)
+	s.mu.Lock()
+	if err != nil {
 		s.sentEnd = true
+		s.mu.Unlock()
 		return err
 	}
 	s.sendSeq++
+	peerEnded := s.peerEnded
 	if last {
 		s.sentEnd = true
+	}
+	s.mu.Unlock()
+	if last {
 		_ = s.qs.Close()
-		if s.peerEnded {
+		if peerEnded {
 			go s.end(nil)
 		}
 	}

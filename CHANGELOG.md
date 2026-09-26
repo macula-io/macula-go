@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Key files on Windows: `identity.LoadKey` refused every key file there,
+  because it read mode bits and Go reports every Windows file as mode 666.
+  A key file is now saved with a protected DACL granting the current user
+  alone, and loaded only when its owner is the current user, SYSTEM or
+  Administrators and no one else may read it. CI gains a Windows job.
+- `pool.Call` and `pool.OpenStream` in flight when their own pool closes end
+  with `ErrClosed`, not `ErrNoProvider`.
+- A stream's send no longer holds the lock its receives need while it
+  writes, so a send stalled on the network holds up no `Recv`, nor its
+  cancellation.
+- cabi: an answer to a pending call after its deadline is `answered`, not
+  `invalid_handle`; a pending call's handle ends with its first answer, and
+  stopping a procedure answers and frees the calls it still holds;
+  `cancelled` means only the call's own token; a call in flight when its
+  pool closes is `closed`; a procedure nobody serves is the new kind
+  `no_provider`. CONTRACT.md now says what a stream's `deadline_ms` bounds:
+  the provider's admission, not the stream's life, as in macula.
+
 ## [0.14.0] - 2026-09-26
 
 ### Added

@@ -31,7 +31,7 @@ never a crash.
 | pool | `macula_pool_connect` | `macula_pool_close` |
 | subscription | `macula_pool_subscribe` | `macula_subscription_stop` |
 | served | `macula_pool_serve`, `_serve_stream` | `macula_served_stop` |
-| pending call | `macula_served_next` | its answer, or its deadline (never freed by the caller) |
+| pending call | `macula_served_next` | its first answer, or its procedure stopping (never freed by the caller) |
 | stream | `macula_pool_open_stream`, `macula_served_next` | `macula_stream_free` |
 | cancel token | `macula_cancel_new` | `macula_cancel_free` |
 
@@ -68,17 +68,18 @@ the call. The string is a JSON object:
 
 | kind | When | Extra fields |
 |---|---|---|
-| `cancelled` | the call's cancel token was cancelled | |
+| `cancelled` | the call's own cancel token was cancelled, and nothing else | |
 | `timeout` | the call's `timeout_ms` ran out | |
 | `invalid_handle` | a handle this process does not hold, or of another kind | |
 | `invalid_argument` | a malformed id, JSON, profile, mode, size or payload (a JSON boolean, say) | |
 | `provider_error` | the provider answered a call with an error | `code`, `detail` (may be null) |
 | `relay_error` | a station could not deliver a call | `code` |
 | `not_found` | no DHT record under that key | |
+| `no_provider` | no provider the realm trusts advertises the procedure (since v0.15.0; `failed` before) | |
 | `not_shared` | no node shares that content in that realm | |
 | `unavailable` | every sharer failed to give the content | `failures`: a list of strings |
 | `answered` | a pending call was answered already | |
-| `closed` | the pool, subscription, served procedure or stream has ended | |
+| `closed` | the pool, subscription, served procedure or stream has ended, including a call in flight when its own pool closes | |
 | `refused` | the network refused it (an advertisement, an admission, a key) | |
 | `failed` | anything else | |
 
@@ -156,11 +157,21 @@ hex strings, and flags as 0 or 1.
 
 - A pending call is answered once, with `macula_pending_reply` (a result) or
   `macula_pending_error` (a message the caller receives as a provider error
-  of code `handler_error`, the message as its detail, cut to 256 bytes). A call not answered by its deadline is answered with an
-  error for you; a later answer is `answered`.
+  of code `handler_error`, the message as its detail, cut to 256 bytes). A
+  call not answered by its deadline is answered with an error for you, and
+  an answer after that is `answered`. The handle ends with its first answer,
+  whether that answer went or was `answered`; an answer after it is
+  `invalid_handle`. Stopping the procedure answers each call still pending
+  with an error and ends its handle.
 - A served stream session is a stream handle like one the node opened. The
   provider sends, replies or aborts, and ends it; `macula_stream_free`
   aborts one not ended.
+- `macula_pool_open_stream`'s `deadline_ms` is how far ahead of now the
+  absolute deadline (Unix ms) signed into the STREAM_OPEN lies (30 s when
+  0). A provider refuses to admit an open past it (`expired`) or more than
+  10 minutes before it (`not_yet_valid`). It does not bound the stream's
+  life: a session ends when either side ends or closes it, or when a relay
+  gives it up. Bound your own waits with `macula_stream_recv`'s timeout.
 - `macula_stream_recv` returns one frame as JSON: `data` (with `encoding`,
   `raw` for bytes sent with `macula_stream_send_bytes` or `msgpack` for a
   value sent with `macula_stream_send_json`, and `body`), `end` (the peer

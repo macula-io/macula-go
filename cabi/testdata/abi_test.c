@@ -106,8 +106,9 @@ static void *provide_one(void *p) {
   macula_free_string(request);
   macula_pending_reply(pending, "{\"echo\":{\"$bytes\":\"AQI=\"},\"big\":-9223372036854775808}", &err);
   check("pending_reply", err);
+  /* The handle ended with its first answer. */
   macula_pending_reply(pending, "null", &err);
-  expect_kind("a second answer", &err, "answered");
+  expect_kind("a second answer", &err, "invalid_handle");
   return NULL;
 }
 

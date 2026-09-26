@@ -461,3 +461,45 @@ func TestAProcedureInTheNodesOwnNamespaceNeedsNoRealmKey(t *testing.T) {
 		t.Errorf("an org procedure in the same realm: %v, want ErrNoRealmKey", err)
 	}
 }
+
+// A call in flight when its own pool closes ends with ErrClosed, not as a
+// procedure nobody serves: the provider was there, the caller left.
+func TestACallInFlightWhenThePoolClosesIsErrClosed(t *testing.T) {
+	serving := teststation.Start(t, profile.PQPure, "closing serving")
+	callers := teststation.Start(t, profile.PQPure, "closing callers")
+	teststation.ShareDHT(serving, callers)
+	realm := teststation.NewRealm(t, profile.PQPure, "closing", org)
+	providerID := nodeIDOf(t, "slow provider")
+	realm.Admit(t, serving, providerID)
+	provider := connect(t, "slow provider", realm, serving)
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	defer close(release)
+	slow := func(ctx context.Context, _ stationlink.Request) (cbor.Value, error) {
+		arrived <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return cbor.Null(), nil
+	}
+	if _, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: slow}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	caller := connect(t, "closing caller", realm, callers)
+	done := make(chan error, 1)
+	go func() {
+		_, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Timeout: 20 * time.Second})
+		done <- err
+	}()
+	<-arrived
+	_ = caller.Close()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrClosed) {
+			t.Fatalf("a call in flight when its pool closed: %v, want ErrClosed", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the call did not end when its pool closed")
+	}
+}

@@ -98,6 +98,9 @@ func (p *Pool) Call(ctx context.Context, c Call) (cbor.Value, error) {
 			return result, err
 		case ctx.Err() != nil:
 			return cbor.Value{}, errors.Join(append(errs, err)...)
+		case p.isClosed():
+			// The provider did not fail: this pool closed under the call.
+			return cbor.Value{}, errors.Join(ErrClosed, err)
 		}
 		p.forget(key)
 		errs = append(errs, fmt.Errorf("provider %x at station %x: %w", cand.Node[:4], cand.Station[:4], err))
@@ -380,6 +383,9 @@ func (p *Pool) OpenStream(ctx context.Context, c StreamCall) (*stationlink.Strea
 		}
 		if ctx.Err() != nil {
 			return nil, errors.Join(append(errs, err)...)
+		}
+		if p.isClosed() {
+			return nil, errors.Join(ErrClosed, err)
 		}
 		p.forget(key)
 		errs = append(errs, fmt.Errorf("provider %x at station %x: %w", cand.Node[:4], cand.Station[:4], err))

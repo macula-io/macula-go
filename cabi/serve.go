@@ -21,10 +21,15 @@ import (
 // its inbox with a handle each, until macula_served_next takes them
 // (CONTRACT.md "Serving and streams").
 
-// pendingCall is a served call waiting for its one answer.
+// pendingCall is a served call waiting for its one answer. Its first answer
+// is taken; an answer after that, or after the call's deadline answered it
+// for the binding, is errAnswered (CONTRACT.md "Serving and streams").
 type pendingCall struct {
-	once    sync.Once
 	answers chan pendingAnswer
+
+	mu       sync.Mutex
+	answered bool // the binding answered, or the deadline answered for it
+	forget   func()
 }
 
 type pendingAnswer struct {
@@ -32,17 +37,42 @@ type pendingAnswer struct {
 	err     error
 }
 
-// answer answers the call, once; a second answer is errAnswered.
+// answer answers the call, once, unless its deadline answered it first.
 func (pc *pendingCall) answer(a pendingAnswer) error {
-	sent := false
-	pc.once.Do(func() {
-		pc.answers <- a
-		sent = true
-	})
-	if !sent {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	if pc.answered {
 		return errAnswered
 	}
+	pc.answered = true
+	pc.answers <- a
 	return nil
+}
+
+// expire answers the call for the binding at its deadline, unless the binding
+// answered first; either way the answer given is returned.
+func (pc *pendingCall) expire(deadline pendingAnswer) pendingAnswer {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	if pc.answered {
+		return <-pc.answers
+	}
+	pc.answered = true
+	return deadline
+}
+
+// answerPendingHandle answers the pending call h names and ends the handle:
+// a pending call's handle lives until its first answer, or until its served
+// procedure stops.
+func answerPendingHandle(h C.uintptr_t, a pendingAnswer) error {
+	pending, ok := valueOf[*pendingCall](h)
+	if !ok {
+		return errInvalidHandle
+	}
+	err := pending.answer(a)
+	pending.forget()
+	release(h)
+	return err
 }
 
 func requestJSON(caller, realm [32]byte, procedure string, payload cbor.Value, deadline time.Time) string {
@@ -58,63 +88,90 @@ func streamRequestJSON(s *stationlink.Stream) string {
 	return requestJSON(open.Caller, open.Realm, open.Procedure, open.Payload, time.UnixMilli(int64(open.Deadline)))
 }
 
-// served is a served procedure with the inbox its calls or sessions wait in.
+// served is a served procedure with the inbox its calls or sessions wait in,
+// and the pending calls it has handed over and not seen answered.
 type served struct {
 	owner  *livePool
 	served *pool.Served
 	box    *inbox
+
+	mu      sync.Mutex
+	pending map[C.uintptr_t]*pendingCall
+}
+
+func newServed() *served {
+	return &served{pending: map[C.uintptr_t]*pendingCall{}}
+}
+
+// hold issues a handle for a pending call and keeps it until the call is
+// answered or the procedure stops.
+func (s *served) hold(pc *pendingCall) C.uintptr_t {
+	h := newHandle(pc)
+	s.mu.Lock()
+	s.pending[h] = pc
+	s.mu.Unlock()
+	pc.forget = func() {
+		s.mu.Lock()
+		delete(s.pending, h)
+		s.mu.Unlock()
+	}
+	return h
 }
 
 // serve serves procedure in realm: each call waits in the inbox as a pending
 // call, answered by the binding or, at its deadline, with an error for it.
 func serve(lp *livePool, realm [32]byte, procedure string) (*served, error) {
-	box := newInbox(waitForRoom)
+	s := newServed()
+	s.box = newInbox(waitForRoom)
 	handler := func(ctx context.Context, r stationlink.Request) (cbor.Value, error) {
 		pending := &pendingCall{answers: make(chan pendingAnswer, 1)}
-		ph := newHandle(pending)
-		defer release(ph)
-		if !box.push(ctx, inboxItem{handle: ph, json: requestJSON(r.Caller, r.Realm, r.Procedure, r.Payload, r.Deadline)}) {
-			return cbor.Value{}, errors.New("the call was not taken by its deadline")
+		ph := s.hold(pending)
+		if !s.box.push(ctx, inboxItem{handle: ph, json: requestJSON(r.Caller, r.Realm, r.Procedure, r.Payload, r.Deadline)}) {
+			a := pending.expire(pendingAnswer{err: errors.New("the call was not taken by its deadline")})
+			return a.payload, a.err
 		}
 		select {
 		case a := <-pending.answers:
 			return a.payload, a.err
 		case <-ctx.Done():
-			return cbor.Value{}, errors.New("the call was not answered by its deadline")
+			a := pending.expire(pendingAnswer{err: errors.New("the call was not answered by its deadline")})
+			return a.payload, a.err
 		}
 	}
-	return offer(lp, box, pool.Offer{Realm: realm, Procedure: procedure, Handler: handler})
+	return offer(lp, s, pool.Offer{Realm: realm, Procedure: procedure, Handler: handler})
 }
 
 // serveStream serves procedure in realm as a stream of mode: each session
 // waits in the inbox as a stream handle, which the binding drives and ends.
 func serveStream(lp *livePool, realm [32]byte, procedure string, mode frame.StreamMode) (*served, error) {
-	box := newInbox(waitForRoom)
-	handler := func(ctx context.Context, s *stationlink.Stream) error {
-		sh := newHandle(s)
-		if !box.push(ctx, inboxItem{handle: sh, json: streamRequestJSON(s)}) {
+	s := newServed()
+	s.box = newInbox(waitForRoom)
+	handler := func(ctx context.Context, st *stationlink.Stream) error {
+		sh := newHandle(st)
+		if !s.box.push(ctx, inboxItem{handle: sh, json: streamRequestJSON(st)}) {
 			release(sh)
 			return errors.New("the session was not taken by its deadline")
 		}
-		<-s.Done()
+		<-st.Done()
 		return nil
 	}
-	return offer(lp, box, pool.Offer{Realm: realm, Procedure: procedure,
+	return offer(lp, s, pool.Offer{Realm: realm, Procedure: procedure,
 		Stream: &stationlink.StreamOffer{Mode: mode, Handler: handler}})
 }
 
-func offer(lp *livePool, box *inbox, o pool.Offer) (*served, error) {
+func offer(lp *livePool, s *served, o pool.Offer) (*served, error) {
 	offered, err := lp.pool.Serve(context.Background(), o)
 	if err != nil {
 		return nil, err
 	}
-	lp.own(box)
-	return &served{owner: lp, served: offered, box: box}, nil
+	lp.own(s.box)
+	s.owner, s.served = lp, offered
+	return s, nil
 }
 
-// stop withdraws the procedure, and ends what waits untaken: a session is
-// aborted and its handle freed; a call is answered at its deadline by its
-// handler.
+// stop withdraws the procedure, and ends what it still holds: a session not
+// taken is aborted and its handle freed, and a call not answered is answered
+// with an error and its handle freed.
 func (s *served) stop() error {
 	err := s.served.Stop()
 	s.box.close()
@@ -128,6 +185,14 @@ func (s *served) stop() error {
 			_ = stream.Abort("cancelled", "the procedure was withdrawn")
 			release(item.handle)
 		}
+	}
+	s.mu.Lock()
+	pending := s.pending
+	s.pending = map[C.uintptr_t]*pendingCall{}
+	s.mu.Unlock()
+	for h, pc := range pending {
+		_ = pc.answer(pendingAnswer{err: errors.New("the procedure was withdrawn")})
+		release(h)
 	}
 	return err
 }
@@ -205,12 +270,7 @@ func macula_served_next(h C.uintptr_t, timeoutMs C.int64_t, token C.uintptr_t, o
 }
 
 func answerPending(h C.uintptr_t, a pendingAnswer, errOut **C.char) {
-	pending, ok := valueOf[*pendingCall](h)
-	if !ok {
-		setErr(errOut, errInvalidHandle)
-		return
-	}
-	setErr(errOut, pending.answer(a))
+	setErr(errOut, answerPendingHandle(h, a))
 }
 
 //export macula_pending_reply

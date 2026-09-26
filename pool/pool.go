@@ -245,6 +245,13 @@ func (p *Pool) Status() []LinkStatus {
 	return out
 }
 
+// isClosed reports whether Close has run.
+func (p *Pool) isClosed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.closed
+}
+
 // Close ends every link with GOODBYE and every subscription, and withdraws
 // nothing: an advertisement lapses with its link.
 func (p *Pool) Close() error {

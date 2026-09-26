@@ -90,3 +90,17 @@ func TestAnEndedContextNamesWhyItEnded(t *testing.T) {
 		t.Errorf("a negative timeout: %v", err)
 	}
 }
+
+// A call nobody serves is its own kind, and a cancellation that is not the
+// call's own token is not "cancelled".
+func TestNoProviderAndForeignCancellations(t *testing.T) {
+	if got := classify(nil, fmt.Errorf("wrapped: %w", pool.ErrNoProvider)).kind; got != kindNoProvider {
+		t.Errorf("ErrNoProvider: %s, want no_provider", got)
+	}
+	if got := classify(nil, context.Canceled).kind; got == kindCancelled {
+		t.Errorf("a context cancelled by no token: %s, want anything but cancelled", got)
+	}
+	if got := classify(context.Background(), context.Canceled).kind; got == kindCancelled {
+		t.Errorf("a call whose own context is live, failing with context.Canceled: %s, want anything but cancelled", got)
+	}
+}

@@ -24,6 +24,7 @@ const (
 	kindProviderError   errorKind = "provider_error"
 	kindRelayError      errorKind = "relay_error"
 	kindNotFound        errorKind = "not_found"
+	kindNoProvider      errorKind = "no_provider"
 	kindNotShared       errorKind = "not_shared"
 	kindUnavailable     errorKind = "unavailable"
 	kindAnswered        errorKind = "answered"
@@ -102,8 +103,6 @@ func classify(ctx context.Context, err error) *abiError {
 		return &abiError{kind: kindRelayError, message: err.Error(), fields: map[string]any{"code": relay.Code}}
 	case errors.Is(err, stationlink.ErrCallTimeout), errors.Is(err, context.DeadlineExceeded):
 		return newError(kindTimeout, "%v", err)
-	case errors.Is(err, context.Canceled):
-		return newError(kindCancelled, "%v", err)
 	case errors.Is(err, stationlink.ErrRecordNotFound):
 		return newError(kindNotFound, "%v", err)
 	case errors.Is(err, pool.ErrNotShared):
@@ -113,6 +112,8 @@ func classify(ctx context.Context, err error) *abiError {
 	case errors.Is(err, pool.ErrClosed), errors.Is(err, stationlink.ErrClosed), errors.Is(err, stationlink.ErrStreamClosed),
 		errors.Is(err, stationlink.ErrStopped):
 		return newError(kindClosed, "%v", err)
+	case errors.Is(err, pool.ErrNoProvider):
+		return newError(kindNoProvider, "%v", err)
 	}
 	return newError(kindFailed, "%v", err)
 }
