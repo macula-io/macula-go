@@ -11,6 +11,7 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/record"
+	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/transport"
 )
@@ -38,6 +39,13 @@ type Call struct {
 	Timeout   time.Duration
 	Token     []byte
 	Proofs    [][]byte
+	// Confidential is whether the call is sealed (macula 13, E2E design
+	// §8.1), decided from the provider's verified advertisement only:
+	// ConfidentialPreferred (zero) seals whenever it names a KEM key and
+	// sends in the clear only to one that names none; ConfidentialRequired
+	// never calls one that names none (no_kem_key); ConfidentialOff sends in
+	// the clear. A sealed call never falls back to the clear.
+	Confidential stationlink.Confidentiality
 }
 
 // Provider is a node serving a procedure, and the station it serves from.
@@ -52,6 +60,10 @@ type candidate struct {
 	Provider
 	expiresAt int64
 	createdAt int64
+	// kemKey is the KEM key the advertisement names, and kemKeyID its id;
+	// nil when it names none.
+	kemKey   []byte
+	kemKeyID [seal.KeyIDSize]byte
 }
 
 type resolvedKey struct {
@@ -96,6 +108,8 @@ func (p *Pool) Call(ctx context.Context, c Call) (cbor.Value, error) {
 		case err == nil, errors.As(err, &provided):
 			p.rememberCandidate(key, cand)
 			return result, err
+		case answeredConfidentially(err):
+			return cbor.Value{}, err
 		case ctx.Err() != nil:
 			return cbor.Value{}, errors.Join(append(errs, err)...)
 		case p.isClosed():
@@ -165,7 +179,7 @@ func (p *Pool) resolve(ctx context.Context, key resolvedKey, realmKey []byte) ([
 			continue
 		}
 		out = append(out, candidate{Provider: Provider{Node: ad.AdvertiserNode, Station: ad.ServingStation},
-			expiresAt: int64(r.ExpiresAt), createdAt: int64(r.CreatedAt)})
+			expiresAt: int64(r.ExpiresAt), createdAt: int64(r.CreatedAt), kemKey: ad.KEMKey, kemKeyID: ad.KEMKeyID})
 	}
 	if len(out) == 0 {
 		return nil, ErrNoProvider
@@ -174,14 +188,106 @@ func (p *Pool) resolve(ctx context.Context, key resolvedKey, realmKey []byte) ([
 	return out, nil
 }
 
-// callAt calls the candidate's provider at its serving station.
+// callAt calls the candidate's provider at its serving station, sealed as
+// c.Confidential and the candidate's advertisement decide. A sealed call the
+// provider refuses sealed_refused is sealed again, once, under a new request,
+// to the key a fresh lookup of its advertisement names, when that is the key
+// the refusal named (macula 13, amendment A1).
 func (p *Pool) callAt(ctx context.Context, cand candidate, c Call) (cbor.Value, error) {
+	sealTo, err := p.sealTo(cand, c.Confidential)
+	if err != nil {
+		return cbor.Value{}, err
+	}
 	link, err := p.linkTo(ctx, cand.Station)
 	if err != nil {
 		return cbor.Value{}, err
 	}
-	return link.Call(ctx, stationlink.Call{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
-		Payload: c.Payload, Timeout: time.Until(deadlineOf(ctx)), Token: c.Token, Proofs: c.Proofs})
+	call := stationlink.Call{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
+		Payload: c.Payload, Timeout: time.Until(deadlineOf(ctx)), Token: c.Token, Proofs: c.Proofs, SealTo: sealTo}
+	result, err := link.Call(ctx, call)
+	var refused *stationlink.SealedRefusedError
+	if !errors.As(err, &refused) {
+		return result, err
+	}
+	if call.SealTo, err = p.resealed(ctx, resolvedKey{c.Realm, c.Procedure, cand.Node}, cand.Node, refused.Named); err != nil {
+		return cbor.Value{}, err
+	}
+	call.Timeout = time.Until(deadlineOf(ctx))
+	return link.Call(ctx, call)
+}
+
+// sealTo is the key a call to cand is sealed to under conf, nil for a clear
+// call: the key its advertisement names, unless conf is off; none when it
+// names none, unless conf requires one. A named key not of this pool's
+// profile is no_kem_key.
+func (p *Pool) sealTo(cand candidate, conf stationlink.Confidentiality) ([]byte, error) {
+	switch {
+	case conf == stationlink.ConfidentialOff:
+		return nil, nil
+	case cand.kemKey == nil && conf == stationlink.ConfidentialRequired:
+		return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonNoKEMKey}
+	case cand.kemKey == nil:
+		return nil, nil
+	case len(cand.kemKey) != seal.CarriedSize(p.key.Profile()):
+		return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonNoKEMKey}
+	}
+	return cand.kemKey, nil
+}
+
+// resealed looks the provider's advertisement up once more, past what the
+// pool remembers, and gives the key to seal to again (resealKey).
+func (p *Pool) resealed(ctx context.Context, key resolvedKey, node [32]byte, named *[seal.KeyIDSize]byte) ([]byte, error) {
+	realmKey, err := p.realmKeyFor(key.realm, key.procedure)
+	if err != nil {
+		return nil, err
+	}
+	p.forget(key)
+	fresh, err := p.resolve(ctx, key, realmKey)
+	if err != nil && !errors.Is(err, ErrNoProvider) {
+		return nil, err
+	}
+	return resealKey(node, named, fresh)
+}
+
+// resealKey is the key a call refused sealed_refused is sealed to again: the
+// key node's freshly resolved advertisement names, only when it is the key the
+// refusal named. Another key is key_mismatch, naming both; no key named, no
+// advertisement of node, or one naming none is no_kem_key. It never gives the
+// clear.
+func resealKey(node [32]byte, named *[seal.KeyIDSize]byte, fresh []candidate) ([]byte, error) {
+	if named == nil {
+		return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonNoKEMKey}
+	}
+	for _, c := range fresh {
+		if c.Node != node {
+			continue
+		}
+		switch {
+		case c.kemKey == nil:
+			return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonNoKEMKey}
+		case c.kemKeyID != *named:
+			found := c.kemKeyID
+			return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonKeyMismatch, Named: named, Found: &found}
+		}
+		return c.kemKey, nil
+	}
+	return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonNoKEMKey}
+}
+
+// answeredConfidentially reports whether err is a provider's answer, or a
+// confidentiality failure, that ends a call rather than moving it to the next
+// candidate: every one but no_kem_key, which says only that this candidate
+// cannot be sealed to.
+func answeredConfidentially(err error) bool {
+	var confidentiality *stationlink.ConfidentialityError
+	var refused *stationlink.SealedRefusedError
+	switch {
+	case errors.As(err, &confidentiality):
+		return confidentiality.Reason != stationlink.ReasonNoKEMKey
+	case errors.As(err, &refused), errors.Is(err, stationlink.ErrClearAnswerToSealed):
+		return true
+	}
+	return false
 }
 
 // candidateShare is one candidate's part of what is left of ctx's deadline
@@ -355,6 +461,8 @@ type StreamCall struct {
 	Deadline  time.Duration
 	Token     []byte
 	Proofs    [][]byte
+	// Confidential is whether the stream is sealed, as Call.Confidential.
+	Confidential stationlink.Confidentiality
 }
 
 // OpenStream opens a streaming session at a provider of the procedure, reached
@@ -381,6 +489,9 @@ func (p *Pool) OpenStream(ctx context.Context, c StreamCall) (*stationlink.Strea
 			p.rememberCandidate(key, cand)
 			return stream, nil
 		}
+		if answeredConfidentially(err) {
+			return nil, err
+		}
 		if ctx.Err() != nil {
 			return nil, errors.Join(append(errs, err)...)
 		}
@@ -398,6 +509,21 @@ func (p *Pool) openAt(ctx context.Context, cand candidate, c StreamCall) (*stati
 	if err != nil {
 		return nil, err
 	}
-	return link.OpenStream(ctx, stationlink.StreamCall{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
-		Mode: c.Mode, Payload: c.Payload, Deadline: c.Deadline, Token: c.Token, Proofs: c.Proofs})
+	sealTo, err := p.sealTo(cand, c.Confidential)
+	if err != nil {
+		return nil, err
+	}
+	call := stationlink.StreamCall{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
+		Mode: c.Mode, Payload: c.Payload, Deadline: c.Deadline, Token: c.Token, Proofs: c.Proofs, SealTo: sealTo}
+	if sealTo != nil {
+		// Refused sealed_refused before it has sent anything, the stream
+		// reseals once to the key a fresh lookup confirms (amendment A1).
+		key := resolvedKey{c.Realm, c.Procedure, cand.Node}
+		call.Reseal = func(named *[seal.KeyIDSize]byte) ([]byte, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), stationlink.DefaultCallTimeout)
+			defer cancel()
+			return p.resealed(ctx, key, cand.Node, named)
+		}
+	}
+	return link.OpenStream(ctx, call)
 }

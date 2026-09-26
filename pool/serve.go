@@ -41,6 +41,11 @@ type Offer struct {
 	Handler   stationlink.Handler
 	Stream    *stationlink.StreamOffer
 	Policy    ucan.Policy
+	// Confidential is how the procedure takes its requests
+	// (stationlink.ConfidentialPreferred when zero): with Opts.KEMAdvertise
+	// its advertisement names the node's KEM key and sealed requests are
+	// answered sealed.
+	Confidential stationlink.Confidentiality
 }
 
 // Served is a procedure the node serves on every link the pool holds, and on
@@ -64,7 +69,16 @@ func (p *Pool) Serve(ctx context.Context, o Offer) (*Served, error) {
 		return nil, err
 	}
 	s := &Served{pool: p, onLinks: map[*stationlink.Link]*stationlink.Served{},
-		offer: stationlink.Offer{Realm: o.Realm, Procedure: o.Procedure, Handler: o.Handler, Stream: o.Stream, RealmKey: realmKey, Policy: o.Policy}}
+		offer: stationlink.Offer{Realm: o.Realm, Procedure: o.Procedure, Handler: o.Handler, Stream: o.Stream, RealmKey: realmKey, Policy: o.Policy,
+			Confidential: o.Confidential}}
+	if o.Confidential == stationlink.ConfidentialRequired && !p.opts.KEMAdvertise {
+		return nil, stationlink.ErrKEMAdvertiseDisabled
+	}
+	if p.opts.KEMAdvertise && o.Confidential != stationlink.ConfidentialOff {
+		// Kept across every link it is served on, so no link reopens the
+		// keyless window.
+		s.offer.KeyedSince = time.Now()
+	}
 	links := p.links()
 	if len(links) == 0 {
 		return nil, ErrNoLink

@@ -219,7 +219,10 @@ func (p *Pool) sharedRealm(ctx context.Context, realm [32]byte) (*sharedRealm, e
 	}
 	shared = &sharedRealm{roots: map[manifest.Mcid]sharedRoot{}, chunks: map[manifest.Mcid][]byte{},
 		announcements: map[manifest.Mcid]*announced{}}
+	// Content is public by design and served in the clear (macula 13, E2E
+	// design §5.3): a fetch trusts no realm and has no signed key to seal to.
 	served, err := p.Serve(ctx, Offer{Realm: realm, Procedure: record.OwnProcedure(p.NodeID(), ContentProcedureName),
+		Confidential: stationlink.ConfidentialOff,
 		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
 			return p.answerFetch(realm, s)
 		}}})

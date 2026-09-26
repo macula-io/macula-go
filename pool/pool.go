@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/transport"
 )
@@ -105,6 +106,13 @@ type Opts struct {
 	// OnLinkEvent, when set, hears every link coming up and going down, on
 	// its own goroutine.
 	OnLinkEvent func(LinkEvent)
+	// KEMAdvertise gives the node a KEM keyring and names its current key in
+	// the advertisements of procedures served confidentially (macula 13,
+	// E2E design amendment A1), so callers seal to it. Off by default:
+	// switch it on only once every station runs macula 12.11 or later and
+	// every caller runs 13 (the station floor). Without it the node opens
+	// no sealed request.
+	KEMAdvertise bool
 	// OnIssuerError hears each failure to reissue the node's status
 	// statements or rotate its CONNECT key; nil logs it as a warning. Left
 	// failing, the links end when their statements lapse.
@@ -148,9 +156,17 @@ func Connect(ctx context.Context, seeds []Seed, opts Opts) (*Pool, error) {
 	if err != nil {
 		return nil, err
 	}
+	var keyring *seal.Keyring
+	if opts.KEMAdvertise {
+		// One node identity, one keyring, shared by every link.
+		if keyring, err = seal.NewKeyring(opts.IdentityKey.Profile(), time.Now); err != nil {
+			return nil, err
+		}
+	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	p := &Pool{opts: opts, key: opts.IdentityKey, self: self, issuer: issuer,
 		shared: stationlink.Config{IdentityKey: opts.IdentityKey, Issuer: issuer, PublicationSeq: &stationlink.PublicationSeq{},
+			Keyring: keyring, KEMAdvertise: opts.KEMAdvertise,
 			Admission: stationlink.NewAdmission(opts.Admission), Dedup: stationlink.NewEventDedup()},
 		subs: map[*Subscription]struct{}{}, served: map[*Served]struct{}{}, remember: map[resolvedKey]candidate{},
 		ctx: runCtx, cancel: cancel}
