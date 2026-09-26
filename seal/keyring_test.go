@@ -1,6 +1,8 @@
 package seal
 
 import (
+	"bytes"
+	"errors"
 	"testing"
 	"time"
 
@@ -61,4 +63,36 @@ func TestAKeyringIsOfItsProfile(t *testing.T) {
 			t.Errorf("%s: a key of %d bytes, want %d", p, got, CarriedSize(p))
 		}
 	}
+}
+
+// A key as carried (an advertisement's kem_key) parses back to the key it
+// carries, in its profile, and nothing else parses.
+func TestAKeyAsCarriedParses(t *testing.T) {
+	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
+		key := must(GenerateKey(p)).PublicKey()
+		carried := key.Carried()
+		parsed, err := ParsePublicKey(p, carried)
+		if err != nil || !bytes.Equal(parsed.Carried(), carried) {
+			t.Fatalf("%s: %v", p, err)
+		}
+		other := profile.PQHybrid
+		if p == profile.PQHybrid {
+			other = profile.PQPure
+		}
+		if _, err := ParsePublicKey(other, carried); !errors.Is(err, ErrKey) {
+			t.Errorf("%s key parsed as %s: %v", p, other, err)
+		}
+	}
+	bad := must(GenerateKey(profile.PQHybrid)).PublicKey().Carried()
+	bad[len(bad)-1] ^= 1 // no longer a point on P-384
+	if _, err := ParsePublicKey(profile.PQHybrid, bad); !errors.Is(err, ErrKey) {
+		t.Errorf("a P-384 point off the curve parsed: %v", err)
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }

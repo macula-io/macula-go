@@ -162,6 +162,33 @@ func (k *PrivateKey) PublicKey() *PublicKey {
 	return pub
 }
 
+// ParsePublicKey is the recipient key a key as carried holds in profile p: an
+// advertisement's kem_key, which a caller seals to. A key of another size than
+// p's, an ML-KEM key crypto/mlkem refuses, or a P-384 point off the curve is
+// ErrKey.
+func ParsePublicKey(p profile.Profile, carried []byte) (*PublicKey, error) {
+	hybrid, err := isHybrid(p)
+	if err != nil {
+		return nil, err
+	}
+	if len(carried) != CarriedSize(p) {
+		return nil, fmt.Errorf("%w: a %s key as carried is %d bytes, not %d", ErrKey, p, CarriedSize(p), len(carried))
+	}
+	ek, err := mlkem.NewEncapsulationKey1024(carried[:mlkem.EncapsulationKeySize1024])
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrKey, err)
+	}
+	pub := &PublicKey{Profile: p, MLKEM: ek}
+	if hybrid {
+		point, err := ecdh.P384().NewPublicKey(carried[mlkem.EncapsulationKeySize1024:])
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrKey, err)
+		}
+		pub.P384 = point
+	}
+	return pub, nil
+}
+
 // Carried is the key as it is carried and hashed: the ML-KEM key, followed
 // by the P-384 point in pq_hybrid.
 func (k *PublicKey) Carried() []byte {
