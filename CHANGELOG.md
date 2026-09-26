@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   procedure, a timestamp, a nonce and every field of the request, so the
   device_info an admitter reads and the ttl_seconds a realm grants are
   signed. `JSONRequest` applies the realm's JSON rule to an HTTP body.
+  Proved against realm.macula.io with a fresh key
+  (`scripts/interop/godevicerequest`): a join session, a tampered
+  device_info refused, and a membership UCAN.
 - cabi: `macula_key_device_request_proof` and `macula_device_request_message`
   (since v0.14.0; ABI 1 still). A new function no longer changes
   `MACULA_ABI_VERSION`, only a change to an existing declaration does; and a

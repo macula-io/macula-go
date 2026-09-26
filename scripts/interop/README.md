@@ -54,6 +54,14 @@ escript scripts/interop/erlang_content.escript <macula lib dir> <host> <port> <s
 scripts/interop/copy_own_namespace_fixtures.sh <macula checkout> [git ref, origin/main by default]
 ```
 
+`godevicerequest` proves `devicerequest` against a live realm with a fresh key that is never saved: a v2 join session
+over HTTP (201), the same request with its device_info changed after signing (401 bad_proof), and, with `-station`, a
+membership UCAN over the mesh naming the fresh node:
+
+```sh
+go run ./scripts/interop/godevicerequest -realm-key <file of the realm key in hex> -station host:port@<node id hex>
+```
+
 `copy_e2e_seal_vectors.sh` copies macula's E2E seal scheme 1 vectors and their spec
 (`test/vectors/e2e_seal_v1.json`, `E2E_SEAL_V1.md`) to `seal/testdata`, which `seal/vectors_test.go` holds
 macula-go to in every `go test`, both sides of the key agreement byte for byte:
