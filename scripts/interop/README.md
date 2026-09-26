@@ -62,6 +62,16 @@ membership UCAN over the mesh naming the fresh node:
 go run ./scripts/interop/godevicerequest -realm-key <file of the realm key in hex> -station host:port@<node id hex>
 ```
 
+`copy_ucan_vectors.sh` copies macula's UCAN vectors (`test/vectors/ucan_v1.json`, `UCAN_V1.md`) to `ucan/testdata`,
+which `ucan/vectors_test.go` holds macula-go to: every verdict `macula_ucan:authorize/3` reaches, in both profiles. The
+reverse: `goucan` mints tokens with macula-go, and `erlang_ucan.escript` authorizes them with `macula_ucan`:
+
+```sh
+scripts/interop/copy_ucan_vectors.sh <macula checkout> [git ref, origin/main by default]
+go run ./scripts/interop/goucan > go_ucans.json
+escript scripts/interop/erlang_ucan.escript <macula lib dir> go_ucans.json
+```
+
 `copy_e2e_seal_vectors.sh` copies macula's E2E seal scheme 1 vectors and their spec
 (`test/vectors/e2e_seal_v1.json`, `E2E_SEAL_V1.md`) to `seal/testdata`, which `seal/vectors_test.go` holds
 macula-go to in every `go test`, both sides of the key agreement byte for byte:
