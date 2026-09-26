@@ -54,6 +54,14 @@ escript scripts/interop/erlang_content.escript <macula lib dir> <host> <port> <s
 scripts/interop/copy_own_namespace_fixtures.sh <macula checkout> [git ref, origin/main by default]
 ```
 
+`copy_e2e_seal_vectors.sh` copies macula's E2E seal scheme 1 vectors and their spec
+(`test/vectors/e2e_seal_v1.json`, `E2E_SEAL_V1.md`) to `seal/testdata`, which `seal/vectors_test.go` holds
+macula-go to in every `go test`, both sides of the key agreement byte for byte:
+
+```sh
+scripts/interop/copy_e2e_seal_vectors.sh <macula checkout> [git ref, origin/main by default]
+```
+
 ## Running
 
 Compile macula at the revision to check, then point the script at the compiled application:

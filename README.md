@@ -146,6 +146,7 @@ hex> -realm <hex> -realm-key <file> -key <node key file>`):
 | [`cbor`](cbor) | The deterministic CBOR codec and its decoding rule |
 | [`profile`](profile) | The `pq_pure` and `pq_hybrid` crypto profiles |
 | [`manifest`](manifest) | Content manifests and MCIDs, as macula 12 makes them |
+| [`seal`](seal) | End-to-end payload sealing, scheme 1: the key agreement, keys, AAD and AES-256-GCM (no frame carries a sealed payload yet) |
 
 ## The CBOR codec is hand-rolled on purpose
 

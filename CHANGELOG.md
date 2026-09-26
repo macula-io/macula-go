@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `seal`: end-to-end payload sealing, scheme 1 (macula's
+  `test/vectors/E2E_SEAL_V1.md`), the primitives only; no frame carries a
+  sealed payload yet. ML-KEM-1024, with an ephemeral P-384 ECDH in
+  `pq_hybrid`, combined by HKDF-SHA-384 into a shared secret
+  (`SenderSecret`, `RecipientSecret`); call, stream and per-publisher event
+  keys (`CallKeys`, `StreamKeys`, `EventKey`); the AAD of every sealed frame;
+  stream and random nonces; AES-256-GCM `Seal` and `Open`. Held to macula's
+  vectors byte for byte on both sides of the key agreement (the sender's
+  through `crypto/mlkem/mlkemtest`), copied by
+  `scripts/interop/copy_e2e_seal_vectors.sh`. A recipient refuses an
+  ephemeral P-384 point whose ECDH output is zero, which `crypto/ecdh`
+  itself returns.
+
 ### Documentation
 
 - The README describes the wire as TLS 1.3 with a hybrid post-quantum key
