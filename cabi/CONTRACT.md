@@ -146,8 +146,8 @@ hex strings, and flags as 0 or 1.
 ## Serving and streams
 
 - A pending call is answered once, with `macula_pending_reply` (a result) or
-  `macula_pending_error` (a code and message the caller receives as a
-  provider error). A call not answered by its deadline is answered with an
+  `macula_pending_error` (a message the caller receives as a provider error
+  of code `handler_error`, the message as its detail, cut to 256 bytes). A call not answered by its deadline is answered with an
   error for you; a later answer is `answered`.
 - A served stream session is a stream handle like one the node opened. The
   provider sends, replies or aborts, and ends it; `macula_stream_free`

@@ -118,10 +118,12 @@ macula_handle macula_pool_serve_stream(macula_handle pool, const uint8_t realm[3
  * stream), and its request {"caller","realm","procedure","payload","deadline_ms"}. */
 char *macula_served_next(macula_handle served, int64_t timeout_ms, macula_handle cancel, macula_handle *out_item,
                          int32_t *closed, char **err_out);
-/* Answer a pending call, once. The handle ends with the answer or the
- * call's deadline; it is never freed by the caller. */
+/* Answer a pending call, once: with a result, or with an error the caller
+ * receives as a provider error of code "handler_error" and detail message.
+ * The handle ends with the answer or the call's deadline; it is never freed
+ * by the caller. */
 void macula_pending_reply(macula_handle pending, const char *result_json, char **err_out);
-void macula_pending_error(macula_handle pending, const char *code, const char *message, char **err_out);
+void macula_pending_error(macula_handle pending, const char *message, char **err_out);
 /* Withdraws the procedure everywhere; frees the handle. */
 void macula_served_stop(macula_handle served, char **err_out);
 
