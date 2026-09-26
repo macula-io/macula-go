@@ -21,7 +21,8 @@
 // the payload, and merges in the caller it authenticated, which a Go provider
 // reads as stationlink.Request.Caller (macula_station_link:with_caller/2).
 // Neither is signed, and a signer refuses a payload carrying a caller
-// (ErrCallerField) rather than send a field no handler reads. Verify leaves replay to its caller: it returns the
+// (ErrCallerField): an Erlang handler never sees one, and a Go handler must
+// not read one; it has stationlink.Request.Caller. Verify leaves replay to its caller: it returns the
 // identity and nonce, which a verifier accepts once (mcl_om keeps each nonce
 // for 120 s after acceptance, beyond the 60 s skew either side).
 package ownershipproof

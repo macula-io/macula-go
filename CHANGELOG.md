@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `ownershipproof`: an ownership proof v2 (mcl-om#7), the `asserted_by`
   block by which an identity authorises exactly one request. `Attach` signs a
-  payload's fields (all but `asserted_by` and a text `caller`, which a station
-  replaces with the caller it authenticated), the procedure, the realm, a
+  payload's fields (all but `asserted_by`; a payload carrying a text `caller`,
+  which a station replaces with the caller it authenticated, is refused with
+  `ErrCallerField`, `invalid_argument` at the ABI), the procedure, the realm, a
   timestamp and a nonce under the tag `macula.ownership_proof`; `Verify` takes
   mcl_om's verifier's steps in its order and gives its refusal for each, and
   leaves replay to its caller. The signed bytes are mcl_om 0.32.0's

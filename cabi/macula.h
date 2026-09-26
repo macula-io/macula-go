@@ -98,8 +98,10 @@ char *macula_key_ownership_proof(macula_handle key, const uint8_t realm[32], con
                                  const char *payload_json, char **err_out);
 /* The exact bytes such a proof signs, for a given identity (node_id),
  * timestamp and nonce, over fields_json: a payload, of which the fields are
- * all but "asserted_by" and a text "caller" (which a station replaces). What
- * a binding checks mcl_om's vector with. */
+ * all but "asserted_by" and a text "caller", as a verifier reads a delivered
+ * payload. Unlike macula_key_ownership_proof it does not refuse a "caller":
+ * it mirrors the verifier, not the signer. What a binding checks mcl_om's
+ * vector with. */
 uint8_t *macula_ownership_proof_message(const uint8_t identity[32], const uint8_t realm[32], const char *procedure,
                                         int64_t timestamp_ms, const uint8_t nonce[16], const char *fields_json,
                                         size_t *out_len, char **err_out);

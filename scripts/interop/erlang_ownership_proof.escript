@@ -35,7 +35,10 @@ main(["emit", Ebin, Src, OutDir]) ->
     Public = macula_node_keys:public_key(Key),
     true = macula_node_keys:verify(Message, Signature, Public, profile()),
     ok = filelib:ensure_dir(filename:join(OutDir, "x")),
-    %% make/6 takes fields as an Erlang caller hands macula:call: undefined for null.
+    %% make/6 takes fields as an Erlang caller hands macula:call: undefined for
+    %% null (erlang_fields/0 converts top-level values only; the vector has no
+    %% nested null). The payload is encoded by macula_record_cbor, which writes
+    %% atoms as text and binaries as byte strings: macula_frame:to_wire/1's rule.
     AssertedBy = mcl_om_ownership_proof:make(Key, Identity, realm(), ?PROCEDURE, erlang_fields(), ?TIMESTAMP),
     Payload = macula_record_cbor:encode((fields())#{asserted_by => AssertedBy}),
     [write(OutDir, Name, Bytes) || {Name, Bytes} <- [{"message.hex", Message}, {"identity.hex", Identity},
