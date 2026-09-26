@@ -66,5 +66,18 @@ jobs:
             grep -q -- "--- PASS: $name " gofips140.log || { echo "no PASS line for $name"; exit 1; }
           done
 
+  # Windows keeps a key file's permissions in its DACL, not mode bits
+  # (identity/key_file_windows.go), and the packages that only compute run
+  # there too.
+  windows:
+    name: test (windows)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./identity ./devicerequest ./cbor ./frame ./record ./manifest ./seal
+
   libmacula:
     uses: ./.github/workflows/libmacula.yml

@@ -57,7 +57,11 @@ func withByteAt(b []byte, offset int, value byte) []byte {
 func writtenKeyFile(t *testing.T, contents []byte) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "node.key")
-	if err := os.WriteFile(path, contents, 0o600); err != nil {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	if err := writeRestricted(f, contents); err != nil {
 		t.Fatalf("write key file: %v", err)
 	}
 	return path
@@ -126,38 +130,6 @@ func TestSaveWritesTheSeedFormLayout(t *testing.T) {
 		entries, err := os.ReadDir(filepath.Dir(path))
 		if err != nil || len(entries) != 1 {
 			t.Errorf("%s: the directory holds %d entries after Save, want only the key file", c.key, len(entries))
-		}
-	}
-}
-
-func TestASavedKeyFileIsReadableByItsOwnerOnly(t *testing.T) {
-	info, err := os.Stat(savedKeyFile(t, sharedKey(t, pureIdentityKey)))
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("the key file's mode is %o, want 600", perm)
-	}
-}
-
-func TestAKeyFileItsGroupOrOthersCanReadIsRefused(t *testing.T) {
-	key := sharedKey(t, pureIdentityKey)
-	for _, mode := range []fs.FileMode{0o640, 0o604, 0o660, 0o606, 0o644} {
-		path := savedKeyFile(t, key)
-		if err := os.Chmod(path, mode); err != nil {
-			t.Fatalf("chmod: %v", err)
-		}
-		if _, err := LoadKey(path, PurposeIdentity, profile.PQPure); !errors.Is(err, ErrKeyFilePermissions) {
-			t.Errorf("mode %o: LoadKey = %v, want ErrKeyFilePermissions", mode, err)
-		}
-	}
-	for _, mode := range []fs.FileMode{0o600, 0o400} {
-		path := savedKeyFile(t, key)
-		if err := os.Chmod(path, mode); err != nil {
-			t.Fatalf("chmod: %v", err)
-		}
-		if _, err := LoadKey(path, PurposeIdentity, profile.PQPure); err != nil {
-			t.Errorf("mode %o: LoadKey = %v, want it loaded", mode, err)
 		}
 	}
 }

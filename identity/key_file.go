@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -125,10 +124,10 @@ func (k *NodeKey) save(path string) (err error) {
 	return syncDir(dir)
 }
 
-// writeRestricted makes f readable by its owner only, then writes contents,
-// syncs and closes it.
+// writeRestricted makes f readable by its owner only (restrictKeyFile), then
+// writes contents, syncs and closes it.
 func writeRestricted(f *os.File, contents []byte) error {
-	err := f.Chmod(0o600)
+	err := restrictKeyFile(f)
 	if err == nil {
 		_, err = f.Write(contents)
 	}
@@ -215,7 +214,7 @@ func readKeyFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identity: load key: %w", err)
 	}
-	if err := ownerOnly(opened); err != nil {
+	if err := ownerOnlyFile(f, opened); err != nil {
 		return nil, err
 	}
 	contents, err := io.ReadAll(io.LimitReader(f, maxKeyFileBytes+1))
@@ -226,21 +225,6 @@ func readKeyFile(path string) ([]byte, error) {
 		return nil, ErrKeyFileTooLarge
 	}
 	return contents, nil
-}
-
-// ownerOnly refuses an opened key file that is not a regular file, that is not
-// the effective user's, or that its group or others can read.
-func ownerOnly(info fs.FileInfo) error {
-	if !info.Mode().IsRegular() {
-		return ErrKeyFileNotRegular
-	}
-	if !ownedByEffectiveUser(info) {
-		return ErrKeyFileOwner
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return ErrKeyFilePermissions
-	}
-	return nil
 }
 
 // keyFile is a key file as read, before its halves are checked.
