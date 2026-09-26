@@ -26,8 +26,11 @@ type RequestSpec struct {
 	Target    [32]byte
 	Deadline  uint64
 	Payload   cbor.Value
-	Mode      *StreamMode
-	Token     []byte
+	// Sealed is the payload sealed end to end, carried in place of Payload,
+	// which is then not sent; nil for a clear request.
+	Sealed *Sealed
+	Mode   *StreamMode
+	Token  []byte
 	// Proofs are the tokens of the delegation chain Token rests on, carried in
 	// the signed request and found by content id: at most MaxProofs distinct
 	// byte strings of at most MaxProofsBytes in all. None: no proofs field.
@@ -57,9 +60,12 @@ type VerifiedRequest struct {
 	Procedure   string
 	Target      [32]byte
 	Deadline    uint64
-	Payload     cbor.Value
-	Mode        *StreamMode
-	Token       []byte
+	// Payload is a clear request's payload; a sealed request's is in Sealed.
+	Payload cbor.Value
+	// Sealed is the request's sealed payload, nil for a clear request.
+	Sealed *Sealed
+	Mode   *StreamMode
+	Token  []byte
 	// Proofs are the request's delegation chain proofs, nil when it carries
 	// none.
 	Proofs [][]byte
@@ -103,7 +109,11 @@ func signRequest(frameType string, spec RequestSpec, key *identity.NodeKey) (cbo
 		textEntry("procedure", spec.Procedure),
 		bytesEntry("target", spec.Target[:]),
 		uintEntry("deadline", spec.Deadline),
-		valueEntry("payload", spec.Payload),
+	}
+	if spec.Sealed != nil {
+		fields = append(fields, valueEntry("sealed", spec.Sealed.value()))
+	} else {
+		fields = append(fields, valueEntry("payload", spec.Payload))
 	}
 	if spec.Mode != nil {
 		fields = append(fields, textEntry("mode", spec.Mode.Name()))
@@ -142,8 +152,13 @@ func requestBuildable(frameType string, spec RequestSpec, key *identity.NodeKey)
 	if err := boundedText("procedure", spec.Procedure, maxProcedureBytes); err != nil {
 		return err
 	}
-	if err := CheckPayload(spec.Payload); err != nil {
-		return err
+	if spec.Sealed != nil && !spec.Sealed.shaped(sealedRequest) {
+		return ErrSealedShape
+	}
+	if spec.Sealed == nil {
+		if err := CheckPayload(spec.Payload); err != nil {
+			return err
+		}
 	}
 	switch {
 	case spec.Deadline >= maxProtocolInt || (spec.RetryBudget != nil && *spec.RetryBudget >= maxProtocolInt):
@@ -179,8 +194,8 @@ func VerifyRequest(v cbor.Value, p profile.Profile) (VerifiedRequest, error) {
 	}
 	fields, ok := readFields(verified.Fields, requestTable(frameType))
 	_, hasMode := fields["mode"]
-	if !ok || !hasFields(fields, "frame_type", "caller", "request_id", "realm", "procedure", "target", "deadline", "payload") ||
-		hasMode != (frameType == frameTypeStreamOpen) {
+	if !ok || !hasFields(fields, "frame_type", "caller", "request_id", "realm", "procedure", "target", "deadline") ||
+		!payloadOrSealed(fields) || hasMode != (frameType == frameTypeStreamOpen) {
 		return VerifiedRequest{}, ErrMalformedFrame
 	}
 	request := verifiedRequest(frameType, verified, fields)
@@ -199,6 +214,7 @@ func verifiedRequest(frameType string, verified identity.VerifiedObject, fields 
 		Procedure:   textOf(fields["procedure"]),
 		Deadline:    uint64(deadline),
 		Payload:     fields["payload"],
+		Sealed:      sealedField(fields, sealedRequest),
 	}
 	fixedBytes(request.Caller[:], fields["caller"])
 	fixedBytes(request.RequestID[:], fields["request_id"])
@@ -265,6 +281,7 @@ func requestTable(frameType string) map[string]fieldRule {
 		"target":     bytesOf(32),
 		"deadline":   protocolUint,
 		"payload":    anyValue,
+		"sealed":     sealedRule(sealedRequest),
 		"mode":       textIn(ServerStream.Name(), ClientStream.Name(), Bidi.Name()),
 		"token":      anyBytes,
 		"proofs":     proofsWithinBound,

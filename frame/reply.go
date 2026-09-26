@@ -32,6 +32,9 @@ type VerifiedReply struct {
 	Payload     cbor.Value
 	Code        string
 	Detail      *string
+	// Sealed is a sealed RESULT's payload, or a sealed ERROR's code and
+	// detail (cbor([code, detail]) once opened); nil for a clear reply.
+	Sealed *Sealed
 }
 
 // RelayErrorSpec is a station's relay error as it gives it to SignRelayError: an
@@ -69,6 +72,28 @@ func SignResult(request VerifiedRequest, payload cbor.Value, sourceRouteReverse 
 		return cbor.Value{}, err
 	}
 	return signReply(frameTypeResult, request, []cbor.MapEntry{valueEntry("payload", payload)}, sourceRouteReverse, key)
+}
+
+// SignSealedResult signs a provider's RESULT whose payload is sealed, with
+// SignResult's key check; sealed carries its reply nonce (ErrSealedShape).
+func SignSealedResult(request VerifiedRequest, sealed Sealed, sourceRouteReverse []byte, key *identity.NodeKey) (cbor.Value, error) {
+	return signSealedReply(frameTypeResult, request, sealed, sourceRouteReverse, key)
+}
+
+// SignSealedProviderError signs a provider's ERROR whose code and detail are
+// sealed, as cbor([code, detail]): it carries no code or detail of its own.
+func SignSealedProviderError(request VerifiedRequest, sealed Sealed, sourceRouteReverse []byte, key *identity.NodeKey) (cbor.Value, error) {
+	return signSealedReply(frameTypeError, request, sealed, sourceRouteReverse, key)
+}
+
+func signSealedReply(frameType string, request VerifiedRequest, sealed Sealed, sourceRouteReverse []byte, key *identity.NodeKey) (cbor.Value, error) {
+	if err := replySigner(request, key); err != nil {
+		return cbor.Value{}, err
+	}
+	if !sealed.shaped(sealedReply) {
+		return cbor.Value{}, ErrSealedShape
+	}
+	return signReply(frameType, request, []cbor.MapEntry{valueEntry("sealed", sealed.value())}, sourceRouteReverse, key)
 }
 
 // SignProviderError signs a provider's ERROR for a verified request, with
@@ -137,7 +162,8 @@ func VerifyReply(v cbor.Value, request VerifiedRequest, p profile.Profile) (Veri
 	if !ok || !hasFields(fields, "frame_type", "request_id", "request_hash", "responded_by") || !replyShaped(frameType, fields) {
 		return VerifiedReply{}, ErrMalformedFrame
 	}
-	reply := VerifiedReply{FrameType: frameType, Payload: fields["payload"], Code: textOf(fields["code"]), Detail: optionalText(fields, "detail")}
+	reply := VerifiedReply{FrameType: frameType, Payload: fields["payload"], Code: textOf(fields["code"]), Detail: optionalText(fields, "detail"),
+		Sealed: sealedField(fields, sealedReply)}
 	fixedBytes(reply.RespondedBy[:], fields["responded_by"])
 	switch {
 	case reply.RespondedBy != identity.NodeIDOf(verified.Key, p):
@@ -150,14 +176,20 @@ func VerifyReply(v cbor.Value, request VerifiedRequest, p profile.Profile) (Veri
 	return reply, nil
 }
 
-// replyShaped reports whether a reply's fields are its type's: a RESULT's
-// payload without a code or detail, an ERROR's code without a payload.
+// replyShaped reports whether a reply's fields are its type's, as
+// macula_frame's reply_shape/2 holds them: a RESULT's payload or sealed field,
+// exactly one, without a code or detail; a clear ERROR's code without a
+// payload; a sealed ERROR's sealed field alone, its code and detail inside it.
 func replyShaped(frameType string, fields map[string]cbor.Value) bool {
 	_, hasPayload := fields["payload"]
 	_, hasCode := fields["code"]
 	_, hasDetail := fields["detail"]
-	if frameType == frameTypeResult {
-		return hasPayload && !hasCode && !hasDetail
+	_, hasSealed := fields["sealed"]
+	switch {
+	case frameType == frameTypeResult:
+		return payloadOrSealed(fields) && !hasCode && !hasDetail
+	case hasSealed:
+		return !hasCode && !hasDetail && !hasPayload
 	}
 	return hasCode && !hasPayload
 }
@@ -170,6 +202,7 @@ func replyTable(frameType string) map[string]fieldRule {
 		"request_hash": bytesOf(48),
 		"responded_by": bytesOf(32),
 		"payload":      anyValue,
+		"sealed":       sealedRule(sealedReply),
 		"code":         textWithin(maxErrorCodeBytes),
 		"detail":       textWithin(maxErrorTextBytes),
 	}

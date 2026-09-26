@@ -31,6 +31,9 @@ type StreamDataFields struct {
 	Seq      uint64
 	Encoding StreamEncoding
 	Body     cbor.Value
+	// Sealed is the body sealed end to end, sent in place of Body; its
+	// Encoding still travels. nil for a clear frame.
+	Sealed *Sealed
 }
 
 // StreamEndFields is a STREAM_END, the last frame of its sender's side: Send
@@ -49,6 +52,9 @@ type StreamErrorFields struct {
 	Seq     uint64
 	Code    string
 	Message string
+	// Sealed is the code and message sealed end to end, sent in place of
+	// both. nil for a clear frame.
+	Sealed *Sealed
 }
 
 // StreamReplyFields is a STREAM_REPLY, a provider's terminal value for a
@@ -56,6 +62,9 @@ type StreamErrorFields struct {
 type StreamReplyFields struct {
 	Seq     uint64
 	Payload cbor.Value
+	// Sealed is the payload sealed end to end, sent in place of Payload. nil
+	// for a clear frame.
+	Sealed *Sealed
 }
 
 func (StreamDataFields) streamFields()  {}
@@ -77,6 +86,9 @@ type VerifiedStreamFrame struct {
 	Code      string
 	Message   string
 	Payload   cbor.Value
+	// Sealed is a sealed frame's body, code and message, or payload, nil
+	// for a clear frame.
+	Sealed *Sealed
 }
 
 // StreamState is what a verifier holds for one stream, as macula_frame's
@@ -183,6 +195,9 @@ func streamBuild(fields StreamFields, open VerifiedRequest, key *identity.NodeKe
 	if err := sideMaySend(fields, open, caller); err != nil {
 		return "", nil, 0, err
 	}
+	if s := sealedOfFields(fields); s != nil && !s.shaped(sideContext(caller)) {
+		return "", nil, 0, ErrSealedShape
+	}
 	if err := streamText(fields); err != nil {
 		return "", nil, 0, err
 	}
@@ -230,7 +245,7 @@ func sideMaySend(fields StreamFields, open VerifiedRequest, caller bool) error {
 // message over 256 bytes or not UTF-8.
 func streamText(fields StreamFields) error {
 	streamError, isError := fields.(StreamErrorFields)
-	if !isError {
+	if !isError || streamError.Sealed != nil {
 		return nil
 	}
 	if err := boundedText("code", streamError.Code, maxErrorCodeBytes); err != nil {
@@ -244,13 +259,37 @@ func streamText(fields StreamFields) error {
 func streamSendable(fields StreamFields) error {
 	switch f := fields.(type) {
 	case StreamDataFields:
-		if f.Encoding == Msgpack {
+		if f.Encoding == Msgpack && f.Sealed == nil {
 			return CheckPayload(f.Body)
 		}
 	case StreamReplyFields:
-		return CheckPayload(f.Payload)
+		if f.Sealed == nil {
+			return CheckPayload(f.Payload)
+		}
 	}
 	return nil
+}
+
+// sealedOfFields is a stream frame build's sealed field, nil for none.
+func sealedOfFields(fields StreamFields) *Sealed {
+	switch f := fields.(type) {
+	case StreamDataFields:
+		return f.Sealed
+	case StreamErrorFields:
+		return f.Sealed
+	case StreamReplyFields:
+		return f.Sealed
+	}
+	return nil
+}
+
+// sideContext is the sealed shape a side's frames carry: a provider's its
+// random nonce, a caller's none (its nonce is its seq).
+func sideContext(caller bool) sealedContext {
+	if caller {
+		return sealedCallerStream
+	}
+	return sealedProviderStream
 }
 
 // streamTBS is a stream frame's type, its signed fields and its seq, refusing
@@ -284,6 +323,8 @@ func streamTypeFields(fields StreamFields) (string, []cbor.MapEntry, uint64, err
 		switch {
 		case f.Encoding != Raw && f.Encoding != Msgpack:
 			return "", nil, 0, fmt.Errorf("%w: a stream encoding outside its set", ErrOutOfRange)
+		case f.Sealed != nil:
+			return frameTypeStreamData, []cbor.MapEntry{textEntry("encoding", f.Encoding.Name()), valueEntry("sealed", f.Sealed.value())}, f.Seq, nil
 		case f.Encoding == Raw && !isBytes:
 			return "", nil, 0, fmt.Errorf("%w: a raw body that is not a byte string", ErrOutOfRange)
 		}
@@ -294,8 +335,14 @@ func streamTypeFields(fields StreamFields) (string, []cbor.MapEntry, uint64, err
 		}
 		return frameTypeStreamEnd, []cbor.MapEntry{textEntry("role", f.Role.Name())}, f.Seq, nil
 	case StreamErrorFields:
+		if f.Sealed != nil {
+			return frameTypeStreamError, []cbor.MapEntry{valueEntry("sealed", f.Sealed.value())}, f.Seq, nil
+		}
 		return frameTypeStreamError, []cbor.MapEntry{textEntry("code", f.Code), textEntry("message", f.Message)}, f.Seq, nil
 	case StreamReplyFields:
+		if f.Sealed != nil {
+			return frameTypeStreamReply, []cbor.MapEntry{valueEntry("sealed", f.Sealed.value())}, f.Seq, nil
+		}
 		return frameTypeStreamReply, []cbor.MapEntry{valueEntry("payload", f.Payload)}, f.Seq, nil
 	}
 	return "", nil, 0, fmt.Errorf("%w: stream fields of type %T", ErrOutOfRange, fields)
@@ -348,11 +395,11 @@ func providerFirst(frameType string, object cbor.Value, state StreamState, p pro
 	if err != nil {
 		return VerifiedStreamFrame{}, state, objectRefusal(err)
 	}
-	fields, ok := streamRead(frameType, verified.Fields)
+	fields, ok := streamRead(frameType, verified.Fields, sealedProviderStream)
 	if !ok {
 		return VerifiedStreamFrame{}, state, ErrMalformedFrame
 	}
-	frame := verifiedStreamFrame(frameType, fields)
+	frame := verifiedStreamFrame(frameType, fields, sealedProviderStream)
 	switch {
 	case frame.Signer != identity.NodeIDOf(verified.Key, p):
 		return VerifiedStreamFrame{}, state, ErrKeyIDMismatch
@@ -387,11 +434,11 @@ func providerLater(frameType string, object cbor.Value, state StreamState, p pro
 	case !bytes.Equal(verified.Key, held.key):
 		return VerifiedStreamFrame{}, state, ErrKeyIDMismatch
 	}
-	fields, ok := streamRead(frameType, verified.Fields)
+	fields, ok := streamRead(frameType, verified.Fields, sealedProviderStream)
 	if !ok {
 		return VerifiedStreamFrame{}, state, ErrMalformedFrame
 	}
-	frame := verifiedStreamFrame(frameType, fields)
+	frame := verifiedStreamFrame(frameType, fields, sealedProviderStream)
 	switch {
 	case frame.Signer != held.signer:
 		return VerifiedStreamFrame{}, state, ErrKeyIDMismatch
@@ -433,11 +480,11 @@ func VerifyCallerStream(v cbor.Value, state StreamState, p profile.Profile) (Ver
 	if err != nil {
 		return VerifiedStreamFrame{}, state, objectRefusal(err)
 	}
-	fields, ok := streamRead(frameType, verified.Fields)
+	fields, ok := streamRead(frameType, verified.Fields, sealedCallerStream)
 	if !ok {
 		return VerifiedStreamFrame{}, state, ErrMalformedFrame
 	}
-	frame := verifiedStreamFrame(frameType, fields)
+	frame := verifiedStreamFrame(frameType, fields, sealedCallerStream)
 	switch {
 	case frameType == frameTypeStreamData && serverStream(state.open):
 		return VerifiedStreamFrame{}, state, ErrMalformedFrame
@@ -454,23 +501,47 @@ func VerifyCallerStream(v cbor.Value, state StreamState, p profile.Profile) (Ver
 }
 
 // streamTypeFieldNames are the fields each stream frame type carries besides
-// frame_type, alg, request_id, request_hash, signer and seq.
-var streamTypeFieldNames = map[string][]string{
-	frameTypeStreamData:  {"encoding", "body"},
-	frameTypeStreamEnd:   {"role"},
-	frameTypeStreamError: {"code", "message"},
-	frameTypeStreamReply: {"payload"},
+// frame_type, alg, request_id, request_hash, signer and seq, clear or sealed
+// (macula_frame's stream_shape/2): a sealed STREAM_DATA keeps its encoding, a
+// sealed STREAM_ERROR or STREAM_REPLY carries sealed alone, and a STREAM_END
+// has nothing to seal.
+func streamTypeFieldNames(frameType string, sealed bool) ([]string, bool) {
+	switch frameType {
+	case frameTypeStreamData:
+		if sealed {
+			return []string{"encoding", "sealed"}, true
+		}
+		return []string{"encoding", "body"}, true
+	case frameTypeStreamEnd:
+		return []string{"role"}, !sealed
+	case frameTypeStreamError:
+		if sealed {
+			return []string{"sealed"}, true
+		}
+		return []string{"code", "message"}, true
+	case frameTypeStreamReply:
+		if sealed {
+			return []string{"sealed"}, true
+		}
+		return []string{"payload"}, true
+	}
+	return nil, false
 }
 
 // streamRead reads a stream frame's signed fields through its type's table, as
 // macula_frame's stream_read does: frame_type, request_id, request_hash, signer
-// and seq, and exactly the fields of its type, a raw body a byte string.
-func streamRead(frameType string, tbs cbor.Value) (map[string]cbor.Value, bool) {
-	fields, ok := readFields(tbs, streamTable(frameType))
+// and seq, and exactly the fields of its type, clear or sealed in its side's
+// shape (context), a clear raw body a byte string.
+func streamRead(frameType string, tbs cbor.Value, context sealedContext) (map[string]cbor.Value, bool) {
+	fields, ok := readFields(tbs, streamTable(frameType, context))
 	if !ok || !hasFields(fields, "frame_type", "request_id", "request_hash", "signer", "seq") {
 		return nil, false
 	}
-	typeFields := streamTypeFieldNames[frameType]
+	_, sealed := fields["sealed"]
+	typeFields, ok := streamTypeFieldNames(frameType, sealed)
+	if !ok {
+		return nil, false
+	}
 	carried := 5 + len(typeFields)
 	if _, hasAlg := fields["alg"]; hasAlg {
 		carried++
@@ -478,14 +549,14 @@ func streamRead(frameType string, tbs cbor.Value) (map[string]cbor.Value, bool) 
 	if !hasFields(fields, typeFields...) || len(fields) != carried {
 		return nil, false
 	}
-	if frameType == frameTypeStreamData && textOf(fields["encoding"]) == Raw.Name() {
+	if frameType == frameTypeStreamData && !sealed && textOf(fields["encoding"]) == Raw.Name() {
 		_, isBytes := fields["body"].AsBytes()
 		return fields, isBytes
 	}
 	return fields, true
 }
 
-func streamTable(frameType string) map[string]fieldRule {
+func streamTable(frameType string, context sealedContext) map[string]fieldRule {
 	return map[string]fieldRule{
 		"frame_type":   textIn(frameType),
 		"alg":          anyValue,
@@ -499,10 +570,11 @@ func streamTable(frameType string) map[string]fieldRule {
 		"code":         textWithin(maxErrorCodeBytes),
 		"message":      textWithin(maxErrorTextBytes),
 		"payload":      anyValue,
+		"sealed":       sealedRule(context),
 	}
 }
 
-func verifiedStreamFrame(frameType string, fields map[string]cbor.Value) VerifiedStreamFrame {
+func verifiedStreamFrame(frameType string, fields map[string]cbor.Value, context sealedContext) VerifiedStreamFrame {
 	seq, _ := fields["seq"].AsInt64()
 	frame := VerifiedStreamFrame{
 		FrameType: frameType,
@@ -511,6 +583,7 @@ func verifiedStreamFrame(frameType string, fields map[string]cbor.Value) Verifie
 		Code:      textOf(fields["code"]),
 		Message:   textOf(fields["message"]),
 		Payload:   fields["payload"],
+		Sealed:    sealedField(fields, context),
 	}
 	fixedBytes(frame.Signer[:], fields["signer"])
 	frame.Encoding, _ = streamEncodingFromName(textOf(fields["encoding"]))
