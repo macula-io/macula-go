@@ -91,9 +91,9 @@ uint8_t *macula_device_request_message(const uint8_t *public_key, size_t public_
 
 /* payload_json (a JSON object) with an "asserted_by" block by which key's
  * node authorises its other fields for procedure in realm, now, with a fresh
- * nonce; an asserted_by already there is replaced. A text "caller" is sent
- * but not signed: a station replaces it with the caller it authenticated.
- * Send the result as the payload. */
+ * nonce; an asserted_by already there is replaced. A payload carrying
+ * "caller" is refused (invalid_argument): a station replaces it with the
+ * caller it authenticated. Send the result as the payload. */
 char *macula_key_ownership_proof(macula_handle key, const uint8_t realm[32], const char *procedure,
                                  const char *payload_json, char **err_out);
 /* The exact bytes such a proof signs, for a given identity (node_id),

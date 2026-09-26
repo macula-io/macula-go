@@ -251,23 +251,27 @@ func TestTheSkewBoundaryIsInclusive(t *testing.T) {
 }
 
 // macula_station_link:with_caller/2 removes a caller-sent text "caller"
-// before the handler sees the payload, so it is not a signed field: signing
-// it would sign bytes mcl_om can never rebuild.
-func TestACallerFieldIsNotSigned(t *testing.T) {
+// before the handler sees the payload, so a signer refuses one rather than
+// send a field nobody reads; a verifier leaves it out of the fields, as a
+// handler never has it.
+func TestASignerRefusesACallerFieldAndAVerifierLeavesItOut(t *testing.T) {
 	key, err := identity.GenerateKey(identity.PurposeIdentity, profile.PQPure)
 	if err != nil {
 		t.Fatal(err)
 	}
 	withCaller := withField(t, vectorFields(), "caller", cbor.Text("claimed by the sender"))
-	signed, err := Attach(withCaller, key, vectorRealm(), vectorProcedure)
+	if _, err := Attach(withCaller, key, vectorRealm(), vectorProcedure); !errors.Is(err, ErrCallerField) {
+		t.Fatalf("Attach: %v, want ErrCallerField", err)
+	}
+	if _, err := Sign(key, vectorRealm(), vectorProcedure, withCaller); !errors.Is(err, ErrCallerField) {
+		t.Fatalf("Sign: %v, want ErrCallerField", err)
+	}
+	signed, err := Attach(vectorFields(), key, vectorRealm(), vectorProcedure)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// As a handler receives it: the sender's caller removed (and the
-	// station's own merged in, which mcl_om strips as an atom).
-	delivered := without(t, signed, "caller")
-	if _, err := Verify(delivered, vectorProcedure, vectorRealm(), profile.PQPure, time.Now()); err != nil {
-		t.Fatalf("the delivered payload: %v", err)
+	if _, err := Verify(withField(t, signed, "caller", cbor.Text("x")), vectorProcedure, vectorRealm(), profile.PQPure, time.Now()); err != nil {
+		t.Fatalf("a payload with a caller the verifier leaves out: %v", err)
 	}
 	fields, err := Fields(withCaller)
 	if err != nil {

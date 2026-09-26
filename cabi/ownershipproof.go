@@ -27,6 +27,9 @@ func ownershipProofPayload(key *identity.NodeKey, realm [32]byte, procedure, pay
 	if errors.Is(err, ownershipproof.ErrNotAMap) {
 		return "", invalidArgument("an ownership-proven payload is a JSON object")
 	}
+	if errors.Is(err, ownershipproof.ErrCallerField) {
+		return "", invalidArgument(`an ownership-proven payload carries "caller", which a station replaces; leave it out`)
+	}
 	if err != nil {
 		return "", err
 	}

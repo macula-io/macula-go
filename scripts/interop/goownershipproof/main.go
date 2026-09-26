@@ -6,7 +6,8 @@
 //	goownershipproof <out file>
 //
 // The file holds three lines: the payload's CBOR as hex, the realm id as hex,
-// and the procedure. The payload's fields carry every CBOR type a payload can.
+// and the procedure. The payload's fields carry every CBOR type a payload can,
+// and a caller added after signing, which the station removes.
 package main
 
 import (
@@ -53,12 +54,15 @@ func run(out string) error {
 			{Key: cbor.Text("source"), Val: cbor.Text("field-notes")},
 			{Key: cbor.Text("page"), Val: cbor.Int(12)},
 		})},
-		{Key: cbor.Text("caller"), Val: cbor.Text("a text key named caller is signed")},
 	})
-	payload, err := ownershipproof.Attach(fields, key, realm, procedure)
+	signed, err := ownershipproof.Attach(fields, key, realm, procedure)
 	if err != nil {
 		return err
 	}
+	// A sender that adds a caller after signing: the station removes it before
+	// the handler reads the payload, so the proof still verifies.
+	entries, _ := signed.AsMap()
+	payload := cbor.Map(append(entries, cbor.MapEntry{Key: cbor.Text("caller"), Val: cbor.Text("claimed by the sender")}))
 	body := fmt.Sprintf("%s\n%s\n%s\n", hex.EncodeToString(cbor.Encode(payload)), hex.EncodeToString(realm[:]), procedure)
 	return os.WriteFile(out, []byte(body), 0o644)
 }

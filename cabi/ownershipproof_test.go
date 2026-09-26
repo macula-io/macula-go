@@ -109,6 +109,7 @@ func TestOwnershipProofRefusals(t *testing.T) {
 		"a payload that is not an object": {"p", `[1]`},
 		"a boolean in the payload":        {"p", `{"a": true}`},
 		"an empty procedure":              {"", `{"a": 1}`},
+		"a caller in the payload":         {"p", `{"a": 1, "caller": "me"}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ownershipProofPayload(key, realm, c.procedure, c.payload); kindOf(err) != kindInvalidArgument {

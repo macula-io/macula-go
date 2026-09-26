@@ -20,7 +20,8 @@
 // macula station link removes a caller-sent caller before the handler reads
 // the payload, and merges in the caller it authenticated, which a Go provider
 // reads as stationlink.Request.Caller (macula_station_link:with_caller/2).
-// Neither is signed. Verify leaves replay to its caller: it returns the
+// Neither is signed, and a signer refuses a payload carrying a caller
+// (ErrCallerField) rather than send a field no handler reads. Verify leaves replay to its caller: it returns the
 // identity and nonce, which a verifier accepts once (mcl_om keeps each nonce
 // for 120 s after acceptance, beyond the 60 s skew either side).
 package ownershipproof
@@ -68,6 +69,10 @@ var (
 	ErrInvalidIdentity = errors.New("ownershipproof: invalid identity")
 	// ErrNotAMap is a payload that is not a map, so it has no fields to bind.
 	ErrNotAMap = errors.New("ownershipproof: the payload is not a map")
+	// ErrCallerField is a payload to sign carrying a text "caller": a station
+	// link replaces it with the caller it authenticated before any handler
+	// reads it, so it can be neither sent nor signed.
+	ErrCallerField = errors.New(`ownershipproof: a payload carries "caller", which a station replaces; leave it out`)
 )
 
 // Proof is the proof as it goes on the wire, every byte string as hex.
@@ -128,8 +133,11 @@ func Message(id [32]byte, realm [32]byte, procedure string, timestampMs uint64, 
 
 // Sign signs the fields of payload (Fields) for procedure in realm as key's
 // node, now and with a fresh nonce. payload is the payload as it goes on the
-// wire; a map is required.
+// wire: a map, without a text "caller" (ErrCallerField).
 func Sign(key *identity.NodeKey, realm [32]byte, procedure string, payload cbor.Value) (AssertedBy, error) {
+	if _, hasCaller := payload.Get(callerField); hasCaller {
+		return AssertedBy{}, ErrCallerField
+	}
 	fields, err := Fields(payload)
 	if err != nil {
 		return AssertedBy{}, err
@@ -160,9 +168,7 @@ func signAt(key *identity.NodeKey, realm [32]byte, procedure string, fields cbor
 
 // Attach signs payload (a map) for procedure in realm as key's node and
 // returns it with its asserted_by block, replacing any earlier one.
-//
-// A text "caller" in payload is sent, but not signed: the station link
-// replaces it before the handler reads it (see the package doc).
+// A payload carrying a text "caller" is refused (ErrCallerField).
 func Attach(payload cbor.Value, key *identity.NodeKey, realm [32]byte, procedure string) (cbor.Value, error) {
 	block, err := Sign(key, realm, procedure, payload)
 	if err != nil {

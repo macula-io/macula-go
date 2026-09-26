@@ -359,6 +359,8 @@ int main(int argc, char **argv) {
     macula_free_string(signed_payload);
     macula_key_ownership_proof(owner, io_macula, "mcl-graph/learn_link", "{\"ok\": true}", &err);
     expect_kind("a boolean in an ownership-proven payload", &err, "invalid_argument");
+    macula_key_ownership_proof(owner, io_macula, "mcl-graph/learn_link", "{\"a\": 1, \"caller\": \"me\"}", &err);
+    expect_kind("a caller in an ownership-proven payload", &err, "invalid_argument");
     macula_key_free(owner);
   }
 
