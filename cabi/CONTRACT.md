@@ -125,7 +125,7 @@ CBOR:
 | JSON | CBOR |
 |---|---|
 | `null` | null |
-| a number with no fraction or exponent | an integer, exact to the full uint64 and int64 range |
+| a number with no fraction or exponent | an integer, exact over the int64 range |
 | any other number | a float |
 | a string | text |
 | an array | an array |
@@ -134,6 +134,10 @@ CBOR:
 
 - `true` and `false` are refused (`invalid_argument`): macula's CBOR has no
   boolean. Send 0 and 1.
+- An integer outside the int64 range is refused (`invalid_argument`):
+  macula's decoding rule refuses one on the wire. Integers beyond 2^53 stay
+  exact, so a binding parses returned JSON integers as 64-bit integers, never
+  through a double.
 - Bytes always come out in the same `{"$bytes": ...}` form they go in with,
   so a value received can be sent back unchanged. There is no hex form.
 - A map key that is not text comes out as its diagnostic string; macula's
@@ -153,8 +157,9 @@ hex strings, and flags as 0 or 1.
   provider sends, replies or aborts, and ends it; `macula_stream_free`
   aborts one not ended.
 - `macula_stream_recv` returns one frame as JSON: `data` (with `encoding`,
-  `raw` or `value`, and `body`), `end` (the peer closed its send side, with
-  its `role`), `reply` (the provider's terminal value), `eof` (the stream
+  `raw` for bytes sent with `macula_stream_send_bytes` or `msgpack` for a
+  value sent with `macula_stream_send_json`, and `body`), `end` (the peer
+  closed its send side, with its `role`, `send` or `both`), `reply` (the provider's terminal value), `eof` (the stream
   ended normally), or `error` (a stream error, `relay` 1 when a station
   raised it).
 
@@ -195,6 +200,11 @@ runners:
 | `macula-windows-x64.dll` | Windows x86-64 |
 | `macula.h` | the header |
 | `SHA256SUMS` | every file above |
+
+The Linux libraries are built in the manylinux_2_28 images and need glibc
+2.28 or later; the macOS libraries are built for macOS 12.0 or later. Each
+release job checks its file against that floor (no `GLIBC_` symbol version
+above 2.28; `vtool -show-build` reporting `minos 12.0`) before hashing it.
 
 Each file has a GitHub build provenance attestation. A binding downloads
 the files for its tag, checks each against `SHA256SUMS`, and verifies its

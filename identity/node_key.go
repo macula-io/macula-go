@@ -2,6 +2,7 @@ package identity
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/mldsa"
 	"crypto/rand"
@@ -103,14 +104,26 @@ func GenerateKey(purpose Purpose, p profile.Profile) (*NodeKey, error) {
 // a new ML-DSA-87 half; a pq_hybrid key keeps its RSA-PSS half, since the
 // node_id covers both.
 func GenerateIdentityKey(p profile.Profile, difficulty int) (*NodeKey, error) {
+	return GenerateIdentityKeyContext(context.Background(), p, difficulty)
+}
+
+// GenerateIdentityKeyContext is GenerateIdentityKey that gives up with the
+// context's error once ctx ends, checked between puzzle candidates.
+func GenerateIdentityKeyContext(ctx context.Context, p profile.Profile, difficulty int) (*NodeKey, error) {
 	if difficulty < 0 || difficulty > 256 {
 		return nil, fmt.Errorf("identity: puzzle difficulty %d is outside 0 to 256", difficulty)
 	}
 	key, err := GenerateKey(PurposeIdentity, p)
 	for err == nil && !PuzzleSolved(NodeIDOf(key.PublicKey(), p), difficulty) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		key, err = key.puzzleCandidate()
 	}
-	return key, err
+	if err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 
 // puzzleCandidate is k with a new ML-DSA-87 half and its RSA-PSS half kept.

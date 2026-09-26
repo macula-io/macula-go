@@ -2,6 +2,7 @@ package identity
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/mldsa"
 	"crypto/rand"
@@ -20,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/macula-io/macula-go/profile"
+	"time"
 )
 
 // referenceKeyBytes is length bytes where byte i is i mod 256, the key of
@@ -453,5 +455,21 @@ func TestANodeKeyNeverShowsItsPrivateHalves(t *testing.T) {
 	}
 	if !strings.Contains(shown[0], hex.EncodeToString(func() []byte { id := key.KeyID(); return id[:] }())) {
 		t.Errorf("the key shows as %q, want it named by its key id", shown[0])
+	}
+}
+
+// GenerateIdentityKeyContext gives up between puzzle candidates once its
+// context ends: at difficulty 256 no candidate solves, so only the context
+// ends the search.
+func TestGenerateIdentityKeyContextEndsWithItsContext(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	key, err := GenerateIdentityKeyContext(ctx, profile.PQPure, 256)
+	if !errors.Is(err, context.DeadlineExceeded) || key != nil {
+		t.Fatalf("got %v, %v; want context.DeadlineExceeded", key, err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("it took %v to notice its context ended", elapsed)
 	}
 }
