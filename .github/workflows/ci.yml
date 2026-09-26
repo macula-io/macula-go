@@ -61,8 +61,8 @@ jobs:
       # through tee.
       - shell: bash
         run: |
-          GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record -run SaysWhetherTheBinaryHasMLDSA -count=1 -v | tee gofips140.log
-          for name in TestAKeyOperationSaysWhetherTheBinaryHasMLDSA TestAVerifierSaysWhetherTheBinaryHasMLDSA TestReadStatusSaysWhetherTheBinaryHasMLDSA TestDialTargetSaysWhetherTheBinaryHasMLDSA TestASignedFrameVerifierSaysWhetherTheBinaryHasMLDSA TestARecordVerifierSaysWhetherTheBinaryHasMLDSA; do
+          GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record ./ucan -run SaysWhetherTheBinaryHasMLDSA -count=1 -v | tee gofips140.log
+          for name in TestAKeyOperationSaysWhetherTheBinaryHasMLDSA TestAVerifierSaysWhetherTheBinaryHasMLDSA TestReadStatusSaysWhetherTheBinaryHasMLDSA TestDialTargetSaysWhetherTheBinaryHasMLDSA TestASignedFrameVerifierSaysWhetherTheBinaryHasMLDSA TestARecordVerifierSaysWhetherTheBinaryHasMLDSA TestAuthorizeSaysWhetherTheBinaryHasMLDSA; do
             grep -q -- "--- PASS: $name " gofips140.log || { echo "no PASS line for $name"; exit 1; }
           done
 
@@ -77,7 +77,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go test ./identity ./devicerequest ./ownershipproof ./cbor ./frame ./record ./manifest ./seal
+      - run: go test ./identity ./devicerequest ./ownershipproof ./cbor ./frame ./record ./manifest ./seal ./ucan
 
   libmacula:
     uses: ./.github/workflows/libmacula.yml

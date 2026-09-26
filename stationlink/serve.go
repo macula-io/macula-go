@@ -11,6 +11,7 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/record"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // Serving, as macula 12's provider does it. A procedure is served under an org
@@ -57,14 +58,12 @@ var (
 	// ErrNoOrg is a procedure without a namespace, which nobody can authorize
 	// a provider for.
 	ErrNoOrg = errors.New("stationlink: a served procedure needs an org namespace or this node's own")
-	// ErrGatedUnsupported is a gated procedure: its UCAN check needs the
-	// post-quantum token verifier macula-go does not have yet.
-	ErrGatedUnsupported = errors.New("stationlink: gated procedures need a post-quantum UCAN verifier (macula-io/macula-go#2)")
 	// ErrAlreadyServed is a procedure this link already serves in the realm.
 	ErrAlreadyServed = errors.New("stationlink: the procedure is already served on this link")
 	// ErrInvalidOffer is an offer without exactly one of a handler and a
-	// stream handler, or an org procedure's offer without the realm key.
-	ErrInvalidOffer = errors.New("stationlink: an offer needs one handler, unary or streaming, and for an org procedure the realm key")
+	// stream handler, an org procedure's offer without the realm key, or a
+	// realm member policy that names no can.
+	ErrInvalidOffer = errors.New("stationlink: an offer needs one handler, unary or streaming, for an org procedure the realm key, and for a realm member policy a can")
 	// ErrStopped is a served procedure withdrawn by Stop.
 	ErrStopped = errors.New("stationlink: the procedure was withdrawn")
 )
@@ -89,7 +88,9 @@ type Handler func(ctx context.Context, r Request) (cbor.Value, error)
 // Offer is a procedure to serve: its realm and name, its handler, and, for an
 // org procedure, the realm key the org directory must be signed with, as the
 // realm's members pin it; a procedure in this node's own namespace needs none.
-// Gated is a procedure whose callers need a UCAN, refused for now.
+// Policy gates it: nil serves any caller, and a ucan.UCANRequired or
+// ucan.RealmMemberRequired serves a caller whose UCAN ucan.Authorize accepts
+// for the request, as macula's link does.
 type Offer struct {
 	Realm     [32]byte
 	Procedure string
@@ -98,7 +99,7 @@ type Offer struct {
 	// Handler and Stream is set.
 	Stream   *StreamOffer
 	RealmKey []byte
-	Gated    bool
+	Policy   ucan.Policy
 }
 
 // StreamOffer is a streaming procedure's mode and handler. The advertisement
@@ -149,11 +150,8 @@ type Served struct {
 // DHT. The advertisement is renewed at half its lifetime.
 func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 	own := record.InOwnNamespace(o.Procedure)
-	if (o.Handler == nil) == (o.Stream == nil || o.Stream.Handler == nil) || (!own && len(o.RealmKey) == 0) {
+	if (o.Handler == nil) == (o.Stream == nil || o.Stream.Handler == nil) || (!own && len(o.RealmKey) == 0) || !validPolicy(o.Policy) {
 		return nil, ErrInvalidOffer
-	}
-	if o.Gated {
-		return nil, ErrGatedUnsupported
 	}
 	if _, hasOrg, err := record.ProcedureOrg(o.Procedure); err != nil || !hasOrg {
 		return nil, errors.Join(ErrNoOrg, err)
@@ -422,6 +420,8 @@ func (l *Link) answer(request frame.VerifiedRequest) {
 	var reply cbor.Value
 	if served == nil || served.offer.Handler == nil {
 		reply = l.providerError(request, codeUnknownProcedure, nil)
+	} else if code := l.authorize(served.offer.Policy, request); code != "" {
+		reply = l.providerError(request, code, nil)
 	} else {
 		reply = l.handled(served.offer.Handler, request)
 	}

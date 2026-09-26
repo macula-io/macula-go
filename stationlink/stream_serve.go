@@ -93,7 +93,7 @@ func (l *Link) incoming(qs *quic.Stream) {
 
 // admitStream judges an open as macula's link does, in its order: the
 // admission (one run per request, the deadline window, its bounds), the
-// procedure served here as a stream, and its mode. It returns the offer, or
+// procedure served here as a stream, its policy, and its mode. It returns the offer, or
 // the code to refuse with.
 func (l *Link) admitStream(open frame.VerifiedRequest) (*StreamOffer, string) {
 	verdict := l.admission.admit(open, l.share, time.Now().UnixMilli())
@@ -106,10 +106,13 @@ func (l *Link) admitStream(open frame.VerifiedRequest) (*StreamOffer, string) {
 	l.mu.Lock()
 	served := l.served[servedKey{open.Realm, open.Procedure}]
 	l.mu.Unlock()
-	switch {
-	case served == nil || served.offer.Stream == nil:
+	if served == nil || served.offer.Stream == nil {
 		return nil, codeStreamNotFound
-	case served.offer.Stream.Mode != *open.Mode:
+	}
+	if code := l.authorize(served.offer.Policy, open); code != "" {
+		return nil, code
+	}
+	if served.offer.Stream.Mode != *open.Mode {
 		return nil, codeModeMismatch
 	}
 	return served.offer.Stream, ""

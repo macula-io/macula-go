@@ -12,16 +12,17 @@ import (
 	"github.com/macula-io/macula-go/pool"
 )
 
-// call calls procedure in realm at provider (any trusted one when nil) and
-// returns its result's JSON. timeout bounds the call on the wire too: it is
-// the CALL's deadline.
+// call calls procedure in realm at provider (any trusted one when nil),
+// presenting creds, and returns its result's JSON. timeout bounds the call on
+// the wire too: it is the CALL's deadline.
 func call(ctx context.Context, p *pool.Pool, realm [32]byte, procedure, payloadJSON string, provider *[32]byte,
-	timeout time.Duration) (string, error) {
+	timeout time.Duration, creds credentials) (string, error) {
 	payload, err := payloadFromJSON(payloadJSON)
 	if err != nil {
 		return "", err
 	}
-	c := pool.Call{Realm: realm, Procedure: procedure, Payload: payload, Timeout: timeout}
+	c := pool.Call{Realm: realm, Procedure: procedure, Payload: payload, Timeout: timeout, Token: creds.token,
+		Proofs: creds.proofs}
 	if provider != nil {
 		c.Provider = *provider
 	}
@@ -71,6 +72,22 @@ func optionalID(p *C.uint8_t) *[32]byte {
 //export macula_pool_call
 func macula_pool_call(h C.uintptr_t, realm32 *C.uint8_t, procedure, payloadJSON *C.char, provider32 *C.uint8_t,
 	timeoutMs C.int64_t, token C.uintptr_t, errOut **C.char) *C.char {
+	return poolCall(h, realm32, procedure, payloadJSON, provider32, credentials{}, timeoutMs, token, errOut)
+}
+
+//export macula_pool_call_with
+func macula_pool_call_with(h C.uintptr_t, realm32 *C.uint8_t, procedure, payloadJSON *C.char, provider32 *C.uint8_t,
+	ucanToken, proofsJSON *C.char, timeoutMs C.int64_t, token C.uintptr_t, errOut **C.char) *C.char {
+	creds, err := credentialsOf(goString(ucanToken), goString(proofsJSON))
+	if err != nil {
+		setErr(errOut, err)
+		return nil
+	}
+	return poolCall(h, realm32, procedure, payloadJSON, provider32, creds, timeoutMs, token, errOut)
+}
+
+func poolCall(h C.uintptr_t, realm32 *C.uint8_t, procedure, payloadJSON *C.char, provider32 *C.uint8_t,
+	creds credentials, timeoutMs C.int64_t, token C.uintptr_t, errOut **C.char) *C.char {
 	lp := poolOf(h, errOut)
 	if lp == nil {
 		return nil
@@ -87,7 +104,7 @@ func macula_pool_call(h C.uintptr_t, realm32 *C.uint8_t, procedure, payloadJSON 
 	}
 	defer cancel()
 	result, err := call(ctx, lp.pool, realm, goString(procedure), goString(payloadJSON), optionalID(provider32),
-		time.Duration(timeoutMs)*time.Millisecond)
+		time.Duration(timeoutMs)*time.Millisecond, creds)
 	if err != nil {
 		setCtxErr(ctx, errOut, err)
 		return nil

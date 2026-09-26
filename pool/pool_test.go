@@ -12,6 +12,7 @@ import (
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 const (
@@ -501,5 +502,34 @@ func TestACallInFlightWhenThePoolClosesIsErrClosed(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the call did not end when its pool closed")
+	}
+}
+
+// A pool serves a gated procedure under its policy: a caller whose UCAN the
+// policy's issuer granted is served, one without a token is answered
+// unauthorized.
+func TestAPoolServesAGatedProcedureUnderItsPolicy(t *testing.T) {
+	s := teststation.Start(t, profile.PQPure, "gated")
+	realm := teststation.NewRealm(t, profile.PQPure, "gated.pool", org)
+	realm.Admit(t, s, nodeIDOf(t, "gated provider"))
+	root := teststation.Key(t, profile.PQPure, "gated root")
+	provider := connect(t, "gated provider", realm, s)
+	if _, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: echo,
+		Policy: ucan.UCANRequired{Issuer: nodeIDOf(t, "gated root")}}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	caller := connect(t, "gated caller", realm, s)
+	var refused *stationlink.ProviderError
+	if _, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("hello")}); !errors.As(err, &refused) || refused.Code != "unauthorized" {
+		t.Errorf("without a token: %v, want unauthorized", err)
+	}
+	token, err := ucan.Create(root, caller.NodeID(), []ucan.Capability{{With: "mri:org:gated.pool/" + org, Can: "invoke"}},
+		ucan.Options{Exp: time.Now().Unix() + 60})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	result, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("hello"), Token: token})
+	if text, _ := result.AsText(); err != nil || text != "hello" {
+		t.Errorf("with the root's grant: %q, %v", text, err)
 	}
 }

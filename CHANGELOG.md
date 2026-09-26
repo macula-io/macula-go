@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ucan`: macula 12's post-quantum UCAN (D7), macula_ucan in Go: `Create`
+  mints a token from an identity key in either profile (`ML-DSA-87`, or the
+  composite `ML-DSA-87-PS384`), `Authorize` checks a token and its chain of
+  proofs against a policy for a verified caller and a request, with every
+  refusal macula names, and `ProofID`, `Covers`, `DIDKey` and `CarriedKey`
+  are macula's. It passes macula's UCAN vectors
+  (`ucan/testdata/ucan_v1.json`, both profiles, every refusal), and macula
+  verifies the tokens it mints (`scripts/interop/goucan`).
+- Gated serving: `stationlink.Offer.Policy` and `pool.Offer.Policy`
+  (`ucan.UCANRequired` or `ucan.RealmMemberRequired`; nil is open). The
+  provider authorizes each CALL and STREAM_OPEN as macula's link does, in its
+  order, answering `unauthorized`, or `malformed_frame` for a proof no token
+  names.
+- cabi (ABI 1, new functions): `macula_ucan_create`, `macula_ucan_proof_id`,
+  `macula_pool_call_with`, `macula_pool_open_stream_with`,
+  `macula_pool_serve_gated` and `macula_pool_serve_stream_gated`.
+- `teststation`: `Realm.Name`; the harness prints `realm_name`.
+
+### Changed
+
+- `teststation.NewRealm`'s id is the SHA-256 of the realm's name, as a
+  realm's is, so a UCAN grants in a test realm by name. The harness's realm is
+  `binding-tests`.
+
+### Removed
+
+- `Offer.Gated` and `stationlink.ErrGatedUnsupported`: `Offer.Policy` serves
+  a gated procedure.
+
 ## [0.16.0] - 2026-09-26
 
 ### Added

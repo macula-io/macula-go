@@ -29,7 +29,13 @@ type streamWorld struct {
 
 func dialAs(t *testing.T, s *teststation.Station, name string) *stationlink.Link {
 	t.Helper()
-	key := teststation.Key(t, profile.PQPure, name)
+	return dialIn(t, s, profile.PQPure, name)
+}
+
+// dialIn is dialAs in profile p.
+func dialIn(t *testing.T, s *teststation.Station, p profile.Profile, name string) *stationlink.Link {
+	t.Helper()
+	key := teststation.Key(t, p, name)
 	issuer, err := identity.NewStatementIssuer(key, func() int64 { return time.Now().UnixMilli() })
 	if err != nil {
 		t.Fatalf("issuer: %v", err)

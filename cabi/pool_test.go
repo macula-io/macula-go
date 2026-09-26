@@ -150,7 +150,7 @@ func TestCallsReachAServedProcedure(t *testing.T) {
 	provider := f.join(t, "provider", f.stations[0])
 	caller := f.join(t, "caller", f.stations[1])
 	procedure := ownProcedure(provider, "echo")
-	s, err := serve(provider, f.realm.ID, procedure)
+	s, err := serve(provider, f.realm.ID, procedure, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestCallsReachAServedProcedure(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	result, err := call(ctx, caller.pool, f.realm.ID, procedure, `{"n": 1}`, nil, 10*time.Second)
+	result, err := call(ctx, caller.pool, f.realm.ID, procedure, `{"n": 1}`, nil, 10*time.Second, credentials{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestCallsReachAServedProcedure(t *testing.T) {
 	go answerNext(t, s, func(pc *pendingCall, _ map[string]any) {
 		_ = pc.answer(pendingAnswer{err: errors.New("no such thing")})
 	})
-	_, err = call(ctx, caller.pool, f.realm.ID, procedure, `null`, nil, 10*time.Second)
+	_, err = call(ctx, caller.pool, f.realm.ID, procedure, `null`, nil, 10*time.Second, credentials{})
 	e := classify(ctx, err)
 	if e.kind != kindProviderError || e.fields["code"] != "handler_error" || e.fields["detail"] != "no such thing" {
 		t.Fatalf("an error answer: %v", e.JSON())
@@ -191,7 +191,7 @@ func TestACancelledCallSaysSo(t *testing.T) {
 	provider := f.join(t, "slow provider", f.stations[0])
 	caller := f.join(t, "impatient caller", f.stations[1])
 	procedure := ownProcedure(provider, "never")
-	s, err := serve(provider, f.realm.ID, procedure)
+	s, err := serve(provider, f.realm.ID, procedure, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestACancelledCallSaysSo(t *testing.T) {
 		token.cancel(errTokenCancelled)
 	}()
 	started := time.Now()
-	_, err = call(ctx, caller.pool, f.realm.ID, procedure, `null`, nil, 30*time.Second)
+	_, err = call(ctx, caller.pool, f.realm.ID, procedure, `null`, nil, 30*time.Second, credentials{})
 	if got := classify(ctx, err).kind; got != kindCancelled {
 		t.Fatalf("a cancelled call: %v (%s), want cancelled", err, got)
 	}
@@ -220,7 +220,7 @@ func TestOrgProceduresNeedTheirDelegation(t *testing.T) {
 	caller := f.join(t, "org caller", f.stations[1])
 	f.realm.Admit(t, f.stations[0], provider.pool.NodeID())
 	procedure := f.realm.Org + "/greet"
-	s, err := serve(provider, f.realm.ID, procedure)
+	s, err := serve(provider, f.realm.ID, procedure, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestOrgProceduresNeedTheirDelegation(t *testing.T) {
 	defer cancel()
 	var result string
 	for {
-		result, err = call(ctx, caller.pool, f.realm.ID, procedure, `null`, nil, 5*time.Second)
+		result, err = call(ctx, caller.pool, f.realm.ID, procedure, `null`, nil, 5*time.Second, credentials{})
 		if err == nil || ctx.Err() != nil {
 			break
 		}
@@ -283,7 +283,7 @@ func TestServedStreamsRunBothWays(t *testing.T) {
 	provider := f.join(t, "stream provider", f.stations[0])
 	caller := f.join(t, "stream caller", f.stations[1])
 	procedure := ownProcedure(provider, "count")
-	s, err := serveStream(provider, f.realm.ID, procedure, frame.ServerStream)
+	s, err := serveStream(provider, f.realm.ID, procedure, frame.ServerStream, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestServedStreamsRunBothWays(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	stream, err := openStream(ctx, caller.pool, f.realm.ID, procedure, frame.ServerStream, `{"to": 1}`, nil, 10*time.Second)
+	stream, err := openStream(ctx, caller.pool, f.realm.ID, procedure, frame.ServerStream, `{"to": 1}`, nil, 10*time.Second, credentials{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func TestClosingAPoolEndsWhatItOwns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := serve(lp, f.realm.ID, ownProcedure(lp, "x"))
+	s, err := serve(lp, f.realm.ID, ownProcedure(lp, "x"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +428,7 @@ func TestACallInFlightWhenItsPoolClosesIsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	procedure := ownProcedure(provider, "never")
-	s, err := serve(provider, f.realm.ID, procedure)
+	s, err := serve(provider, f.realm.ID, procedure, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestACallInFlightWhenItsPoolClosesIsClosed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	go func() {
-		_, err := call(ctx, lp.pool, f.realm.ID, procedure, `null`, nil, 20*time.Second)
+		_, err := call(ctx, lp.pool, f.realm.ID, procedure, `null`, nil, 20*time.Second, credentials{})
 		done <- err
 	}()
 	// The call has reached the provider when it waits in its inbox.
@@ -464,14 +464,14 @@ func TestALateAnswerIsAnswered(t *testing.T) {
 	provider := f.join(t, "late provider", f.stations[0])
 	caller := f.join(t, "late caller", f.stations[1])
 	procedure := ownProcedure(provider, "slow")
-	s, err := serve(provider, f.realm.ID, procedure)
+	s, err := serve(provider, f.realm.ID, procedure, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.stop() })
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	go func() { _, _ = call(ctx, caller.pool, f.realm.ID, procedure, `null`, nil, time.Second) }()
+	go func() { _, _ = call(ctx, caller.pool, f.realm.ID, procedure, `null`, nil, time.Second, credentials{}) }()
 	item, state := s.box.next(ctx)
 	if state != inboxItemReady {
 		t.Fatalf("no call: %v", state)

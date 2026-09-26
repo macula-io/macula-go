@@ -30,9 +30,9 @@ never a crash.
 | key | `macula_key_generate`, `_load`, `_load_or_create` | `macula_key_free` |
 | pool | `macula_pool_connect` | `macula_pool_close` |
 | subscription | `macula_pool_subscribe` | `macula_subscription_stop` |
-| served | `macula_pool_serve`, `_serve_stream` | `macula_served_stop` |
+| served | `macula_pool_serve`, `_serve_stream`, `_serve_gated`, `_serve_stream_gated` | `macula_served_stop` |
 | pending call | `macula_served_next` | its first answer, or its procedure stopping (never freed by the caller) |
-| stream | `macula_pool_open_stream`, `macula_served_next` | `macula_stream_free` |
+| stream | `macula_pool_open_stream`, `_open_stream_with`, `macula_served_next` | `macula_stream_free` |
 | cancel token | `macula_cancel_new` | `macula_cancel_free` |
 
 Closing a pool ends its subscriptions and served procedures (their inboxes
@@ -179,6 +179,31 @@ hex strings, and flags as 0 or 1.
   ended normally), or `error` (a stream error, `relay` 1 when a station
   raised it).
 
+## UCANs
+
+Since macula-go v0.17.0. A gated procedure serves only callers presenting a
+UCAN (macula 12's D7; macula's `test/vectors/UCAN_V1.md` is the contract,
+and macula-go's `ucan` package passes its vectors):
+
+- `macula_ucan_create` mints one from an identity key for another node,
+  `caps_json` a list of `{"with", "can"}`, each `with` an MRI
+  (`mri:realm:<realm>`, `mri:org:<realm>/<org>`, `mri:proc:<realm>/<org>/<name>`,
+  a realm by its name, whose SHA-256 is its id). A delegated token names its
+  parent in `options_json`'s `prf` by `macula_ucan_proof_id`, and is minted
+  for the node that presents it: the token's audience is always the caller
+  that presents it.
+- `macula_pool_call_with` and `macula_pool_open_stream_with` present a token
+  and its chain's proofs (the parents, as a JSON list of their text). Every
+  proof sent must be one the chain names.
+- `macula_pool_serve_gated` and `_serve_stream_gated` serve under
+  `policy_json`: `{"kind":"ucan_required","issuer"}` (a chain rooted at that
+  node's identity key) or `{"kind":"realm_member_required","key_id","can"}`
+  (rooted at that realm key, with that can). The provider checks each call
+  and open before it reaches the inbox, as macula's link does: a refused call
+  is a `provider_error` of code `unauthorized`, or `malformed_frame` for a
+  proof no token names; a refused open is a stream `error` of the same code.
+  An open procedure ignores any token.
+
 ## Content
 
 `macula_pool_share_content` keeps the bytes in this node, serves them on its
@@ -198,7 +223,8 @@ go run github.com/macula-io/macula-go/teststation/cmd/teststation@<tag> [pq_pure
 ```
 
 It prints one JSON line `{"stations": [{"host","port","node_id"}],
-"realm_id", "realm_key", "org"}`, then answers each stdin line with one
+"realm_name", "realm_id", "realm_key", "org"}` (the realm's id is its name's
+SHA-256, so a UCAN grants in it by that name), then answers each stdin line with one
 line: `admit <node_id hex>` (the org delegates to that node) and `relayed`
 (how many streams the stations relay). It exits when stdin closes.
 

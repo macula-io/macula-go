@@ -213,8 +213,13 @@ type checked struct {
 }
 
 // Authorize is whether token authorizes ctx's caller under p: the token's
-// claims when it does, or the first refusal, in macula_ucan's order.
+// claims when it does, or the first refusal, in macula_ucan's order. A binary
+// without ML-DSA (GOFIPS140=v1.0.0) checks nothing and returns
+// identity.ErrPostQuantumUnavailable, which is no refusal.
 func Authorize(token []byte, p Policy, ctx Context) (map[string]any, error) {
+	if err := identity.CheckPostQuantum(); err != nil {
+		return nil, err
+	}
 	c, err := parsed(token)
 	if err != nil {
 		return nil, err

@@ -1,6 +1,7 @@
 package teststation
 
 import (
+	"crypto/sha256"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,7 @@ import (
 // are signed as the signed objects they are, under the record label, as a
 // realm and an org sign them.
 type Realm struct {
+	Name    string
 	ID      [32]byte
 	Org     string
 	Key     *identity.NodeKey
@@ -23,12 +25,12 @@ type Realm struct {
 	profile profile.Profile
 }
 
-// NewRealm is a test realm named name with the org org.
+// NewRealm is a test realm named name with the org org. Its id is the SHA-256
+// of its name, as a realm's is, so a UCAN that grants in the realm by name
+// grants in it.
 func NewRealm(t T, p profile.Profile, name, org string) Realm {
 	t.Helper()
-	id := [32]byte{}
-	copy(id[:], name)
-	return Realm{ID: id, Org: org, Key: Key(t, p, "realm "+name), OrgKey: Key(t, p, "org "+name+"/"+org), profile: p}
+	return Realm{Name: name, ID: sha256.Sum256([]byte(name)), Org: org, Key: Key(t, p, "realm "+name), OrgKey: Key(t, p, "org "+name+"/"+org), profile: p}
 }
 
 // RealmKey is the realm key as carried, the key a member pins for the realm.

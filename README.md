@@ -66,10 +66,12 @@ On the wire:
 | Streaming RPC (server, client and bidi streams) | ✅ | ✅ | A QUIC stream per session; `pool.OpenStream` by direct dial, `Offer.Stream` to serve; admission, session and inbox bounds as macula's; every stream released on every path |
 | Content manifests and MCIDs | ✅ | ✅ | SHA-384, 50-byte MCIDs, byte for byte with macula's `macula_manifest` |
 | Node-served content (D27) | ✅ | ✅ | `pool.ShareContent` serves on `~<node_id>/content_v1` and announces; `pool.GetContent` checks the block, the manifest and every chunk against their content ids, bounded, with no realm key; cross-checked both ways against macula 12.6.0 |
-| Gated procedures (UCAN) | token carried | — | Serving one is refused by name until the post-quantum UCAN verifier ([#2](https://github.com/macula-io/macula-go/issues/2)) |
+| Gated procedures (UCAN) | ✅ | ✅ | `ucan.Create` mints macula 12's post-quantum UCAN, `Call.Token` and `Proofs` present it and its chain, `Offer.Policy` gates a procedure as macula's link does (`unauthorized`, or `malformed_frame` for a proof no token names); held to macula's UCAN vectors and checked against `macula_ucan` both ways |
 
-No `unsafe` and no cgo anywhere in this module: `grep -rl '"unsafe"'
---include='*.go'` and a search for `import "C"` both come back empty.
+No cgo outside `cabi`, which is a C ABI and so cgo by nature, and no
+`unsafe` outside `cabi` and identity's Windows key-file guard, which reads a
+Win32 security descriptor: `grep -rl '"unsafe"' --include='*.go'` and a
+search for `import "C"` name only those files.
 
 ## Quick start
 
@@ -148,6 +150,7 @@ hex> -realm <hex> -realm-key <file> -key <node key file>`):
 | [`manifest`](manifest) | Content manifests and MCIDs, as macula 12 makes them |
 | [`cabi`](cabi) | The C ABI every non-Go binding uses (.NET, Python, PHP, TypeScript): `macula.h`, its [contract](cabi/CONTRACT.md), and libmacula on each release |
 | [`teststation`](teststation) | In-process macula 12 stations for tests; `teststation/cmd/teststation` serves them to a binding's tests |
+| [`ucan`](ucan) | macula 12's UCAN: mint, verify a chain against a policy, proof ids and did:keys, held to macula's vectors |
 | [`devicerequest`](devicerequest) | A device's request to a realm, signed: realm proof v2 (macula-realm#29) |
 | [`ownershipproof`](ownershipproof) | The `asserted_by` block of a payload, signed and verified: ownership proof v2 (mcl-om#7) |
 | [`seal`](seal) | End-to-end payload sealing, scheme 1: the key agreement, keys, AAD and AES-256-GCM (no frame carries a sealed payload yet) |
@@ -195,11 +198,6 @@ GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record -ru
   the org form (`<org>/content_v1_<node_id>`) is fetched from but not served.
   Serving needs stations that admit a node's own namespace (macula-station
   0.6.4 and later).
-- **Gated procedures cannot be served**: `Serve` refuses one by name until
-  macula-go has the post-quantum UCAN verifier macula 12 uses
-  ([#2](https://github.com/macula-io/macula-go/issues/2)). A call can carry a
-  token and its proofs (`pool.Call.Token`, `Proofs`), but macula-go cannot yet
-  mint one.
 - **Direct dial finds a provider only through the DHT.** A provider is
   reachable from `pool.Call` when it puts its advertisement there, as
   macula's `advertise_direct` (and so every mcl-* service, through mcl_om)

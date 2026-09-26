@@ -8,6 +8,7 @@ import (
 
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // realmKeyFor is the key procedure's authorization is checked against: the
@@ -31,14 +32,15 @@ var ErrNoRealmKey = errors.New("pool: no realm key pinned for the realm")
 
 // Offer is a procedure the node serves: its realm, which the pool must pin a
 // key for, its name, its handler (or Stream, for a streaming procedure:
-// exactly one of the two), and whether it is gated (refused until macula-go
-// has a post-quantum UCAN verifier).
+// exactly one of the two), and its policy: nil serves any caller, a
+// ucan.UCANRequired or ucan.RealmMemberRequired a caller whose UCAN it
+// authorizes, as stationlink.Offer's does.
 type Offer struct {
 	Realm     [32]byte
 	Procedure string
 	Handler   stationlink.Handler
 	Stream    *stationlink.StreamOffer
-	Gated     bool
+	Policy    ucan.Policy
 }
 
 // Served is a procedure the node serves on every link the pool holds, and on
@@ -61,11 +63,8 @@ func (p *Pool) Serve(ctx context.Context, o Offer) (*Served, error) {
 	if err != nil {
 		return nil, err
 	}
-	if o.Gated {
-		return nil, stationlink.ErrGatedUnsupported
-	}
 	s := &Served{pool: p, onLinks: map[*stationlink.Link]*stationlink.Served{},
-		offer: stationlink.Offer{Realm: o.Realm, Procedure: o.Procedure, Handler: o.Handler, Stream: o.Stream, RealmKey: realmKey}}
+		offer: stationlink.Offer{Realm: o.Realm, Procedure: o.Procedure, Handler: o.Handler, Stream: o.Stream, RealmKey: realmKey, Policy: o.Policy}}
 	links := p.links()
 	if len(links) == 0 {
 		return nil, ErrNoLink

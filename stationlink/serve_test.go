@@ -251,18 +251,14 @@ func TestAdmissionAnswersCopiesAndRefusesTheRest(t *testing.T) {
 	}
 }
 
-// Serving refuses what it cannot serve: a procedure outside any org, a gated
-// policy (no post-quantum UCAN yet), and an org whose delegation the DHT does
-// not hold.
+// Serving refuses what it cannot serve: a procedure outside any org, and an
+// org whose delegation the DHT does not hold.
 func TestServeRefusesWhatItCannotServe(t *testing.T) {
 	link, s, fixture := startServing(t, profile.PQPure)
 	_ = s
 	ctx := t.Context()
 	if _, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: "echo", Handler: echo, RealmKey: fixture.realm.PublicKey()}); !errors.Is(err, ErrNoOrg) {
 		t.Errorf("a procedure outside any org: %v, want ErrNoOrg", err)
-	}
-	if _, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: servedProcedure, Handler: echo, RealmKey: fixture.realm.PublicKey(), Gated: true}); !errors.Is(err, ErrGatedUnsupported) {
-		t.Errorf("a gated procedure: %v, want ErrGatedUnsupported", err)
 	}
 	if _, err := link.Serve(ctx, Offer{Realm: [32]byte{0x99}, Procedure: servedProcedure, Handler: echo, RealmKey: fixture.realm.PublicKey()}); !errors.Is(err, ErrRecordNotFound) {
 		t.Errorf("a realm with no directory for the org: %v, want ErrRecordNotFound", err)

@@ -106,6 +106,19 @@ uint8_t *macula_ownership_proof_message(const uint8_t identity[32], const uint8_
                                         int64_t timestamp_ms, const uint8_t nonce[16], const char *fields_json,
                                         size_t *out_len, char **err_out);
 
+/* ---- UCANs (macula 12, D7) --------------------------------------------- */
+/* Since macula-go v0.17.0. */
+
+/* key's token for the node audience_node_id, granting caps_json (a JSON array
+ * of {"with","can"}, each "with" an MRI) until exp_s (Unix seconds).
+ * options_json (NULL for none): {"nbf","nnc","fct","prf"}, prf a list of at
+ * most one parent's proof id. key is an identity key. */
+char *macula_ucan_create(macula_handle key, const uint8_t audience_node_id[32], const char *caps_json, int64_t exp_s,
+                         const char *options_json, char **err_out);
+/* The proof id a child's "prf" names a token by: lowercase hex SHA-384 of its
+ * text. */
+char *macula_ucan_proof_id(const char *token, char **err_out);
+
 /* ---- Pool -------------------------------------------------------------- */
 
 /* seeds_json: [{"host","port","node_id"}]. options_json (NULL for defaults):
@@ -128,6 +141,14 @@ char *macula_pool_events_next(macula_handle pool, int64_t timeout_ms, macula_han
 /* provider_node_id NULL: any provider the realm trusts. Returns the result. */
 char *macula_pool_call(macula_handle pool, const uint8_t realm[32], const char *procedure, const char *payload_json,
                        const uint8_t *provider_node_id, int64_t timeout_ms, macula_handle cancel, char **err_out);
+/* macula_pool_call presenting a UCAN (NULL: none) and its chain's proofs,
+ * proofs_json a JSON array of tokens (NULL: none). A gated provider that
+ * refuses it answers a provider error of code "unauthorized", or
+ * "malformed_frame" for a proof no token in the chain names. Since macula-go
+ * v0.17.0. */
+char *macula_pool_call_with(macula_handle pool, const uint8_t realm[32], const char *procedure,
+                            const char *payload_json, const uint8_t *provider_node_id, const char *ucan,
+                            const char *proofs_json, int64_t timeout_ms, macula_handle cancel, char **err_out);
 /* [{"node","station"}], freshest first. */
 char *macula_pool_providers(macula_handle pool, const uint8_t realm[32], const char *procedure, int64_t timeout_ms,
                             macula_handle cancel, char **err_out);
@@ -152,6 +173,15 @@ void macula_subscription_stop(macula_handle subscription);
 macula_handle macula_pool_serve(macula_handle pool, const uint8_t realm[32], const char *procedure, char **err_out);
 macula_handle macula_pool_serve_stream(macula_handle pool, const uint8_t realm[32], const char *procedure,
                                        int32_t mode, char **err_out);
+/* Serve a procedure only to callers whose UCAN policy_json accepts:
+ * {"kind":"ucan_required","issuer":"<node_id hex>"} (a chain rooted at that
+ * node's identity key) or {"kind":"realm_member_required","key_id":"<hex>",
+ * "can"} (rooted at that realm key, granting that can). Refused calls and
+ * opens never reach the inbox. Since macula-go v0.17.0. */
+macula_handle macula_pool_serve_gated(macula_handle pool, const uint8_t realm[32], const char *procedure,
+                                      const char *policy_json, char **err_out);
+macula_handle macula_pool_serve_stream_gated(macula_handle pool, const uint8_t realm[32], const char *procedure,
+                                             int32_t mode, const char *policy_json, char **err_out);
 /* The next call (*out_item: a pending call) or stream session (*out_item: a
  * stream), and its request {"caller","realm","procedure","payload","deadline_ms"}. */
 char *macula_served_next(macula_handle served, int64_t timeout_ms, macula_handle cancel, macula_handle *out_item,
@@ -173,6 +203,13 @@ void macula_served_stop(macula_handle served, char **err_out);
 macula_handle macula_pool_open_stream(macula_handle pool, const uint8_t realm[32], const char *procedure, int32_t mode,
                                       const char *payload_json, const uint8_t *provider_node_id, int64_t deadline_ms,
                                       int64_t timeout_ms, macula_handle cancel, char **err_out);
+/* macula_pool_open_stream presenting a UCAN and its chain's proofs, as
+ * macula_pool_call_with does; a gated provider refuses one with a stream
+ * error. Since macula-go v0.17.0. */
+macula_handle macula_pool_open_stream_with(macula_handle pool, const uint8_t realm[32], const char *procedure,
+                                           int32_t mode, const char *payload_json, const uint8_t *provider_node_id,
+                                           const char *ucan, const char *proofs_json, int64_t deadline_ms,
+                                           int64_t timeout_ms, macula_handle cancel, char **err_out);
 char *macula_stream_request(macula_handle stream, char **err_out);
 void macula_stream_send_bytes(macula_handle stream, const uint8_t *data, size_t data_len, char **err_out);
 void macula_stream_send_json(macula_handle stream, const char *value_json, char **err_out);

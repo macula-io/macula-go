@@ -2,11 +2,13 @@
  * abi_test.c drives libmacula through macula.h alone, as a binding does:
  * keys, a pool per node, serving and calling in a node's own namespace,
  * answering from the inbox, a cancel from another thread, publish and
- * subscribe, a server stream, content, error kinds, and freeing. abi_test.go
+ * subscribe, a server stream, content, device request and ownership proofs,
+ * UCAN-gated serving, error kinds, and freeing. The realm is named "abi", which a UCAN grants in. abi_test.go
  * builds it against the built library and runs it with two in-process
  * stations:
  *
  *   abi_test <key dir> <seeds json> <realm hex> <options json> <device request vector hex>
+ *            <ownership proof vector hex> <ownership proof identity hex>
  *
  * It prints "ok" last, or fails with the step that went wrong.
  */
@@ -362,6 +364,77 @@ int main(int argc, char **argv) {
     macula_key_ownership_proof(owner, io_macula, "mcl-graph/learn_link", "{\"a\": 1, \"caller\": \"me\"}", &err);
     expect_kind("a caller in an ownership-proven payload", &err, "invalid_argument");
     macula_key_free(owner);
+  }
+
+  /* A UCAN: minted by a root node for the caller, and presented to a
+   * procedure gated on that root. */
+  {
+    char rootpath[512], policy[256], root_hex[65], gated[128], watch[128];
+    uint8_t root_id[32], caller_id[32];
+    snprintf(rootpath, sizeof rootpath, "%s/root.key", dir);
+    macula_handle root = macula_key_load_or_create(rootpath, "pq_pure", 0, &err);
+    check("root key", err);
+    macula_key_node_id(root, root_id, &err);
+    check("root node_id", err);
+    to_hex(root_id, 32, root_hex);
+    macula_pool_node_id(caller, caller_id, &err);
+    check("caller node_id", err);
+    char *ucan = macula_ucan_create(root, caller_id, "[{\"with\":\"mri:realm:abi\",\"can\":\"invoke\"}]",
+                                    (int64_t)time(NULL) + 60, NULL, &err);
+    check("ucan_create", err);
+    if (strlen(ucan) < 100 || !strchr(ucan, '.')) fail("not a token", ucan);
+    char *proof_id = macula_ucan_proof_id(ucan, &err);
+    check("ucan_proof_id", err);
+    if (strlen(proof_id) != 96) fail("a proof id is 96 hex characters", proof_id);
+    macula_free_string(proof_id);
+    macula_ucan_create(root, caller_id, "{}", 1, NULL, &err);
+    expect_kind("caps that are not a list", &err, "invalid_argument");
+    macula_key_free(root);
+
+    snprintf(policy, sizeof policy, "{\"kind\":\"ucan_required\",\"issuer\":\"%s\"}", root_hex);
+    own_procedure(provider, "gated", gated);
+    macula_pool_serve_gated(provider, realm, gated, "{\"kind\":\"open\"}", &err);
+    expect_kind("an open policy to a gated serve", &err, "invalid_argument");
+    served = macula_pool_serve_gated(provider, realm, gated, policy, &err);
+    check("pool_serve_gated", err);
+    macula_pool_call_with(caller, realm, gated, "null", NULL, NULL, NULL, 20000, 0, &err);
+    if (!err || !strstr(err, "\"code\":\"unauthorized\"")) fail("a call without a token", err);
+    expect_kind("a call without a token", &err, "provider_error");
+    macula_pool_call_with(caller, realm, gated, "null", NULL, ucan, "[1]", 20000, 0, &err);
+    expect_kind("proofs that are not tokens", &err, "invalid_argument");
+    args.served = served;
+    pthread_create(&thread, NULL, provide_one, &args);
+    result = macula_pool_call_with(caller, realm, gated, "{\"n\":9007199254740993}", NULL, ucan, "[]", 20000, 0, &err);
+    check("pool_call_with", err);
+    expect_contains("the gated call's result", result, "\"echo\":{\"$bytes\":\"AQI=\"}");
+    macula_free_string(result);
+    pthread_join(thread, NULL);
+    macula_served_stop(served, &err);
+    check("served_stop of the gated procedure", err);
+
+    own_procedure(provider, "watch", watch);
+    streaming = macula_pool_serve_stream_gated(provider, realm, watch, MACULA_STREAM_SERVER, policy, &err);
+    check("pool_serve_stream_gated", err);
+    stream = macula_pool_open_stream_with(caller, realm, watch, MACULA_STREAM_SERVER, "null", NULL, NULL, NULL, 20000,
+                                          20000, 0, &err);
+    check("pool_open_stream_with", err);
+    char *refused = macula_stream_recv(stream, 10000, 0, &err);
+    check("stream_recv of a refused open", err);
+    expect_contains("a refused open", refused, "\"code\":\"unauthorized\"");
+    macula_free_string(refused);
+    macula_stream_free(stream);
+    stream = macula_pool_open_stream_with(caller, realm, watch, MACULA_STREAM_SERVER, "{\"to\":1}", NULL, ucan, NULL,
+                                          20000, 20000, 0, &err);
+    check("pool_open_stream_with a token", err);
+    open = macula_served_next(streaming, 20000, 0, &session, &closed, &err);
+    check("served_next of a gated session", err);
+    expect_contains("the gated session's request", open, "\"payload\":{\"to\":1}");
+    macula_free_string(open);
+    macula_stream_free(stream);
+    macula_stream_free(session);
+    macula_served_stop(streaming, &err);
+    check("served_stop of the gated stream", err);
+    macula_free_string(ucan);
   }
 
   /* Closing a pool ends what it owns. */

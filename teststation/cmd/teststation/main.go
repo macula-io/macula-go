@@ -1,7 +1,7 @@
 // Command teststation runs in-process macula 12 stations for the tests of a
 // binding over cabi (cabi/CONTRACT.md "Test harness"): two stations sharing
 // one DHT, and a test realm with one org. It prints one JSON line, {stations:
-// [{host, port, node_id}], realm_id, realm_key, org}, then reads commands on
+// [{host, port, node_id}], realm_name, realm_id, realm_key, org}, then reads commands on
 // stdin until it closes:
 //
 //	admit <node_id hex>   the org delegates its procedures to that node
@@ -55,18 +55,19 @@ func main() {
 	}
 	stations := []*teststation.Station{teststation.Start(t, p, "binding a"), teststation.Start(t, p, "binding b")}
 	teststation.ShareDHT(stations...)
-	realm := teststation.NewRealm(t, p, "binding tests", "mcl-binding")
+	realm := teststation.NewRealm(t, p, "binding-tests", "mcl-binding")
 	type station struct {
 		Host   string `json:"host"`
 		Port   uint16 `json:"port"`
 		NodeID string `json:"node_id"`
 	}
 	out := struct {
-		Stations []station `json:"stations"`
-		RealmID  string    `json:"realm_id"`
-		RealmKey string    `json:"realm_key"`
-		Org      string    `json:"org"`
-	}{RealmID: hex.EncodeToString(realm.ID[:]), RealmKey: hex.EncodeToString(realm.RealmKey()), Org: realm.Org}
+		Stations  []station `json:"stations"`
+		RealmName string    `json:"realm_name"`
+		RealmID   string    `json:"realm_id"`
+		RealmKey  string    `json:"realm_key"`
+		Org       string    `json:"org"`
+	}{RealmName: realm.Name, RealmID: hex.EncodeToString(realm.ID[:]), RealmKey: hex.EncodeToString(realm.RealmKey()), Org: realm.Org}
 	for _, s := range stations {
 		out.Stations = append(out.Stations, station{Host: s.Host, Port: s.Port, NodeID: hex.EncodeToString(s.NodeID[:])})
 	}
