@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through `crypto/mlkem/mlkemtest`), copied by
   `scripts/interop/copy_e2e_seal_vectors.sh`. A recipient refuses an
   ephemeral P-384 point whose ECDH output is zero, which `crypto/ecdh`
-  itself returns.
+  itself returns; the vectors' `refusals` entry pins it.
 
 ### Documentation
 

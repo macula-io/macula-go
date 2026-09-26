@@ -37,6 +37,7 @@ type vectorRecipient struct {
 	KeyAsCarried hexBytes `json:"key_as_carried"`
 	KeyHash      hexBytes `json:"key_hash"`
 	KeyID        hexBytes `json:"key_id"`
+	MLKEMDk      hexBytes `json:"mlkem_dk"`
 	MLKEMEk      hexBytes `json:"mlkem_ek"`
 	MLKEMSeed    hexBytes `json:"mlkem_seed"`
 	P384Priv     hexBytes `json:"p384_priv"`
@@ -108,11 +109,24 @@ type vectorEvent struct {
 	PublishedAt uint64   `json:"published_at"`
 }
 
+type vectorRefusal struct {
+	Profile      string   `json:"profile"`
+	MLKEMSeed    hexBytes `json:"mlkem_seed"`
+	MLKEMDk      hexBytes `json:"mlkem_dk"`
+	P384Priv     hexBytes `json:"p384_priv"`
+	P384Pub      hexBytes `json:"p384_pub"`
+	KeyAsCarried hexBytes `json:"key_as_carried"`
+	KemCt        hexBytes `json:"kem_ct"`
+	Expect       string   `json:"expect"`
+	Why          string   `json:"why"`
+}
+
 type vectorFile struct {
 	Scheme     int                        `json:"scheme"`
 	Recipients map[string]vectorRecipient `json:"recipients"`
 	Calls      []vectorCall               `json:"calls"`
 	Events     []vectorEvent              `json:"events"`
+	Refusals   []vectorRefusal            `json:"refusals"`
 }
 
 func loadVectors(t *testing.T) vectorFile {
@@ -128,8 +142,8 @@ func loadVectors(t *testing.T) vectorFile {
 	if v.Scheme != Scheme {
 		t.Fatalf("vectors are scheme %d, this package seals scheme %d", v.Scheme, Scheme)
 	}
-	if len(v.Calls) == 0 || len(v.Events) == 0 {
-		t.Fatalf("vectors hold %d calls and %d events", len(v.Calls), len(v.Events))
+	if len(v.Calls) == 0 || len(v.Events) == 0 || len(v.Refusals) == 0 {
+		t.Fatalf("vectors hold %d calls, %d events and %d refusals", len(v.Calls), len(v.Events), len(v.Refusals))
 	}
 	return v
 }
@@ -342,6 +356,46 @@ func TestVectorSenderSide(t *testing.T) {
 			}
 			equal(t, "kem_ct", kemCt, c.KemCt)
 			equal(t, "ss", ss[:], c.Ss)
+		})
+	}
+}
+
+// Every refusal is refused. The zero-ECDH refusal is also checked to reach
+// its zero:
+// crypto/ecdh returns the 48 zero bytes without an error, so RecipientSecret's
+// own check is what refuses it.
+func TestVectorRefusals(t *testing.T) {
+	v := loadVectors(t)
+	for _, r := range v.Refusals {
+		t.Run(r.Why, func(t *testing.T) {
+			if r.Expect != "sealed_refused" {
+				t.Fatalf("expect %q", r.Expect)
+			}
+			var p384 []byte
+			if r.Profile == string(profile.PQHybrid) {
+				p384 = r.P384Priv
+			}
+			key, err := NewPrivateKey(profile.Profile(r.Profile), r.MLKEMSeed, p384)
+			if err != nil {
+				t.Fatal(err)
+			}
+			equal(t, "key_as_carried", key.PublicKey().Carried(), r.KeyAsCarried)
+			if key.P384 != nil {
+				equal(t, "p384_pub", key.P384.PublicKey().Bytes(), r.P384Pub)
+			}
+			if key.P384 != nil && len(r.KemCt) == MLKEMCiphertextSize+P384PointSize {
+				peer, err := ecdh.P384().NewPublicKey(r.KemCt[MLKEMCiphertextSize:])
+				if err != nil {
+					t.Fatalf("the ephemeral point is not on P-384: %v", err)
+				}
+				raw, err := key.P384.ECDH(peer)
+				if err != nil || !bytes.Equal(raw, make([]byte, len(raw))) {
+					t.Fatalf("crypto/ecdh gives %x, %v: this refusal no longer reaches the zero output it names", raw, err)
+				}
+			}
+			if ss, err := RecipientSecret(key, r.KemCt); !errors.Is(err, ErrRefused) {
+				t.Fatalf("recovered %x, %v: want ErrRefused", ss, err)
+			}
 		})
 	}
 }

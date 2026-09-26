@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/ecdh"
 	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"testing"
 
@@ -164,32 +163,5 @@ func TestStreamAADBindsTheDirection(t *testing.T) {
 	var requestID [16]byte
 	if bytes.Equal(StreamAAD(FrameStreamData, requestID, 0, CallerToProvider), StreamAAD(FrameStreamData, requestID, 0, ProviderToCaller)) {
 		t.Fatal("both directions have the same AAD")
-	}
-}
-
-// P-384 has points with x = 0 (its b is a square mod p), so an ephemeral
-// point can make the ECDH output 48 zero bytes: here E = d^-1 * (0, sqrt(b))
-// for the recipient scalar d, so d * E has x = 0. The spec requires the
-// recipient to refuse it; crypto/ecdh itself returns it.
-func TestRecipientSecretRefusesAZeroECDHOutput(t *testing.T) {
-	d, _ := hex.DecodeString("00001234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab")
-	e, _ := hex.DecodeString("04ebdd30df769d32acd5bff007110a624531892fdfb3210020ac0170860ff2266f6795e8ce7e98e0dcbd1d88364e4a0cdac0d941ef41aa7c4a7da63d248ee8b6be1ad4d3a8d0f7e6c8721e209797e522a8c17e82878aadf61d6dbb0dba05341754")
-	key, err := NewPrivateKey(profile.PQHybrid, make([]byte, MLKEMSeedSize), d)
-	if err != nil {
-		t.Fatal(err)
-	}
-	peer, err := ecdh.P384().NewPublicKey(e)
-	if err != nil {
-		t.Fatalf("the x = 0 point's preimage is not a valid point: %v", err)
-	}
-	if raw, err := key.P384.ECDH(peer); err != nil || !bytes.Equal(raw, make([]byte, 48)) {
-		t.Fatalf("crypto/ecdh gives %x, %v: the fixture no longer reaches a zero output", raw, err)
-	}
-	_, mlkemCt, err := SenderSecret(&PublicKey{Profile: profile.PQPure, MLKEM: key.MLKEM.EncapsulationKey()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := RecipientSecret(key, append(mlkemCt, e...)); !errors.Is(err, ErrRefused) {
-		t.Fatalf("a zero ECDH output: %v, want ErrRefused", err)
 	}
 }
