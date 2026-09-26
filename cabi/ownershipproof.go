@@ -75,12 +75,13 @@ func macula_ownership_proof_message(identity32, realm32 *C.uint8_t, procedure *C
 		setErr(errOut, invalidArgument("a negative timestamp"))
 		return nil
 	}
-	fields, err := payloadFromJSON(goString(fieldsJSON))
+	payload, err := payloadFromJSON(goString(fieldsJSON))
 	if err != nil {
 		setErr(errOut, err)
 		return nil
 	}
-	if _, isMap := fields.AsMap(); !isMap {
+	fields, err := ownershipproof.Fields(payload)
+	if err != nil {
 		setErr(errOut, invalidArgument("the fields are a JSON object"))
 		return nil
 	}

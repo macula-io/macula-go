@@ -21,8 +21,7 @@ import (
 // {"$bytes": base64}.
 const vectorFieldsJSON = `{"subject": "entity:alpha", "predicate": "knows", "object": "entity:beta",
  "confidence": 0.75, "weight": 3, "offset": -7, "digest": {"$bytes": "AQID"}, "note": null,
- "tags": ["a", "b"], "metadata": {"source": "field-notes", "page": 12},
- "caller": "a text key named caller is signed"}`
+ "tags": ["a", "b"], "metadata": {"source": "field-notes", "page": 12}}`
 
 func ownershipVector(t *testing.T, name string) []byte {
 	t.Helper()
@@ -52,6 +51,30 @@ func TestOwnershipFieldsJSONSignMclOmsVector(t *testing.T) {
 	got := ownershipproof.Message(id, sha256.Sum256([]byte("io.macula")), "mcl-graph/learn_link", 1790000000000, nonce, fields)
 	if want := ownershipVector(t, "message.hex"); !bytes.Equal(got, want) {
 		t.Fatalf("the ABI's fields do not give mcl_om's vector:\n got %x\nwant %x", got, want)
+	}
+}
+
+// The message export takes a whole payload and signs its Fields, as Attach
+// does: an asserted_by and a text caller in it change nothing.
+func TestTheOwnershipMessageSignsThePayloadsFields(t *testing.T) {
+	var id [32]byte
+	copy(id[:], ownershipVector(t, "identity.hex"))
+	var nonce [16]byte
+	for i := range nonce {
+		nonce[i] = byte(i)
+	}
+	whole := strings.TrimSuffix(vectorFieldsJSON, "}") + `, "caller": "claimed", "asserted_by": {"identity": "x"}}`
+	payload, err := payloadFromJSON(whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields, err := ownershipproof.Fields(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ownershipproof.Message(id, sha256.Sum256([]byte("io.macula")), "mcl-graph/learn_link", 1790000000000, nonce, fields)
+	if want := ownershipVector(t, "message.hex"); !bytes.Equal(got, want) {
+		t.Fatal("a payload's asserted_by or caller changed the signed bytes")
 	}
 }
 

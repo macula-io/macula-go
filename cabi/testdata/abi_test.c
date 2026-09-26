@@ -334,7 +334,7 @@ int main(int argc, char **argv) {
     const char *fields = "{\"subject\": \"entity:alpha\", \"predicate\": \"knows\", \"object\": \"entity:beta\", "
         "\"confidence\": 0.75, \"weight\": 3, \"offset\": -7, \"digest\": {\"$bytes\": \"AQID\"}, \"note\": null, "
         "\"tags\": [\"a\", \"b\"], \"metadata\": {\"source\": \"field-notes\", \"page\": 12}, "
-        "\"caller\": \"a text key named caller is signed\"}";
+        "\"caller\": \"a caller is sent, not signed\"}";
     size_t message_len = 0;
     uint8_t *message = macula_ownership_proof_message(identity, io_macula, "mcl-graph/learn_link", 1790000000000,
         nonce, fields, &message_len, &err);

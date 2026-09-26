@@ -8,14 +8,19 @@
 %%
 %% emit writes ownershipproof/testdata/vector: message/6's bytes for the inputs
 %% ownershipproof_test.go names, with the identity of a pq_hybrid key made here,
-%% its carried public key and its signature over the message.
+%% its carried public key and its signature over the message; and
+%% erlang_payload.hex, a payload whose asserted_by make/6 made at the vector's
+%% timestamp, encoded as macula's frame puts it on the wire (atom keys as text,
+%% the block's hex as byte strings).
 %%
 %% verify reads a payload goownershipproof signed, delivers it as a handler
-%% receives it (a CALL frame through macula_frame encode, decode and
-%% verify_request, then the station's caller merged in, as mcl-om's own tests
-%% do), and verifies it with verify_asserted_by/3. The same payload with one
-%% field changed must be refused as bad_signature, and the genuine one sent
-%% again as replayed. Exits 1 otherwise.
+%% receives it, and verifies it with verify_asserted_by/3: a CALL frame through
+%% macula_frame encode, decode and verify_request, then
+%% macula_station_link:with_caller/2's step, which removes a caller-sent text
+%% caller and merges the authenticated one. The same payload with one field
+%% changed must be refused as bad_signature, and the genuine one sent again as
+%% replayed. Exits 1 otherwise. Run it within 60 s of goownershipproof, whose
+%% proof carries the time it was signed.
 
 -define(PROCEDURE, <<"mcl-graph/learn_link">>).
 -define(TIMESTAMP, 1790000000000).
@@ -30,8 +35,12 @@ main(["emit", Ebin, Src, OutDir]) ->
     Public = macula_node_keys:public_key(Key),
     true = macula_node_keys:verify(Message, Signature, Public, profile()),
     ok = filelib:ensure_dir(filename:join(OutDir, "x")),
+    %% make/6 takes fields as an Erlang caller hands macula:call: undefined for null.
+    AssertedBy = mcl_om_ownership_proof:make(Key, Identity, realm(), ?PROCEDURE, erlang_fields(), ?TIMESTAMP),
+    Payload = macula_record_cbor:encode((fields())#{asserted_by => AssertedBy}),
     [write(OutDir, Name, Bytes) || {Name, Bytes} <- [{"message.hex", Message}, {"identity.hex", Identity},
-                                                     {"public_key.hex", Public}, {"signature.hex", Signature}]],
+                                                     {"public_key.hex", Public}, {"signature.hex", Signature},
+                                                     {"erlang_payload.hex", Payload}]],
     io:format("emitted: message ~b bytes, public key ~b, signature ~b~n",
               [byte_size(Message), byte_size(Public), byte_size(Signature)]);
 main(["verify", Ebin, Src, File]) ->
@@ -42,7 +51,11 @@ main(["verify", Ebin, Src, File]) ->
     {ok, Decoded} = macula_record_cbor:decode_strict(binary:decode_hex(PayloadHex)),
     Payload = peer_value(Decoded),
     {ok, _} = mcl_om_ownership_proof_replay:start_link(),
-    Check = fun(P) -> mcl_om_ownership_proof:verify_asserted_by(delivered(P, Realm, Procedure), Procedure, Realm) end,
+    Target = node_id(node_key()),
+    Caller = node_key(),
+    Check = fun(P) ->
+                mcl_om_ownership_proof:verify_asserted_by(delivered(P, Realm, Procedure, Target, Caller), Procedure, Realm)
+            end,
     Genuine = Check(Payload),
     Tampered = Check(Payload#{{text, <<"weight">>} => 4}),
     Replayed = Check(Payload),
@@ -70,8 +83,8 @@ realm() -> crypto:hash(sha256, <<"io.macula">>).
 nonce() -> list_to_binary(lists:seq(0, 15)).
 
 %% Every CBOR type a payload carries, in the canonical form message/6 takes.
-%% A text key named caller is a signed field like any other: only the
-%% station's atom caller is stripped.
+%% No caller: the station link removes a caller-sent one, so it is never a
+%% signed field.
 fields() ->
     #{{text, <<"subject">>} => {text, <<"entity:alpha">>},
       {text, <<"predicate">>} => {text, <<"knows">>},
@@ -83,8 +96,11 @@ fields() ->
       {text, <<"note">>} => null,
       {text, <<"tags">>} => [{text, <<"a">>}, {text, <<"b">>}],
       {text, <<"metadata">>} => #{{text, <<"source">>} => {text, <<"field-notes">>},
-                                  {text, <<"page">>} => 12},
-      {text, <<"caller">>} => {text, <<"a text key named caller is signed">>}}.
+                                  {text, <<"page">>} => 12}}.
+
+%% fields() as an Erlang caller hands them to make/6: undefined for null.
+erlang_fields() ->
+    maps:map(fun(_K, null) -> undefined; (_K, V) -> V end, fields()).
 
 profile() ->
     {ok, P} = macula_crypto_profile:configured(),
@@ -107,14 +123,19 @@ peer_value(List) when is_list(List) -> [peer_value(E) || E <- List];
 peer_value(Map) when is_map(Map) -> maps:map(fun(_K, V) -> peer_value(V) end, Map);
 peer_value(Other) -> Other.
 
-delivered(Payload, Realm, Procedure) ->
+delivered(Payload, Realm, Procedure, Target, Caller) ->
     Spec = #{request_id => crypto:strong_rand_bytes(16),
              realm => Realm,
              procedure => Procedure,
-             target => node_id(node_key()),
+             target => Target,
              deadline => erlang:system_time(millisecond) + 60_000,
              payload => Payload},
-    Frame = macula_frame:call(Spec, node_key()),
+    Frame = macula_frame:call(Spec, Caller),
     {ok, Decoded, <<>>} = macula_frame:decode(macula_frame:encode(Frame)),
     {ok, #{payload := Delivered, caller := CallerId}} = macula_frame:verify_request(Decoded, profile()),
-    Delivered#{caller => CallerId}.
+    with_caller(Delivered, CallerId).
+
+%% macula_station_link:with_caller/2 (macula 12.11.1), which is not exported:
+%% a caller-sent text caller is removed, the authenticated one merged in.
+with_caller(Payload, Caller) when is_map(Payload), Caller =/= undefined ->
+    (maps:remove({text, <<"caller">>}, Payload))#{caller => Caller}.

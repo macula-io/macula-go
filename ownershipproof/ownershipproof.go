@@ -16,9 +16,13 @@
 //	              proof: {v: 2, timestamp: <ms>, nonce: <hex>,
 //	                      signature: <hex>, public: <carried key hex>}}
 //
-// The fields are the payload minus asserted_by. Verify leaves replay to its
-// caller: it returns the identity and nonce, which a verifier records once
-// (mcl_om does so for 60 s either side of the timestamp).
+// The fields are the payload minus asserted_by and minus a text "caller": a
+// macula station link removes a caller-sent caller before the handler reads
+// the payload, and merges in the caller it authenticated, which a Go provider
+// reads as stationlink.Request.Caller (macula_station_link:with_caller/2).
+// Neither is signed. Verify leaves replay to its caller: it returns the
+// identity and nonce, which a verifier accepts once (mcl_om keeps each nonce
+// for 120 s after acceptance, beyond the 60 s skew either side).
 package ownershipproof
 
 import (
@@ -41,6 +45,9 @@ const (
 	NonceSize = 16
 	// Field is the payload key the block goes under.
 	Field = "asserted_by"
+	// callerField is the key a station link replaces with the authenticated
+	// caller before a handler reads the payload.
+	callerField = "caller"
 	// MaxSkew is how far a proof's timestamp may be from the verifier's clock.
 	MaxSkew = 60 * time.Second
 )
@@ -119,10 +126,14 @@ func Message(id [32]byte, realm [32]byte, procedure string, timestampMs uint64, 
 	}))
 }
 
-// Sign signs fields for procedure in realm as key's node, now and with a
-// fresh nonce. fields is the payload as it goes on the wire, without an
-// asserted_by entry.
-func Sign(key *identity.NodeKey, realm [32]byte, procedure string, fields cbor.Value) (AssertedBy, error) {
+// Sign signs the fields of payload (Fields) for procedure in realm as key's
+// node, now and with a fresh nonce. payload is the payload as it goes on the
+// wire; a map is required.
+func Sign(key *identity.NodeKey, realm [32]byte, procedure string, payload cbor.Value) (AssertedBy, error) {
+	fields, err := Fields(payload)
+	if err != nil {
+		return AssertedBy{}, err
+	}
 	var nonce [NonceSize]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return AssertedBy{}, err
@@ -149,28 +160,35 @@ func signAt(key *identity.NodeKey, realm [32]byte, procedure string, fields cbor
 
 // Attach signs payload (a map) for procedure in realm as key's node and
 // returns it with its asserted_by block, replacing any earlier one.
+//
+// A text "caller" in payload is sent, but not signed: the station link
+// replaces it before the handler reads it (see the package doc).
 func Attach(payload cbor.Value, key *identity.NodeKey, realm [32]byte, procedure string) (cbor.Value, error) {
-	fields, err := fieldsOf(payload)
+	block, err := Sign(key, realm, procedure, payload)
 	if err != nil {
 		return cbor.Value{}, err
 	}
-	block, err := Sign(key, realm, procedure, fields)
-	if err != nil {
-		return cbor.Value{}, err
+	entries, _ := payload.AsMap()
+	out := make([]cbor.MapEntry, 0, len(entries)+1)
+	for _, e := range entries {
+		if k, isText := e.Key.AsText(); !isText || k != Field {
+			out = append(out, e)
+		}
 	}
-	entries, _ := fields.AsMap()
-	return cbor.Map(append(entries, cbor.MapEntry{Key: cbor.Text(Field), Val: block.Value()})), nil
+	return cbor.Map(append(out, cbor.MapEntry{Key: cbor.Text(Field), Val: block.Value()})), nil
 }
 
-// fieldsOf is the payload minus its asserted_by entry.
-func fieldsOf(payload cbor.Value) (cbor.Value, error) {
+// Fields is what a proof over payload signs: payload minus its asserted_by
+// and minus a text "caller", the fields a handler reads that the sender
+// chose. payload must be a map.
+func Fields(payload cbor.Value) (cbor.Value, error) {
 	entries, ok := payload.AsMap()
 	if !ok {
 		return cbor.Value{}, ErrNotAMap
 	}
 	fields := make([]cbor.MapEntry, 0, len(entries))
 	for _, e := range entries {
-		if k, isText := e.Key.AsText(); isText && k == Field {
+		if k, isText := e.Key.AsText(); isText && (k == Field || k == callerField) {
 			continue
 		}
 		fields = append(fields, e)
@@ -179,13 +197,13 @@ func fieldsOf(payload cbor.Value) (cbor.Value, error) {
 }
 
 // Verify checks that payload's asserted_by block shows its identity
-// authorised every other field of payload for procedure in realm, at a
-// timestamp within MaxSkew of now, with a key of profile p. It follows
-// mcl_om_ownership_proof:verify/5 step for step, and returns the same
-// refusal for each case. It does not guard replay: record the returned
-// nonce and refuse one seen before.
+// authorised the payload's Fields for procedure in realm, at a timestamp
+// within MaxSkew of now, with a key of profile p. payload is as a handler
+// receives it. It takes mcl_om_ownership_proof:verify/5's steps in its order
+// and gives its refusal for each. It does not guard replay: record the
+// returned nonce and refuse one seen before.
 func Verify(payload cbor.Value, procedure string, realm [32]byte, p profile.Profile, now time.Time) (Verified, error) {
-	fields, err := fieldsOf(payload)
+	fields, err := Fields(payload)
 	if err != nil {
 		return Verified{}, ErrMissingProof
 	}
@@ -207,7 +225,10 @@ func Verify(payload cbor.Value, procedure string, realm [32]byte, p profile.Prof
 	if v, ok := proof.Get("v"); !ok || !isInt(v, Version) {
 		return Verified{}, ErrUnsupportedVersion
 	}
-	tsValue, _ := proof.Get("timestamp")
+	tsValue, ok := proof.Get("timestamp")
+	if !ok {
+		return Verified{}, ErrMissingProof
+	}
 	ts, ok := tsValue.AsInt64()
 	if !ok {
 		return Verified{}, ErrMissingProof

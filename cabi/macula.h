@@ -90,14 +90,16 @@ uint8_t *macula_device_request_message(const uint8_t *public_key, size_t public_
 /* Since macula-go v0.16.0. */
 
 /* payload_json (a JSON object) with an "asserted_by" block by which key's
- * node authorises every other field for procedure in realm, now, with a
- * fresh nonce; an asserted_by already there is replaced. Send the result as
- * the payload. */
+ * node authorises its other fields for procedure in realm, now, with a fresh
+ * nonce; an asserted_by already there is replaced. A text "caller" is sent
+ * but not signed: a station replaces it with the caller it authenticated.
+ * Send the result as the payload. */
 char *macula_key_ownership_proof(macula_handle key, const uint8_t realm[32], const char *procedure,
                                  const char *payload_json, char **err_out);
 /* The exact bytes such a proof signs, for a given identity (node_id),
- * timestamp and nonce, over fields_json (the payload less asserted_by): what a
- * binding checks mcl_om's vector with. */
+ * timestamp and nonce, over fields_json: a payload, of which the fields are
+ * all but "asserted_by" and a text "caller" (which a station replaces). What
+ * a binding checks mcl_om's vector with. */
 uint8_t *macula_ownership_proof_message(const uint8_t identity[32], const uint8_t realm[32], const char *procedure,
                                         int64_t timestamp_ms, const uint8_t nonce[16], const char *fields_json,
                                         size_t *out_len, char **err_out);

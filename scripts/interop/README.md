@@ -104,8 +104,10 @@ Point it only at a station you run for the purpose: it puts records in the stati
 `goownershipproof` and `erlang_ownership_proof.escript` check ownership proof v2 (mcl-om#7) against mcl_om's own
 `mcl_om_ownership_proof`, compiled from an mcl-om checkout. `emit` writes `ownershipproof/testdata/vector` (the
 message mcl_om builds, and a signature an Erlang key made over it), which `ownershipproof/ownershipproof_test.go`
-checks in every `go test`. `verify` delivers a payload macula-go signed through macula's frame codec, as a handler
-receives it, and needs mcl_om to accept it once, refuse it with one field changed, and refuse it sent again:
+checks in every `go test`. `verify` delivers a payload macula-go signed through macula's frame codec and the station link's caller step
+(`macula_station_link:with_caller/2`), as a handler receives it, and needs mcl_om to accept it once, refuse it with
+one field changed, and refuse it sent again. The proof carries the time it was signed, so run `verify` within 60 s
+of `goownershipproof`:
 
 ```sh
 go run ./scripts/interop/goownershipproof /tmp/go_payload.txt

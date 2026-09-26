@@ -46,7 +46,6 @@ func vectorNonce() (n [NonceSize]byte) {
 // are in no particular order: the encoding sorts them.
 func vectorFields() cbor.Value {
 	return cbor.Map([]cbor.MapEntry{
-		{Key: cbor.Text("caller"), Val: cbor.Text("a text key named caller is signed")},
 		{Key: cbor.Text("subject"), Val: cbor.Text("entity:alpha")},
 		{Key: cbor.Text("predicate"), Val: cbor.Text("knows")},
 		{Key: cbor.Text("object"), Val: cbor.Text("entity:beta")},
@@ -213,26 +212,110 @@ func TestAVersionOtherThanTwoIsUnsupported(t *testing.T) {
 	}
 }
 
-func TestMalformedBlocksAreRefusedNotPanicked(t *testing.T) {
+func TestMalformedBlocksAreRefusedAsMclOmRefusesThem(t *testing.T) {
 	payload := vectorPayload(t)
 	block, proof := assertedBy(t, payload)
-	cases := map[string]cbor.Value{
-		"asserted_by not a map": withField(t, payload, Field, cbor.Text("x")),
-		"identity not hex":      withField(t, payload, Field, withField(t, block, "identity", cbor.Text("zz"))),
-		"identity short":        withField(t, payload, Field, withField(t, block, "identity", cbor.Text("abcd"))),
-		"proof missing":         withField(t, payload, Field, without(t, block, "proof")),
-		"nonce short":           withField(t, payload, Field, withField(t, block, "proof", withField(t, proof, "nonce", cbor.Text("00ff")))),
-		"signature not hex":     withField(t, payload, Field, withField(t, block, "proof", withField(t, proof, "signature", cbor.Text("q")))),
-		"public missing":        withField(t, payload, Field, withField(t, block, "proof", without(t, proof, "public"))),
-		"timestamp missing":     withField(t, payload, Field, withField(t, block, "proof", without(t, proof, "timestamp"))),
-		"payload not a map":     cbor.List(nil),
+	cases := map[string]struct {
+		payload cbor.Value
+		want    error
+	}{
+		"asserted_by not a map":  {withField(t, payload, Field, cbor.Text("x")), ErrMissingProof},
+		"identity not hex":       {withField(t, payload, Field, withField(t, block, "identity", cbor.Text(strings.Repeat("zz", 32)))), ErrInvalidIdentity},
+		"identity short":         {withField(t, payload, Field, withField(t, block, "identity", cbor.Text("abcd"))), ErrInvalidIdentity},
+		"proof missing":          {withField(t, payload, Field, without(t, block, "proof")), ErrMissingProof},
+		"timestamp missing":      {withField(t, payload, Field, withField(t, block, "proof", without(t, proof, "timestamp"))), ErrMissingProof},
+		"timestamp not a number": {withField(t, payload, Field, withField(t, block, "proof", withField(t, proof, "timestamp", cbor.Text("1")))), ErrMissingProof},
+		"nonce short":            {withField(t, payload, Field, withField(t, block, "proof", withField(t, proof, "nonce", cbor.Text("00ff")))), ErrBadSignature},
+		"signature not hex":      {withField(t, payload, Field, withField(t, block, "proof", withField(t, proof, "signature", cbor.Text("q")))), ErrBadSignature},
+		"public missing":         {withField(t, payload, Field, withField(t, block, "proof", without(t, proof, "public"))), ErrBadSignature},
+		"payload not a map":      {cbor.List(nil), ErrMissingProof},
 	}
-	for name, p := range cases {
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Verify(p, vectorProcedure, vectorRealm(), profile.PQHybrid, vectorTimestamp); err == nil {
-				t.Fatal("verified")
+			if _, err := Verify(c.payload, vectorProcedure, vectorRealm(), profile.PQHybrid, vectorTimestamp); !errors.Is(err, c.want) {
+				t.Fatalf("Verify: %v, want %v", err, c.want)
 			}
 		})
+	}
+}
+
+// mcl_om accepts a timestamp exactly MaxSkew away (=<), and refuses one a
+// millisecond further.
+func TestTheSkewBoundaryIsInclusive(t *testing.T) {
+	payload := vectorPayload(t)
+	for _, now := range []time.Time{vectorTimestamp.Add(MaxSkew), vectorTimestamp.Add(-MaxSkew)} {
+		if _, err := Verify(payload, vectorProcedure, vectorRealm(), profile.PQHybrid, now); err != nil {
+			t.Fatalf("at %v from the timestamp: %v", now.Sub(vectorTimestamp), err)
+		}
+	}
+}
+
+// macula_station_link:with_caller/2 removes a caller-sent text "caller"
+// before the handler sees the payload, so it is not a signed field: signing
+// it would sign bytes mcl_om can never rebuild.
+func TestACallerFieldIsNotSigned(t *testing.T) {
+	key, err := identity.GenerateKey(identity.PurposeIdentity, profile.PQPure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withCaller := withField(t, vectorFields(), "caller", cbor.Text("claimed by the sender"))
+	signed, err := Attach(withCaller, key, vectorRealm(), vectorProcedure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As a handler receives it: the sender's caller removed (and the
+	// station's own merged in, which mcl_om strips as an atom).
+	delivered := without(t, signed, "caller")
+	if _, err := Verify(delivered, vectorProcedure, vectorRealm(), profile.PQPure, time.Now()); err != nil {
+		t.Fatalf("the delivered payload: %v", err)
+	}
+	fields, err := Fields(withCaller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(cbor.Encode(fields), cbor.Encode(vectorFields())) {
+		t.Fatalf("Fields kept the caller: %v", fields)
+	}
+}
+
+func TestSignSignsTheFieldsOfWhateverItIsGiven(t *testing.T) {
+	key, err := identity.GenerateKey(identity.PurposeIdentity, profile.PQPure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := withField(t, vectorFields(), Field, cbor.Text("an earlier block"))
+	block, err := Sign(key, vectorRealm(), vectorProcedure, stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := withField(t, vectorFields(), Field, block.Value())
+	if _, err := Verify(payload, vectorProcedure, vectorRealm(), profile.PQPure, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The payload exactly as mcl_om's make/6 and macula's frame put it on the
+// wire: the block's hex as byte strings, keys from atoms.
+func TestAnErlangMadePayloadFromTheWireVerifies(t *testing.T) {
+	wire := vectorFile(t, "erlang_payload.hex")
+	payload, err := cbor.Decode(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := payload.Get(Field)
+	proof, _ := block.Get("proof")
+	sig, _ := proof.Get("signature")
+	if sig.Kind() != cbor.KindBytes {
+		t.Fatalf("the Erlang block's signature is %v on the wire, want a byte string", sig.Kind())
+	}
+	ts, _ := proof.Get("timestamp")
+	ms, _ := ts.AsInt64()
+	got, err := Verify(payload, vectorProcedure, vectorRealm(), profile.PQHybrid, time.UnixMilli(ms))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Identity != vectorIdentity(t) {
+		t.Fatalf("verified %x, want the vector's identity", got.Identity)
 	}
 }
 
