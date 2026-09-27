@@ -150,6 +150,10 @@ MACULA_BUILD=<macula checkout at v13.x, compiled> scripts/interop/sealed.sh pq_h
 MACULA_BUILD=<macula checkout at v13.x, compiled> scripts/interop/sealed.sh pq_pure
 ```
 
+`MACULA_BUILD` may also be a rebar3 project that depends on macula from hex
+(`{deps, [{macula, "13.0.1"}]}`), compiled in the same image: the script
+reads `_build/default/lib/macula` and its dependencies beside it.
+
 The Erlang caller also calls with `confidential => off` by direct dial.
 macula 13.0.0 seals that call anyway (it honours `off` only on an explicit
 target), where macula-go's pool refuses it; macula 13.0.1 refuses it too, as
@@ -158,9 +162,10 @@ target), where macula-go's pool refuses it; macula 13.0.1 refuses it too, as
 
 Last run (2026-09-27, `macula-ci-otp@sha256:aff1d39b...`):
 
-- macula 13.0.1 at 92137b94 (before its hex release), with
-  `MACULA_OFF_REFUSED=1`: both profiles, both ways, `sealed call` and
-  `sealed stream` answered, `clear call` refused `sealed_required`,
-  `off by direct dial` refused `off_needs_explicit_target`, exit 0.
+- macula 13.0.1 from hex (tag v13.0.1 = 92137b94), compiled as a rebar3
+  dependency, with `MACULA_OFF_REFUSED=1`: both profiles, both ways,
+  `sealed call` and `sealed stream` answered, `clear call` refused
+  `sealed_required`, `off by direct dial` refused
+  `off_needs_explicit_target`, exit 0.
 - macula v13.0.0: the same, except `off by direct dial` sealed (exit 1 under
   `MACULA_OFF_REFUSED=1`, as it must be).
