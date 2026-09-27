@@ -246,7 +246,8 @@ callers seal to that key; stations route what they cannot read.
   named, or to the first key they name when it holds none. A second refusal is
   a `provider_error` of code `sealed_refused`, its `detail` the key id named.
 - A call or an open that could not be kept confidential ends with that
-  error: it is never tried at another provider, which might be keyless.
+  error: it is never tried at another provider, which might be keyless, and
+  once a sealed call has gone out no later provider is called in the clear.
 - What stays visible: a request's `token` and `proofs`, sizes, timing and
   routing fields. Content (`macula_pool_share_content`) is served and fetched in
   the clear, as it is public by design.

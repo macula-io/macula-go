@@ -270,6 +270,11 @@ Decisions:
   to the first key when the provider holds none (`resealed/7`), a reply's
   key id bound on open, a reseal keeps its deadline, an opened ERROR's text
   bounded.
+- Fable round 2 (2026-09-27), both required changes taken: a failed reseal
+  lookup fails closed (`no_kem_key`, as `providers_ads/5`), and a
+  `StreamCall.Reseal` giving no key ends the stream. Also closed: once a
+  sealed CALL has gone out, no later candidate is called in the clear (the
+  narrow guard; macula-go#8's "never move on once sent" is v0.18.1).
 
 Open:
 

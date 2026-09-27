@@ -41,8 +41,9 @@ type StreamCall struct {
 	// Reseal, when set, lets a sealed stream refused sealed_refused before
 	// it has sent anything seal once more: it is given the key id the
 	// provider named (nil for none) and returns the key to seal to, and the
-	// stream reopens under a new request, keeping its session. Its error ends
-	// the stream. Without it, the refusal ends the stream.
+	// stream reopens under a new request, keeping its session. Its error, or
+	// no key (no_kem_key), ends the stream: a refused sealed open is never
+	// sent again in the clear. Without it, the refusal ends the stream.
 	Reseal func(named *[seal.KeyIDSize]byte) ([]byte, error)
 }
 

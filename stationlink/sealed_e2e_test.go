@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -222,6 +223,32 @@ func TestASealedStreamResealsOnceWhenRefused(t *testing.T) {
 	if _, err := recv(t, refused); !errors.As(err, &streamErr) || streamErr.Code != "sealed_refused" ||
 		streamErr.Message != hex.EncodeToString(current[:]) {
 		t.Errorf("without a reseal: %v", err)
+	}
+}
+
+// A Reseal that gives no key ends the stream: a refused sealed open is never
+// sent again in the clear.
+func TestAResealGivingNoKeyEndsTheStream(t *testing.T) {
+	w := newSealedWorld(t, profile.PQPure, "reseal no key")
+	var entered atomic.Int32
+	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
+		Handler: func(_ context.Context, s *stationlink.Stream) error {
+			entered.Add(1)
+			return s.Reply(cbor.Text("counted"))
+		}}})
+	stale := must[*seal.PrivateKey](t)(seal.GenerateKey(profile.PQPure)).PublicKey().Carried()
+	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-vault/count",
+		Target: w.provider.NodeID(), Mode: frame.ServerStream, Payload: cbor.Map(nil), SealTo: stale,
+		Reseal: func(*[seal.KeyIDSize]byte) ([]byte, error) { return nil, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refused *stationlink.ConfidentialityError
+	if _, err := recv(t, stream); !errors.As(err, &refused) || refused.Reason != stationlink.ReasonNoKEMKey {
+		t.Errorf("%v, want no_kem_key", err)
+	}
+	if n := entered.Load(); n != 0 {
+		t.Errorf("the provider's handler ran %d times", n)
 	}
 }
 

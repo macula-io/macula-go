@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -107,6 +108,72 @@ func TestARequiredCallRefusesAKeylessProvider(t *testing.T) {
 		Handler:      func(context.Context, stationlink.Request) (cbor.Value, error) { return cbor.Map(nil), nil },
 		Confidential: stationlink.ConfidentialRequired}); !errors.Is(err, stationlink.ErrKEMAdvertiseDisabled) {
 		t.Errorf("a required offer without kem_advertise: %v", err)
+	}
+}
+
+// A call sealed to one candidate is never sent in the clear to another: when
+// the sealed CALL went out and brought no answer, a keyless next candidate
+// ends the call no_kem_key rather than take the payload in the clear.
+func TestASealedCallNeverWalksToAKeylessCandidate(t *testing.T) {
+	s, other := teststation.Start(t, profile.PQPure, "no walk"), teststation.Start(t, profile.PQPure, "no walk other")
+	teststation.ShareDHT(s, other)
+	realm := teststation.NewRealm(t, profile.PQPure, "no-walk", org)
+	realm.Admit(t, s, nodeIDOf(t, "no walk provider"))
+	realm.Admit(t, other, nodeIDOf(t, "no walk keyless"))
+	w := sealedPools{realm: realm, station: s, caller: connect(t, "no walk caller", realm, s),
+		provider: connectWith(t, "no walk provider", realm, func(o *Opts) { o.KEMAdvertise = true }, s)}
+	keyless := connect(t, "no walk keyless", realm, other)
+	var clearEntered atomic.Int32
+	if _, err := keyless.Serve(t.Context(), Offer{Realm: w.realm.ID, Procedure: procedure,
+		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
+			clearEntered.Add(1)
+			return r.Payload, nil
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	// The keyed provider advertises last, so it is the freshest candidate
+	// and is tried first; its handler outlives its share.
+	time.Sleep(50 * time.Millisecond)
+	if _, err := w.provider.Serve(t.Context(), Offer{Realm: w.realm.ID, Procedure: procedure,
+		Handler: func(ctx context.Context, r stationlink.Request) (cbor.Value, error) {
+			time.Sleep(2500 * time.Millisecond)
+			return r.Payload, nil
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	// Both advertisements reach the DHT in their own time.
+	for range 50 {
+		if found, err := w.caller.Providers(t.Context(), w.realm.ID, procedure); err == nil && len(found) == 2 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	found, err := w.caller.Providers(t.Context(), w.realm.ID, procedure)
+	if err != nil || len(found) != 2 || found[0].Node != w.provider.NodeID() {
+		t.Fatalf("the candidates: %+v, %v", found, err)
+	}
+	_, err = w.caller.Call(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("secret"),
+		Timeout: 4 * time.Second})
+	var refused *stationlink.ConfidentialityError
+	if !errors.As(err, &refused) || refused.Reason != stationlink.ReasonNoKEMKey {
+		t.Errorf("%v, want no_kem_key", err)
+	}
+	if n := clearEntered.Load(); n != 0 {
+		t.Errorf("the sealed payload reached the keyless provider in the clear %d times", n)
+	}
+}
+
+// A reseal whose lookup fails fails closed, as macula's providers_ads/5
+// reads a failed lookup as none: no_kem_key, which ends the call.
+func TestAResealWhoseLookupFailsIsNoKEMKey(t *testing.T) {
+	w := newSealedPools(t, "reseal lookup", true)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	named := [seal.KeyIDSize]byte{1}
+	_, err := w.caller.resealed(ctx, resolvedKey{w.realm.ID, procedure, w.provider.NodeID()}, w.provider.NodeID(), &named)
+	var refused *stationlink.ConfidentialityError
+	if !errors.As(err, &refused) || refused.Reason != stationlink.ReasonNoKEMKey {
+		t.Errorf("%v, want no_kem_key", err)
 	}
 }
 

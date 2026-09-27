@@ -177,6 +177,10 @@ func (s *Stream) resealed(refused *StreamError) bool {
 		return false
 	}
 	key, err := c.Reseal(refusedKey(&refused.Message))
+	if err == nil && key == nil {
+		// A refused sealed open is never sent again in the clear.
+		err = &ConfidentialityError{Reason: ReasonNoKEMKey}
+	}
 	if err != nil {
 		s.end(err)
 		return true

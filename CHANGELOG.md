@@ -42,7 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`IsClearRefusal`) and `sealed_refused` (`SealedRefusedError`); anything
   else is `ErrClearAnswerToSealed`. A sealed answer or stream frame naming
   another key id than the request's is not opened. A resealed stream keeps
-  its first open's deadline. `ConfidentialityError` carries
+  its first open's deadline. A `StreamCall.Reseal` that gives no key ends
+  the stream `no_kem_key`. `ConfidentialityError` carries
   `no_kem_key`, `key_mismatch`, `reply_not_opened` or `no_signed_state`.
   A provider's sealed stream refuses to seal past 2^32 frames
   (`ErrSealedFramesExhausted`); a caller's nonces are its seq.
@@ -54,7 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refusal named if any fresh advertisement of the provider names it, or,
   when the provider holds none, to the first key one names. A call that
   could not be kept confidential ends there, never moved to another
-  candidate.
+  candidate; a reseal whose lookup fails is `no_kem_key`; once a sealed CALL
+  has gone out, no later candidate is called in the clear.
 - `seal`: an opened ERROR's code and detail are bounded as a clear ERROR's
   (`MaxErrorCodeBytes`, `MaxErrorDetailBytes`).
 - cabi (ABI 1, new functions): `macula_pool_call_opts`,

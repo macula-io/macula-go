@@ -193,9 +193,10 @@ or an open to a provider states `SealTo` or `Clear`, never both, and one that
 states neither is refused `no_signed_state` before anything is sent, as
 macula's `call_seal/5` refuses it.
 
-Every answer to a sealed request is sealed, refusals included, so a station
-cannot read which code a provider answered: only its sealed length shows, as
-in macula. A caller of a
+Every answer a provider gives once it has opened a sealed request is sealed,
+its refusals included, so a station cannot read which code it answered: only
+the sealed length shows, as in macula. Only the refusals that come before
+the open (admission, `sealed_refused`, `sealed_required`) are clear. A caller of a
 sealed call takes a sealed answer only under the key id it sealed to, and from
 the clear only a relay's error, the closed set of refusals macula names before
 a request is opened, and `sealed_refused`; it takes anything else as
@@ -206,7 +207,9 @@ refusal named if any of the provider's advertisements names it (else
 said it holds none, to the first key its advertisements name. A stream
 reseals the same way, once, while it has sent nothing, keeping its deadline.
 A call that could not be kept confidential ends there: the pool never moves
-it to another candidate, which might be keyless.
+it to another candidate, which might be keyless. A reseal whose lookup fails
+is `no_kem_key`, and once a sealed CALL has gone out, no later candidate is
+called in the clear (`no_kem_key`).
 
 `KEMAdvertise` is off by default. Switch it on only once every station runs
 macula 12.11 or later, which stores and routes a keyed advertisement, and
