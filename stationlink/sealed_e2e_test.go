@@ -190,7 +190,22 @@ func TestASealedStreamResealsOnceWhenRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The application may read the stream's request while it reseals.
+	answered, reading := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(reading)
+		for {
+			select {
+			case <-answered:
+				return
+			default:
+				_ = stream.Request()
+			}
+		}
+	}()
 	event, err := recv(t, stream)
+	close(answered)
+	<-reading
 	if text, _ := event.Payload.AsText(); err != nil || text != "counted" {
 		t.Fatalf("the resealed stream: %+v, %v", event, err)
 	}
@@ -207,6 +222,36 @@ func TestASealedStreamResealsOnceWhenRefused(t *testing.T) {
 	if _, err := recv(t, refused); !errors.As(err, &streamErr) || streamErr.Code != "sealed_refused" ||
 		streamErr.Message != hex.EncodeToString(current[:]) {
 		t.Errorf("without a reseal: %v", err)
+	}
+}
+
+// A resealed stream keeps the deadline it was opened with, as macula's
+// reopened_client_stream/5 keeps it: resealing does not extend its life.
+func TestAResealedStreamKeepsItsDeadline(t *testing.T) {
+	w := newSealedWorld(t, profile.PQPure, "reseal deadline")
+	seen := make(chan uint64, 1)
+	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
+		Handler: func(_ context.Context, s *stationlink.Stream) error {
+			seen <- s.Request().Deadline
+			return s.Reply(cbor.Text("counted"))
+		}}})
+	stale := must[*seal.PrivateKey](t)(seal.GenerateKey(profile.PQPure)).PublicKey().Carried()
+	const deadline = 10 * time.Second
+	before := time.Now()
+	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-vault/count",
+		Target: w.provider.NodeID(), Mode: frame.ServerStream, Payload: cbor.Map(nil), SealTo: stale, Deadline: deadline,
+		Reseal: func(*[seal.KeyIDSize]byte) ([]byte, error) {
+			time.Sleep(1500 * time.Millisecond)
+			return w.key(), nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recv(t, stream); err != nil {
+		t.Fatal(err)
+	}
+	if got, latest := <-seen, uint64(before.Add(deadline+500*time.Millisecond).UnixMilli()); got > latest {
+		t.Errorf("the resealed open's deadline is %d ms past the first open's latest", got-latest)
 	}
 }
 
@@ -229,7 +274,7 @@ func TestASealedStreamOutlivesItsKey(t *testing.T) {
 			return s.Send(append([]byte("after "), body...))
 		}}})
 	clear, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-vault/long",
-		Target: w.provider.NodeID(), Mode: frame.Bidi, Payload: cbor.Map(nil)})
+		Target: w.provider.NodeID(), Mode: frame.Bidi, Payload: cbor.Map(nil), Clear: true})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -32,8 +32,12 @@ type StreamCall struct {
 	Proofs    [][]byte
 	// SealTo is the provider's KEM key as carried, from its verified
 	// advertisement: the open's payload is sealed to it, and every later
-	// frame under the stream's keys. nil opens in the clear.
+	// frame under the stream's keys.
 	SealTo []byte
+	// Clear opens the stream in the clear, the application's own decision.
+	// An open states SealTo or Clear, never both; one that states neither is
+	// refused no_signed_state.
+	Clear bool
 	// Reseal, when set, lets a sealed stream refused sealed_refused before
 	// it has sent anything seal once more: it is given the key id the
 	// provider named (nil for none) and returns the key to seal to, and the
@@ -46,7 +50,14 @@ type StreamCall struct {
 // writes the signed STREAM_OPEN. A stream it opens but cannot write the open
 // on is released before the error returns.
 func (l *Link) OpenStream(ctx context.Context, c StreamCall) (*Stream, error) {
-	opened, err := l.openOn(ctx, c, c.SealTo)
+	if err := l.stated(c.Target, c.SealTo, c.Clear); err != nil {
+		return nil, err
+	}
+	deadline := c.Deadline
+	if deadline <= 0 {
+		deadline = DefaultStreamDeadline
+	}
+	opened, err := l.openOn(ctx, c, c.SealTo, uint64(time.Now().Add(deadline).UnixMilli()))
 	if err != nil {
 		return nil, err
 	}
@@ -71,21 +82,17 @@ type openedStream struct {
 	sealing *streamSeal
 }
 
-// openOn signs c as a STREAM_OPEN under a fresh request id, sealed to sealTo
-// when it is set, and writes it on a new QUIC stream, released again when the
-// write fails.
-func (l *Link) openOn(ctx context.Context, c StreamCall, sealTo []byte) (openedStream, error) {
-	deadline := c.Deadline
-	if deadline <= 0 {
-		deadline = DefaultStreamDeadline
-	}
+// openOn signs c as a STREAM_OPEN under a fresh request id with deadline (Unix
+// ms), sealed to sealTo when it is set, and writes it on a new QUIC stream,
+// released again when the write fails.
+func (l *Link) openOn(ctx context.Context, c StreamCall, sealTo []byte, deadline uint64) (openedStream, error) {
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		return openedStream{}, err
 	}
 	mode := c.Mode
 	spec := frame.RequestSpec{RequestID: id, Realm: c.Realm, Procedure: c.Procedure, Target: c.Target,
-		Deadline: uint64(time.Now().Add(deadline).UnixMilli()), Payload: c.Payload, Mode: &mode, Token: c.Token, Proofs: c.Proofs}
+		Deadline: deadline, Payload: c.Payload, Mode: &mode, Token: c.Token, Proofs: c.Proofs}
 	var sealing *streamSeal
 	if sealTo != nil {
 		keys, err := l.sealRequest(&spec, seal.FrameStreamOpen, sealTo)

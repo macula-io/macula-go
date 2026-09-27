@@ -52,8 +52,13 @@ type Call struct {
 	// SealTo is the provider's KEM key as carried, from its verified
 	// advertisement: the call's payload is sealed to it, and only a sealed
 	// answer, or from the clear a relay error, a refusal from the closed set
-	// or sealed_refused, answers it. nil sends in the clear.
+	// or sealed_refused, answers it.
 	SealTo []byte
+	// Clear sends the call in the clear, the application's own decision.
+	// A call to a provider states SealTo or Clear, never both; one that
+	// states neither is refused no_signed_state. A call to the connected
+	// station needs neither.
+	Clear bool
 }
 
 // ProviderError is a provider's ERROR for the call, verified for its request.
@@ -99,6 +104,9 @@ type callOutcome struct {
 // reply that does not verify is counted in Unrouted as unverified_reply and
 // ignored, and the call keeps waiting, as macula's link does.
 func (l *Link) Call(ctx context.Context, c Call) (cbor.Value, error) {
+	if err := l.stated(c.Target, c.SealTo, c.Clear); err != nil {
+		return cbor.Value{}, err
+	}
 	timeout := min(max(c.Timeout, 0), MaxCallTimeout)
 	if timeout == 0 {
 		timeout = DefaultCallTimeout

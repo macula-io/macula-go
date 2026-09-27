@@ -117,6 +117,11 @@ func (ss *streamSeal) sealed(fields frame.StreamFields, seq uint64) (frame.Strea
 // code and message opened; one that does not open, or opens to nothing its
 // type holds, is an error.
 func (ss *streamSeal) opened(v frame.VerifiedStreamFrame) (frame.VerifiedStreamFrame, error) {
+	if v.Sealed.KeyID != ss.keyID {
+		// As macula_stream's opened/5: a frame naming another key than the
+		// stream's is not opened.
+		return v, errNotOpened
+	}
 	var nonce [seal.NonceSize]byte
 	if ss.caller {
 		if len(v.Sealed.Nonce) != seal.NonceSize {
@@ -177,7 +182,12 @@ func (s *Stream) resealed(refused *StreamError) bool {
 		return true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultCallTimeout)
-	opened, err := s.link.openOn(ctx, *c, key)
+	// The reopen keeps the first open's deadline, as macula's
+	// reopened_client_stream/5 does: resealing does not extend the stream.
+	s.mu.Lock()
+	deadline := s.open.Deadline
+	s.mu.Unlock()
+	opened, err := s.link.openOn(ctx, *c, key, deadline)
 	cancel()
 	if err != nil {
 		s.end(err)

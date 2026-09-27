@@ -98,14 +98,14 @@ func (w gatedWorld) call(t *testing.T, tok []byte, proofs ...[]byte) error {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	_, err := w.caller.Call(ctx, stationlink.Call{Realm: w.realm.ID, Procedure: gatedCall, Target: w.provider.NodeID(),
-		Payload: cbor.Text("hello"), Timeout: 5 * time.Second, Token: tok, Proofs: proofs})
+		Payload: cbor.Text("hello"), Timeout: 5 * time.Second, Token: tok, Proofs: proofs, Clear: true})
 	return err
 }
 
 func (w gatedWorld) open(t *testing.T, tok []byte, proofs ...[]byte) error {
 	t.Helper()
 	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: gatedStream,
-		Target: w.provider.NodeID(), Mode: frame.ServerStream, Payload: cbor.Map(nil), Token: tok, Proofs: proofs})
+		Target: w.provider.NodeID(), Mode: frame.ServerStream, Payload: cbor.Map(nil), Token: tok, Proofs: proofs, Clear: true})
 	if err != nil {
 		t.Fatalf("OpenStream: %v", err)
 	}
@@ -292,11 +292,11 @@ func TestAHandlerNeverSeesASenderWrittenCaller(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	if _, err := w.caller.Call(ctx, stationlink.Call{Realm: w.realm.ID, Procedure: gatedCall, Target: w.provider.NodeID(),
-		Payload: forged, Timeout: 5 * time.Second}); err != nil {
+		Payload: forged, Timeout: 5 * time.Second, Clear: true}); err != nil {
 		t.Fatalf("Call: %v", err)
 	}
 	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: gatedStream,
-		Target: w.provider.NodeID(), Mode: frame.ServerStream, Payload: forged})
+		Target: w.provider.NodeID(), Mode: frame.ServerStream, Payload: forged, Clear: true})
 	if err != nil {
 		t.Fatalf("OpenStream: %v", err)
 	}

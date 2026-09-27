@@ -188,16 +188,25 @@ never falls back to the clear:
 
 As in macula's design (§8.1), only an advertisement naming no key is called
 in the clear from a pool. A clear call to a keyed provider is an explicit
-target's decision: a `stationlink.Call` without `SealTo`.
+target's decision: a `stationlink.Call` or `StreamCall` with `Clear`. A call
+or an open to a provider states `SealTo` or `Clear`, never both, and one that
+states neither is refused `no_signed_state` before anything is sent, as
+macula's `call_seal/5` refuses it.
 
-Every answer to a sealed request is sealed, refusals included, so an unknown
-procedure and an unauthorized caller look alike on the wire. A caller of a
-sealed call takes from the clear only a relay's error, the closed set of
-refusals macula names before a request is opened, and `sealed_refused`; it
-takes anything else as `stationlink.ErrClearAnswerToSealed`. After
-`sealed_refused` the pool looks the provider up once more and reseals only
-to exactly the key the refusal named (else `key_mismatch` or `no_kem_key`).
-A stream reseals the same way, once, while it has sent nothing.
+Every answer to a sealed request is sealed, refusals included, so a station
+cannot read which code a provider answered: only its sealed length shows, as
+in macula. A caller of a
+sealed call takes a sealed answer only under the key id it sealed to, and from
+the clear only a relay's error, the closed set of refusals macula names before
+a request is opened, and `sealed_refused`; it takes anything else as
+`stationlink.ErrClearAnswerToSealed`. After `sealed_refused` the pool looks
+the provider up once more and reseals, once, as macula does: to the key the
+refusal named if any of the provider's advertisements names it (else
+`key_mismatch`, or `no_kem_key` when none names a key), or, when the provider
+said it holds none, to the first key its advertisements name. A stream
+reseals the same way, once, while it has sent nothing, keeping its deadline.
+A call that could not be kept confidential ends there: the pool never moves
+it to another candidate, which might be keyless.
 
 `KEMAdvertise` is off by default. Switch it on only once every station runs
 macula 12.11 or later, which stores and routes a keyed advertisement, and

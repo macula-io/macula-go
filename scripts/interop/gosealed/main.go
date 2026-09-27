@@ -155,7 +155,7 @@ func call(ctx context.Context, node *pool.Pool, seed pool.Seed, p profile.Profil
 	}
 	defer link.Close("done")
 	_, err = link.Call(ctx, stationlink.Call{Realm: realm, Procedure: vault, Target: provider, Payload: cbor.Map(nil),
-		Timeout: 10 * time.Second})
+		Timeout: 10 * time.Second, Clear: true})
 	fmt.Printf("clear call: %v\n", err)
 	var refused *stationlink.ProviderError
 	if !errors.As(err, &refused) || refused.Code != "sealed_required" {

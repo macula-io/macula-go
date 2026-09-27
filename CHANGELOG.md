@@ -30,22 +30,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Sealed` on the stream frames.
 - `stationlink`: `Config.Keyring` and `Config.KEMAdvertise`;
   `Offer.Confidential` (`ConfidentialPreferred`, `ConfidentialRequired`,
-  `ConfidentialOff`) and `Offer.KeyedSince`; `Call.SealTo`,
-  `StreamCall.SealTo` and `StreamCall.Reseal`; `Request.Sealed`. A provider
+  `ConfidentialOff`) and `Offer.KeyedSince`; `Call.SealTo`, `Call.Clear`,
+  `StreamCall.SealTo`, `StreamCall.Clear` and `StreamCall.Reseal`;
+  `Request.Sealed`. A call or an open to a provider states `SealTo` or
+  `Clear`: one stating neither is refused `no_signed_state` and one stating
+  both `ErrSealedAndClear`, before anything is sent. A provider
   opens a sealed CALL or STREAM_OPEN and seals every answer, refusals
   included, and refuses a request it cannot open `sealed_refused` and a clear
   one it does not take `sealed_required`. A caller takes only a sealed answer,
   or from the clear a relay's error, macula's closed set of early refusals
   (`IsClearRefusal`) and `sealed_refused` (`SealedRefusedError`); anything
-  else is `ErrClearAnswerToSealed`. `ConfidentialityError` carries
+  else is `ErrClearAnswerToSealed`. A sealed answer or stream frame naming
+  another key id than the request's is not opened. A resealed stream keeps
+  its first open's deadline. `ConfidentialityError` carries
   `no_kem_key`, `key_mismatch`, `reply_not_opened` or `no_signed_state`.
-  A sealed stream refuses to seal past 2^32 frames
-  (`ErrSealedFramesExhausted`).
+  A provider's sealed stream refuses to seal past 2^32 frames
+  (`ErrSealedFramesExhausted`); a caller's nonces are its seq.
 - `pool`: `Opts.KEMAdvertise` gives the node a keyring and names its key in
   the advertisements of procedures served confidentially; `Offer.Confidential`,
   `Call.Confidential` and `StreamCall.Confidential`. A call or a stream seals
   to the key the provider's verified advertisement names, and after
-  `sealed_refused` reseals once, only to exactly the key the refusal named.
+  `sealed_refused` reseals once, as macula's `resealed/7`: to the key the
+  refusal named if any fresh advertisement of the provider names it, or,
+  when the provider holds none, to the first key one names. A call that
+  could not be kept confidential ends there, never moved to another
+  candidate.
+- `seal`: an opened ERROR's code and detail are bounded as a clear ERROR's
+  (`MaxErrorCodeBytes`, `MaxErrorDetailBytes`).
 - cabi (ABI 1, new functions): `macula_pool_call_opts`,
   `macula_pool_open_stream_opts`, `macula_pool_serve_opts` and
   `macula_pool_serve_stream_opts`, taking their options as JSON (with
@@ -59,8 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pool.Call` and `pool.OpenStream` refuse `ConfidentialOff` with
   `ErrConfidentialOff`, as macula's design §8.1 has it: only an
   advertisement naming no key is called in the clear, and a clear call to a
-  keyed provider is an explicit target's (`stationlink.Call` without
-  `SealTo`). The cabi's calls and opens refuse `off` as `invalid_argument`.
+  keyed provider is an explicit target's (`stationlink.Call` with
+  `Clear`). The cabi's calls and opens refuse `off` as `invalid_argument`.
 - Node-served content is advertised with no KEM key and served in the clear,
   under `KEMAdvertise` too.
 

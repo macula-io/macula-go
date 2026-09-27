@@ -262,7 +262,14 @@ Decisions:
 - Design §8.1 (2026-09-27): only an advertisement naming no key is called in
   the clear. `pool.Call` and `OpenStream` take preferred and required, and
   refuse `off` (`ErrConfidentialOff`; cabi `invalid_argument`). The clear
-  path to a keyed provider is `stationlink` without `SealTo`.
+  path to a keyed provider is `stationlink` with `Clear`.
+- Fable round 1 (2026-09-27), both required changes taken: every
+  confidentiality failure ends a pool call (macula's `failure_scope/1`), and
+  a stationlink call to a provider states `SealTo` or `Clear`
+  (`no_signed_state`, as `call_seal/5`). Aligned with macula as well: reseal
+  to the first key when the provider holds none (`resealed/7`), a reply's
+  key id bound on open, a reseal keeps its deadline, an opened ERROR's text
+  bounded.
 
 Open:
 

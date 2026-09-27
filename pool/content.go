@@ -527,7 +527,7 @@ func fetchOne(ctx context.Context, link *stationlink.Link, realm [32]byte, s sha
 	defer cancel()
 	stream, err := link.OpenStream(ctx, stationlink.StreamCall{Realm: realm, Procedure: s.procedure, Target: s.node,
 		Mode: frame.ServerStream, Deadline: timeout, Payload: cbor.Map([]cbor.MapEntry{
-			{Key: cbor.Text("mcid"), Val: cbor.Bytes(mcid[:])}, {Key: cbor.Text("want"), Val: cbor.Text(want)}})})
+			{Key: cbor.Text("mcid"), Val: cbor.Bytes(mcid[:])}, {Key: cbor.Text("want"), Val: cbor.Text(want)}}), Clear: true})
 	if err != nil {
 		return "", cbor.Value{}, err
 	}

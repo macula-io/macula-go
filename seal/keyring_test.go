@@ -34,6 +34,9 @@ func TestAKeyringRotatesAndForgets(t *testing.T) {
 	if secondID == firstID {
 		t.Fatal("a key outlived its lifetime")
 	}
+	if ring.CurrentID() != secondID {
+		t.Fatal("CurrentID names the replaced key")
+	}
 	if _, held := ring.Find(firstID); !held {
 		t.Fatal("a replaced key stopped opening at once")
 	}

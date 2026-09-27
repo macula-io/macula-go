@@ -73,7 +73,7 @@ func (w streamWorld) serve(t *testing.T, mode frame.StreamMode, handler stationl
 func (w streamWorld) open(t *testing.T, mode frame.StreamMode, payload cbor.Value) *stationlink.Stream {
 	t.Helper()
 	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: streamProcedure,
-		Target: w.provider.NodeID(), Mode: mode, Payload: payload})
+		Target: w.provider.NodeID(), Mode: mode, Payload: payload, Clear: true})
 	if err != nil {
 		t.Fatalf("OpenStream: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestARefusedOpenIsReleased(t *testing.T) {
 		t.Errorf("another mode: %v", err)
 	}
 	unrouted, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-tube/nothing",
-		Target: w.provider.NodeID(), Mode: frame.ServerStream, Payload: cbor.Map(nil)})
+		Target: w.provider.NodeID(), Mode: frame.ServerStream, Payload: cbor.Map(nil), Clear: true})
 	if err != nil {
 		t.Fatalf("OpenStream: %v", err)
 	}

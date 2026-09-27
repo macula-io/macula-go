@@ -79,7 +79,7 @@ func TestARelayErrorComesBackFromTheStation(t *testing.T) {
 		return reply, err == nil
 	})
 	provider := [32]byte{7}
-	c := Call{Realm: [32]byte{3}, Procedure: "mcl-echo/echo", Target: provider, Payload: cbor.Map(nil), Timeout: 2 * time.Second}
+	c := Call{Realm: [32]byte{3}, Procedure: "mcl-echo/echo", Target: provider, Payload: cbor.Map(nil), Timeout: 2 * time.Second, Clear: true}
 	_, err := callWithin(t, link, c)
 	var relay *RelayError
 	if !errors.As(err, &relay) || relay.Code != "unknown_next_peer" || relay.ReportedBy != s.nodeID {

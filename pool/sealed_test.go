@@ -136,6 +136,24 @@ func TestContentStaysClearUnderKEMAdvertise(t *testing.T) {
 	}
 }
 
+// A call that could not be kept confidential ends there, whatever the reason:
+// the next candidate might be keyless, and a call sealed once is never sent
+// in the clear (macula 13's failure_scope/1: request, not candidate).
+func TestEveryConfidentialityFailureEndsTheCall(t *testing.T) {
+	for _, reason := range []string{stationlink.ReasonNoKEMKey, stationlink.ReasonKeyMismatch,
+		stationlink.ReasonReplyNotOpened, stationlink.ReasonNoSignedState} {
+		if !answeredConfidentially(&stationlink.ConfidentialityError{Reason: reason}) {
+			t.Errorf("%s moves the call to the next candidate", reason)
+		}
+	}
+	if !answeredConfidentially(&stationlink.SealedRefusedError{}) || !answeredConfidentially(stationlink.ErrClearAnswerToSealed) {
+		t.Error("a refused or clear answer to a sealed call moves it on")
+	}
+	if answeredConfidentially(stationlink.ErrCallTimeout) {
+		t.Error("a timeout counted as a confidentiality answer")
+	}
+}
+
 // After a sealed_refused, one fresh lookup decides: the provider's
 // advertisement must name exactly the key its refusal named.
 func TestAResealIsBoundToTheNamedKey(t *testing.T) {
@@ -167,8 +185,12 @@ func TestAResealIsBoundToTheNamedKey(t *testing.T) {
 		{"another key advertised", &currentID, []candidate{keyed(node, other)}, nil, stationlink.ReasonKeyMismatch},
 		{"no key advertised", &currentID, []candidate{keyed(node, nil)}, nil, stationlink.ReasonNoKEMKey},
 		{"no advertisement", &currentID, nil, nil, stationlink.ReasonNoKEMKey},
-		{"the provider holds none", nil, []candidate{keyed(node, current)}, nil, stationlink.ReasonNoKEMKey},
+		{"a stale advertisement before the named one", &currentID, []candidate{keyed(node, other), keyed(node, current)}, current, ""},
+		{"a keyless advertisement before the named one", &currentID, []candidate{keyed(node, nil), keyed(node, current)}, current, ""},
+		{"the provider holds none: its first key", nil, []candidate{keyed(node, nil), keyed(node, current)}, current, ""},
+		{"the provider holds none and names none", nil, []candidate{keyed(node, nil)}, nil, stationlink.ReasonNoKEMKey},
 		{"another provider's advertisement", &otherID, []candidate{keyed([32]byte{8}, other)}, nil, stationlink.ReasonNoKEMKey},
+		{"another provider's key, the provider holding none", nil, []candidate{keyed([32]byte{8}, other)}, nil, stationlink.ReasonNoKEMKey},
 	} {
 		got, err := resealKey(node, c.named, c.fresh)
 		var refused *stationlink.ConfidentialityError

@@ -164,8 +164,9 @@ const (
 	// signed by the provider and bound to its request, so it is the only
 	// answer the request gets: the call fails.
 	ReasonReplyNotOpened = "reply_not_opened"
-	// ReasonNoSignedState: an explicit target without a verified
-	// advertisement to seal from, nor a stated clear.
+	// ReasonNoSignedState: a call or an open to a provider that states
+	// neither a key to seal to (SealTo) nor the clear (Clear), as macula's
+	// call_seal/5 refuses it. Nothing is sent.
 	ReasonNoSignedState = "no_signed_state"
 )
 
@@ -204,6 +205,23 @@ func (e *SealedRefusedError) Error() string {
 // clear may give: not a relay error, not a refusal from the closed set, not
 // sealed_refused. It is refused, never taken as the answer.
 var ErrClearAnswerToSealed = errors.New("stationlink: a clear answer to a sealed request")
+
+// ErrSealedAndClear is a call or an open that states both a key to seal to
+// and the clear. Nothing is sent.
+var ErrSealedAndClear = errors.New("stationlink: a call both sealed and clear")
+
+// stated refuses a call or an open to a provider that does not say how it is
+// kept: sealed to sealTo, or clear by the application's own decision. A call
+// to the connected station (the zero target, or its node_id) is always clear.
+func (l *Link) stated(target [32]byte, sealTo []byte, clear bool) error {
+	switch {
+	case sealTo != nil && clear:
+		return ErrSealedAndClear
+	case sealTo == nil && !clear && target != [32]byte{} && target != l.station.NodeID:
+		return &ConfidentialityError{Reason: ReasonNoSignedState}
+	}
+	return nil
+}
 
 // refusedKey is the key id a sealed_refused's detail names, nil for none.
 func refusedKey(detail *string) *[seal.KeyIDSize]byte {
@@ -246,12 +264,18 @@ func (l *Link) sealRequest(spec *frame.RequestSpec, frameType string, sealTo []b
 	return s, nil
 }
 
-// sealedOutcome is what a verified provider reply means to a sealed call, as
-// macula's answer_of/2 reads it: a sealed answer opened, a clear sealed_refused
-// naming the provider's key, a clear refusal from the closed set, and nothing
-// else.
+// sealedOutcome is what a verified provider reply means to a sealed call: a
+// sealed answer under the request's key id opened, a clear sealed_refused
+// naming the provider's key, a clear refusal from the closed set, as macula's
+// answer_of/2 takes them. Any other clear answer fails the call at once
+// (ErrClearAnswerToSealed), where macula refuses the frame and lets the call
+// run to its deadline: neither takes it.
 func (s *callSeal) sealedOutcome(reply frame.VerifiedReply, requestHash [48]byte) callOutcome {
 	switch {
+	case reply.Sealed != nil && reply.Sealed.KeyID != s.keyID:
+		// As macula's open_reply/4: an answer naming another key than the
+		// request's is not opened.
+		return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
 	case reply.Sealed != nil:
 		plain, err := seal.Open(s.kRep, [seal.NonceSize]byte(reply.Sealed.Nonce),
 			seal.ReplyAAD(s.request, reply.FrameType, requestHash, reply.RespondedBy), reply.Sealed.Ct)

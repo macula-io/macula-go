@@ -488,8 +488,16 @@ func ErrorPlain(code, detail string) []byte {
 	return encode(cbor.Text(code), cbor.Text(detail))
 }
 
+// An opened ERROR's code and detail are bounded as a clear ERROR's are:
+// 64 and 256 bytes, as macula_frame's error_read/1 bounds them.
+const (
+	MaxErrorCodeBytes   = 64
+	MaxErrorDetailBytes = 256
+)
+
 // ErrNotAnErrorPlain is an opened ERROR plaintext that is not
-// cbor([code, detail]) with both text: the provider sealed something else.
+// cbor([code, detail]) with both text within their bounds: the provider
+// sealed something else.
 var ErrNotAnErrorPlain = errors.New("seal: an ERROR's plaintext is not cbor([code, detail])")
 
 // OpenErrorPlain reads a sealed ERROR's opened plaintext as its code and
@@ -505,7 +513,7 @@ func OpenErrorPlain(plain []byte) (code, detail string, err error) {
 	}
 	code, codeOK := items[0].AsText()
 	detail, detailOK := items[1].AsText()
-	if !codeOK || !detailOK {
+	if !codeOK || !detailOK || len(code) > MaxErrorCodeBytes || len(detail) > MaxErrorDetailBytes {
 		return "", "", ErrNotAnErrorPlain
 	}
 	return code, detail, nil

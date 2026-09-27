@@ -241,9 +241,12 @@ callers seal to that key; stations route what they cannot read.
   does not open), `clear_answer_to_sealed` (a clear answer that nothing clear
   may give), or `kem_advertise_disabled`.
 - A provider that cannot open a request answers `sealed_refused`, naming the key
-  it holds now; the pool looks the provider's advertisement up once more and
-  seals again only to exactly that key. A second refusal is a `provider_error`
-  of code `sealed_refused`, its `detail` the key id named.
+  it holds now or that it holds none; the pool looks the provider's
+  advertisements up once more and seals again, once: only to exactly the key
+  named, or to the first key they name when it holds none. A second refusal is
+  a `provider_error` of code `sealed_refused`, its `detail` the key id named.
+- A call or an open that could not be kept confidential ends with that
+  error: it is never tried at another provider, which might be keyless.
 - What stays visible: a request's `token` and `proofs`, sizes, timing and
   routing fields. Content (`macula_pool_share_content`) is served and fetched in
   the clear, as it is public by design.

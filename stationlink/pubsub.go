@@ -178,6 +178,8 @@ func (l *Link) evented(v cbor.Value) {
 	now := time.Now().UnixMilli()
 	publication, err := frame.VerifyPublication(v, l.profile, now)
 	if err != nil {
+		// A sealed EVENT lands here too: a publication's table has no
+		// `sealed`, so it is counted and not delivered, as macula 13 does.
 		l.count("event_unverified")
 		return
 	}

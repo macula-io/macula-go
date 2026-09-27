@@ -46,7 +46,7 @@ func TestTheStationAnswersAsAStationDoes(t *testing.T) {
 	if _, err := link.Call(ctx, stationlink.Call{Procedure: "_macula.ping", Payload: cbor.Map(nil)}); !errors.As(err, &relay) || relay.Code != "unknown_next_peer" {
 		t.Errorf("ping: %v", err)
 	}
-	if _, err := link.Call(ctx, stationlink.Call{Realm: [32]byte{1}, Procedure: "org/nothing", Target: [32]byte{2}, Payload: cbor.Map(nil)}); !errors.As(err, &relay) || relay.Code != "unknown_next_peer" {
+	if _, err := link.Call(ctx, stationlink.Call{Realm: [32]byte{1}, Procedure: "org/nothing", Target: [32]byte{2}, Payload: cbor.Map(nil), Clear: true}); !errors.As(err, &relay) || relay.Code != "unknown_next_peer" {
 		t.Errorf("an unadvertised procedure: %v", err)
 	}
 	sub, err := link.Subscribe([32]byte{1}, "org/topic")

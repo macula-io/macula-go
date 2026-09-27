@@ -53,8 +53,15 @@ func sealedAnswerer(t *testing.T, s *testStation, key *seal.PrivateKey,
 func sealedReplyWith(t *testing.T, s *testStation, r frame.VerifiedRequest, frameType string, plain []byte, kRep [32]byte,
 	request seal.Request) cbor.Value {
 	t.Helper()
+	return sealedReplyNaming(t, s, r, r.Sealed.KeyID, frameType, plain, kRep, request)
+}
+
+// sealedReplyNaming is sealedReplyWith naming keyID as the key it answers.
+func sealedReplyNaming(t *testing.T, s *testStation, r frame.VerifiedRequest, keyID [seal.KeyIDSize]byte, frameType string,
+	plain []byte, kRep [32]byte, request seal.Request) cbor.Value {
+	t.Helper()
 	nonce := seal.RandomNonce()
-	sealed := frame.Sealed{KeyID: r.Sealed.KeyID, Nonce: nonce[:],
+	sealed := frame.Sealed{KeyID: keyID, Nonce: nonce[:],
 		Ct: seal.Seal(kRep, nonce, seal.ReplyAAD(request, frameType, r.RequestHash, s.nodeID), plain)}
 	var reply cbor.Value
 	var err error
@@ -103,6 +110,11 @@ func TestASealedCallTakesOnlyWhatMayAnswerIt(t *testing.T) {
 				}},
 				{"a sealed result that does not open", func(s *testStation, r frame.VerifiedRequest, plain cbor.Value, _ [32]byte, req seal.Request) cbor.Value {
 					return sealedReplyWith(t, s, r, "result", cbor.Encode(plain), [32]byte{9}, req)
+				}, wantConfidentiality(ReasonReplyNotOpened)},
+				// As macula's open_reply/4: a reply naming another key than
+				// the request's does not open, though its ciphertext would.
+				{"a sealed result naming another key", func(s *testStation, r frame.VerifiedRequest, plain cbor.Value, kRep [32]byte, req seal.Request) cbor.Value {
+					return sealedReplyNaming(t, s, r, [seal.KeyIDSize]byte{1}, "result", cbor.Encode(plain), kRep, req)
 				}, wantConfidentiality(ReasonReplyNotOpened)},
 				{"a clear result", func(s *testStation, r frame.VerifiedRequest, _ cbor.Value, _ [32]byte, _ seal.Request) cbor.Value {
 					return must[cbor.Value](t)(frame.SignResult(r, cbor.Text("in the clear"), nil, s.key))

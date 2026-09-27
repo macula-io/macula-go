@@ -213,7 +213,7 @@ func (p *Pool) callAt(ctx context.Context, cand candidate, c Call) (cbor.Value, 
 		return cbor.Value{}, err
 	}
 	call := stationlink.Call{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
-		Payload: c.Payload, Timeout: time.Until(deadlineOf(ctx)), Token: c.Token, Proofs: c.Proofs, SealTo: sealTo}
+		Payload: c.Payload, Timeout: time.Until(deadlineOf(ctx)), Token: c.Token, Proofs: c.Proofs, SealTo: sealTo, Clear: sealTo == nil}
 	result, err := link.Call(ctx, call)
 	var refused *stationlink.SealedRefusedError
 	if !errors.As(err, &refused) {
@@ -256,45 +256,43 @@ func (p *Pool) resealed(ctx context.Context, key resolvedKey, node [32]byte, nam
 	return resealKey(node, named, fresh)
 }
 
-// resealKey is the key a call refused sealed_refused is sealed to again: the
-// key node's freshly resolved advertisement names, only when it is the key the
-// refusal named. Another key is key_mismatch, naming both; no key named, no
-// advertisement of node, or one naming none is no_kem_key. It never gives the
-// clear.
+// resealKey is the key a call refused sealed_refused is sealed to again, from
+// node's freshly resolved advertisements, as macula's resealed/7 picks it:
+// when the refusal named a key, that key if any advertisement names it (the
+// DHT may still serve the one before a rotation), else key_mismatch naming
+// the first key one names, else no_kem_key; when the provider holds none, the
+// first key one names, else no_kem_key. It never gives the clear.
 func resealKey(node [32]byte, named *[seal.KeyIDSize]byte, fresh []candidate) ([]byte, error) {
-	if named == nil {
-		return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonNoKEMKey}
-	}
-	for _, c := range fresh {
-		if c.Node != node {
-			continue
-		}
+	var first *candidate
+	for i, c := range fresh {
 		switch {
-		case c.kemKey == nil:
-			return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonNoKEMKey}
-		case c.kemKeyID != *named:
-			found := c.kemKeyID
-			return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonKeyMismatch, Named: named, Found: &found}
+		case c.Node != node || c.kemKey == nil:
+			continue
+		case named != nil && c.kemKeyID == *named:
+			return c.kemKey, nil
+		case first == nil:
+			first = &fresh[i]
 		}
-		return c.kemKey, nil
 	}
-	return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonNoKEMKey}
+	switch {
+	case first == nil:
+		return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonNoKEMKey}
+	case named != nil:
+		found := first.kemKeyID
+		return nil, &stationlink.ConfidentialityError{Reason: stationlink.ReasonKeyMismatch, Named: named, Found: &found}
+	}
+	return first.kemKey, nil
 }
 
 // answeredConfidentially reports whether err is a provider's answer, or a
 // confidentiality failure, that ends a call rather than moving it to the next
-// candidate: every one but no_kem_key, which says only that this candidate
-// cannot be sealed to.
+// candidate: every one, as macula's failure_scope/1 scopes them to the
+// request. The next candidate might be keyless, and a call sealed once is
+// never sent in the clear.
 func answeredConfidentially(err error) bool {
 	var confidentiality *stationlink.ConfidentialityError
 	var refused *stationlink.SealedRefusedError
-	switch {
-	case errors.As(err, &confidentiality):
-		return confidentiality.Reason != stationlink.ReasonNoKEMKey
-	case errors.As(err, &refused), errors.Is(err, stationlink.ErrClearAnswerToSealed):
-		return true
-	}
-	return false
+	return errors.As(err, &confidentiality) || errors.As(err, &refused) || errors.Is(err, stationlink.ErrClearAnswerToSealed)
 }
 
 // candidateShare is one candidate's part of what is left of ctx's deadline
@@ -525,7 +523,7 @@ func (p *Pool) openAt(ctx context.Context, cand candidate, c StreamCall) (*stati
 		return nil, err
 	}
 	call := stationlink.StreamCall{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
-		Mode: c.Mode, Payload: c.Payload, Deadline: c.Deadline, Token: c.Token, Proofs: c.Proofs, SealTo: sealTo}
+		Mode: c.Mode, Payload: c.Payload, Deadline: c.Deadline, Token: c.Token, Proofs: c.Proofs, SealTo: sealTo, Clear: sealTo == nil}
 	if sealTo != nil {
 		// Refused sealed_refused before it has sent anything, the stream
 		// reseals once to the key a fresh lookup confirms (amendment A1).

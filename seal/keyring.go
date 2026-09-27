@@ -25,10 +25,11 @@ type Keyring struct {
 	profile profile.Profile
 	now     func() time.Time
 
-	mu      sync.Mutex
-	current *PrivateKey
-	since   time.Time
-	retired []retiredKey
+	mu        sync.Mutex
+	current   *PrivateKey
+	currentID [KeyIDSize]byte
+	since     time.Time
+	retired   []retiredKey
 }
 
 type retiredKey struct {
@@ -44,7 +45,7 @@ func NewKeyring(p profile.Profile, now func() time.Time) (*Keyring, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Keyring{profile: p, now: now, current: key, since: now()}, nil
+	return &Keyring{profile: p, now: now, current: key, currentID: KeyID(key.PublicKey().Carried()), since: now()}, nil
 }
 
 // Profile is the profile of every key the keyring holds.
@@ -66,7 +67,7 @@ func (r *Keyring) Find(id [KeyIDSize]byte) (*PrivateKey, bool) {
 	defer r.mu.Unlock()
 	now := r.now()
 	r.rotate(now)
-	if KeyID(r.current.PublicKey().Carried()) == id {
+	if r.currentID == id {
 		return r.current, true
 	}
 	for _, old := range r.retired {
@@ -79,7 +80,10 @@ func (r *Keyring) Find(id [KeyIDSize]byte) (*PrivateKey, bool) {
 
 // CurrentID is the id of the current key, which a sealed_refused names.
 func (r *Keyring) CurrentID() [KeyIDSize]byte {
-	return KeyID(r.Current().PublicKey().Carried())
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rotate(r.now())
+	return r.currentID
 }
 
 // rotate replaces the current key once it has lived KeyLifetime, keeping it
@@ -101,6 +105,6 @@ func (r *Keyring) rotate(now time.Time) {
 		// does not fail: keep the current key rather than hold none.
 		return
 	}
-	r.retired = append(r.retired, retiredKey{key: r.current, id: KeyID(r.current.PublicKey().Carried()), until: now.Add(RetiredKeyKept)})
-	r.current, r.since = next, now
+	r.retired = append(r.retired, retiredKey{key: r.current, id: r.currentID, until: now.Add(RetiredKeyKept)})
+	r.current, r.currentID, r.since = next, KeyID(next.PublicKey().Carried()), now
 }

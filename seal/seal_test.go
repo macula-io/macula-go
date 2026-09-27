@@ -5,6 +5,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/macula-io/macula-go/profile"
@@ -163,5 +164,23 @@ func TestStreamAADBindsTheDirection(t *testing.T) {
 	var requestID [16]byte
 	if bytes.Equal(StreamAAD(FrameStreamData, requestID, 0, CallerToProvider), StreamAAD(FrameStreamData, requestID, 0, ProviderToCaller)) {
 		t.Fatal("both directions have the same AAD")
+	}
+}
+
+// An opened ERROR's code and detail are bounded as a clear ERROR's are, as
+// macula_frame's error_read/1 bounds them: 64 bytes of code, 256 of detail.
+func TestOpenErrorPlainBoundsItsText(t *testing.T) {
+	for _, c := range []struct {
+		code, detail string
+		ok           bool
+	}{
+		{strings.Repeat("c", 64), strings.Repeat("d", 256), true},
+		{strings.Repeat("c", 65), "", false},
+		{"handler_error", strings.Repeat("d", 257), false},
+	} {
+		_, _, err := OpenErrorPlain(ErrorPlain(c.code, c.detail))
+		if (err == nil) != c.ok || (err != nil && !errors.Is(err, ErrNotAnErrorPlain)) {
+			t.Errorf("code of %d bytes, detail of %d: %v", len(c.code), len(c.detail), err)
+		}
 	}
 }

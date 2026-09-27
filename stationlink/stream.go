@@ -129,10 +129,13 @@ func newStream(link *Link, qs *quic.Stream, open frame.VerifiedRequest, caller b
 // payload. On a served stream the payload has no "caller" its sender wrote
 // into it, as a CALL's handler sees none: who called is Caller alone.
 func (s *Stream) Request() frame.VerifiedRequest {
-	if s.caller {
-		return s.open
-	}
+	// A caller's open is replaced when the stream reseals.
+	s.mu.Lock()
 	open := s.open
+	s.mu.Unlock()
+	if s.caller {
+		return open
+	}
 	if s.sealing != nil {
 		open.Payload = s.plain
 	}
