@@ -158,7 +158,10 @@ char *macula_pool_call_with(macula_handle pool, const uint8_t realm[32], const c
  * It is sealed whenever the provider's advertisement names a KEM key; "off" is
  * refused (invalid_argument): only an advertisement naming no key is called in
  * the clear. A call that cannot be kept confidential fails with the kind
- * "confidentiality". Since macula-go v0.18.0. */
+ * "confidentiality". Since macula-go v0.18.0. "report": 1 (0 is the default)
+ * asks for the call's seal report: the reply is then {"result": <the result>,
+ * "sealed": 0|1, "provider": "<node_id hex>", "seal_key_id": "<16 hex>"},
+ * "seal_key_id" only when sealed. Since macula-go v0.19.0. */
 char *macula_pool_call_opts(macula_handle pool, const uint8_t realm[32], const char *procedure, const char *payload_json,
                             const char *options_json, int64_t timeout_ms, macula_handle cancel, char **err_out);
 /* [{"node","station"}], freshest first. */
@@ -236,6 +239,13 @@ macula_handle macula_pool_open_stream_opts(macula_handle pool, const uint8_t rea
                                            int64_t deadline_ms, int64_t timeout_ms, macula_handle cancel,
                                            char **err_out);
 char *macula_stream_request(macula_handle stream, char **err_out);
+/* A caller stream's seal report, {"sealed": 0|1, "provider": "<node_id hex>",
+ * "seal_key_id": "<16 hex>"} ("seal_key_id" only when sealed), once it has
+ * settled on the provider's first data or reply opened under the stream's key
+ * (on a clear stream, its first data, reply or end). Before that, and on a
+ * stream that ended first, it fails with the kind "not_settled"; on a served
+ * stream with "not_a_caller". Since macula-go v0.19.0. */
+char *macula_stream_report(macula_handle stream, char **err_out);
 void macula_stream_send_bytes(macula_handle stream, const uint8_t *data, size_t data_len, char **err_out);
 void macula_stream_send_json(macula_handle stream, const char *value_json, char **err_out);
 void macula_stream_close_send(macula_handle stream, char **err_out);

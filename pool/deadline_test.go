@@ -73,7 +73,7 @@ func TestNothingIsSentPastTheCallersDeadline(t *testing.T) {
 		t.Fatal("the lagging context must not be done")
 	}
 	for name, past := range map[string]context.Context{"lagging": lag, "done": done} {
-		if _, err := caller.callAt(past, link, calls[0], Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("late")}, nil); !errors.Is(err, context.DeadlineExceeded) {
+		if _, _, err := caller.callAt(past, link, calls[0], Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("late")}, nil); !errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("%s callAt: %v, want the caller's deadline", name, err)
 		}
 		if _, err := caller.openAt(past, link, streams[0], StreamCall{Realm: realm.ID, Procedure: streamProcedure, Mode: frame.ServerStream, Payload: cbor.Map(nil)}, nil); !errors.Is(err, context.DeadlineExceeded) {

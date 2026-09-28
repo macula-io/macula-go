@@ -118,6 +118,9 @@ type Stream struct {
 	err       error
 	done      chan struct{}
 	endOnce   sync.Once
+
+	// settled is whether a caller's seal report has settled (Report).
+	settled bool
 }
 
 func newStream(link *Link, qs *quic.Stream, open frame.VerifiedRequest, caller bool) *Stream {
@@ -374,6 +377,11 @@ func (s *Stream) received(payload []byte, state frame.StreamState) (frame.Stream
 			s.fail("malformed_frame", err)
 		}
 		return state, true
+	}
+	if s.caller {
+		// A frame unsealed returned has opened under the stream's key, or is
+		// one a clear stream takes: the report's settle point (Report).
+		s.settleOn(verified.FrameType)
 	}
 	switch verified.FrameType {
 	case "stream_error":

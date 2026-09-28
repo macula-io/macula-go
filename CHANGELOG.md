@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-28
+
+### Added
+
+- The caller's seal report (macula's `plans/DESIGN_E2E_SEAL_REPORT.md`), the
+  same three fields as macula 13.1.0's: whether the exchange behind a result
+  was sealed, and to which key. It states that sealing ran on that exchange,
+  nothing more.
+  - `stationlink.Report` (`Sealed` 0 or 1, `Provider`, `SealKeyID`),
+    `stationlink.ErrNotSettled` and `stationlink.ErrNotACaller`.
+  - `pool.CallReport`: `Call` with the report. `Sealed` 1 names the key the
+    request that produced the result was sealed to, which is the key its answer
+    opened under; after a reseal, the reseal's key. A clear call reports 0 and
+    no key. An error comes with no report.
+  - `stationlink.Stream.Report`: settles on the provider's first STREAM_DATA or
+    STREAM_REPLY opened under the stream's key, or on a clear stream its first
+    STREAM_DATA, STREAM_REPLY or STREAM_END; a sealed stream's STREAM_END
+    travels clear and settles nothing, and no error settles a stream. Before it
+    settles, and on a stream that ended first, `ErrNotSettled`; on a served
+    stream, `ErrNotACaller`.
+  - C ABI (still ABI 1, additive): `"report": 1` in `macula_pool_call_opts`
+    replies `{"result", "sealed", "provider", "seal_key_id"}`;
+    `macula_stream_report`; the error kinds `not_settled` and `not_a_caller`.
+    `"report"` on `macula_pool_open_stream_opts` is `invalid_argument`.
+
 ## [0.18.2] - 2026-09-28
 
 ### Fixed

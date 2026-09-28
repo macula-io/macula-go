@@ -92,12 +92,24 @@ type resolvedKey struct {
 // (macula's call_work and failure_scope/1). A candidate that answered is
 // remembered until its advertisement expires.
 func (p *Pool) Call(ctx context.Context, c Call) (cbor.Value, error) {
+	result, _, err := p.CallReport(ctx, c)
+	return result, err
+}
+
+// CallReport is Call, returning with a result the call's seal report (macula's
+// DESIGN_E2E_SEAL_REPORT): Sealed 1 with the id of the key the request that
+// produced the result was sealed to, which is the key its answer opened under,
+// or Sealed 0 and no key for a clear call; Provider is the node the call was
+// addressed to. After a sealed_refused and a reseal it names the reseal's key,
+// never the first. An error comes with no report (the zero Report). It states
+// that sealing ran on this exchange, nothing more.
+func (p *Pool) CallReport(ctx context.Context, c Call) (cbor.Value, stationlink.Report, error) {
 	if c.Confidential == stationlink.ConfidentialOff {
-		return cbor.Value{}, ErrConfidentialOff
+		return cbor.Value{}, stationlink.Report{}, ErrConfidentialOff
 	}
 	realmKey, err := p.realmKeyFor(c.Realm, c.Procedure)
 	if err != nil {
-		return cbor.Value{}, err
+		return cbor.Value{}, stationlink.Report{}, err
 	}
 	timeout := c.Timeout
 	if timeout <= 0 {
@@ -108,22 +120,22 @@ func (p *Pool) Call(ctx context.Context, c Call) (cbor.Value, error) {
 	key := resolvedKey{c.Realm, c.Procedure, c.Provider}
 	candidates, err := p.candidates(ctx, key, realmKey)
 	if err != nil {
-		return cbor.Value{}, err
+		return cbor.Value{}, stationlink.Report{}, err
 	}
 	var errs []error
 	for i, cand := range candidates {
 		sealTo, link, err := p.reach(ctx, cand, c.Confidential, len(candidates)-i)
 		if err == nil {
-			result, err := p.callAt(ctx, link, cand, c, sealTo)
-			return result, p.settled(key, cand, err)
+			result, report, err := p.callAt(ctx, link, cand, c, sealTo)
+			return result, report, p.settled(key, cand, err)
 		}
 		if err := p.unreached(ctx, err, errs); err != nil {
-			return cbor.Value{}, err
+			return cbor.Value{}, stationlink.Report{}, err
 		}
 		p.forget(key)
 		errs = append(errs, fmt.Errorf("provider %x at station %x: %w", cand.Node[:4], cand.Station[:4], err))
 	}
-	return cbor.Value{}, errors.Join(append([]error{ErrNoProvider}, errs...)...)
+	return cbor.Value{}, stationlink.Report{}, errors.Join(append([]error{ErrNoProvider}, errs...)...)
 }
 
 // reach is the key a call to cand is sealed to under conf (nil for the
@@ -249,25 +261,40 @@ func (p *Pool) resolve(ctx context.Context, key resolvedKey, realmKey []byte) ([
 // again, once, under a new request, to the key a fresh lookup of its
 // advertisement names, when that is the key the refusal named (macula 13,
 // amendment A1).
-func (p *Pool) callAt(ctx context.Context, link *stationlink.Link, cand candidate, c Call, sealTo []byte) (cbor.Value, error) {
+func (p *Pool) callAt(ctx context.Context, link *stationlink.Link, cand candidate, c Call, sealTo []byte) (cbor.Value, stationlink.Report, error) {
 	left, err := remaining(ctx)
 	if err != nil {
-		return cbor.Value{}, err
+		return cbor.Value{}, stationlink.Report{}, err
 	}
 	call := stationlink.Call{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
 		Payload: c.Payload, Timeout: left, Token: c.Token, Proofs: c.Proofs, SealTo: sealTo, Clear: sealTo == nil}
 	result, err := link.Call(ctx, call)
 	var refused *stationlink.SealedRefusedError
 	if !errors.As(err, &refused) {
-		return result, err
+		return reported(result, call, err)
 	}
 	if call.SealTo, err = p.resealed(ctx, resolvedKey{c.Realm, c.Procedure, cand.Node}, cand.Node, refused.Named); err != nil {
-		return cbor.Value{}, err
+		return cbor.Value{}, stationlink.Report{}, err
 	}
 	if call.Timeout, err = remaining(ctx); err != nil {
-		return cbor.Value{}, err
+		return cbor.Value{}, stationlink.Report{}, err
 	}
-	return link.Call(ctx, call)
+	result, err = link.Call(ctx, call)
+	return reported(result, call, err)
+}
+
+// reported is a call's result with its seal report, from the call that
+// produced it: a sealed call's result is only ever one its answer opened under
+// the key it was sealed to (stationlink refuses any other), so Sealed 1 names
+// that key. An error has no report.
+func reported(result cbor.Value, call stationlink.Call, err error) (cbor.Value, stationlink.Report, error) {
+	switch {
+	case err != nil:
+		return result, stationlink.Report{}, err
+	case call.SealTo == nil:
+		return result, stationlink.Report{Sealed: 0, Provider: call.Target}, nil
+	}
+	return result, stationlink.Report{Sealed: 1, Provider: call.Target, SealKeyID: seal.KeyID(call.SealTo)}, nil
 }
 
 // sealTo is the key a call to cand is sealed to under conf, nil for a clear

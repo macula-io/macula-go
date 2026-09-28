@@ -224,6 +224,20 @@ Through the C ABI (still ABI 1): the pool option `kem_advertise`, and
 options JSON carries `confidential`; see the
 [contract](cabi/CONTRACT.md#confidentiality).
 
+**Knowing a call was sealed (v0.19.0).** A `preferred` call seals whenever
+the provider names a key and goes clear when it names none. To learn which it
+was, `pool.CallReport` returns the result with a `stationlink.Report`:
+`Sealed` 1 with the `SealKeyID` of the key the request was sealed to, which is
+the key its answer opened under, or 0 and no key for a clear call, and the
+`Provider` it was addressed to. After a reseal it names the reseal's key. An
+error comes with no report. A stream's `Report()` settles on the provider's
+first data or reply opened under the stream's key (on a clear stream, its
+first data, reply or end) and is `ErrNotSettled` before that; a served stream
+has none (`ErrNotACaller`). Through the ABI: `"report": 1` in
+`macula_pool_call_opts`, and `macula_stream_report`. It states that sealing ran
+on that exchange, nothing more: see macula's
+[design](https://github.com/macula-io/macula/blob/main/plans/DESIGN_E2E_SEAL_REPORT.md).
+
 Not sealed: publications (macula 13 does not seal them yet, and a sealed
 EVENT is counted and not delivered, as macula 13 does), the DHT, and
 node-served content, which stays in the clear by design.

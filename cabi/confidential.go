@@ -12,13 +12,16 @@ import (
 // *_opts functions take their options as JSON, so options added later need no
 // new function. A call or an open takes {"provider", "ucan", "proofs",
 // "confidential"}, "confidential" "preferred" (the default) or "required"; a
-// served procedure {"policy", "confidential"}, "confidential" also "off".
+// call also "report", 0 (the default) or 1 (since v0.19.0); a served
+// procedure {"policy", "confidential"}, "confidential" also "off".
 
 // callOptions are a call's or an open's options.
 type callOptions struct {
 	provider     *[32]byte
 	creds        credentials
 	confidential stationlink.Confidentiality
+	// report asks for a call's seal report (macula's DESIGN_E2E_SEAL_REPORT).
+	report bool
 }
 
 type callOptionsJSON struct {
@@ -26,6 +29,7 @@ type callOptionsJSON struct {
 	UCAN         string   `json:"ucan"`
 	Proofs       []string `json:"proofs"`
 	Confidential string   `json:"confidential"`
+	Report       *int     `json:"report"`
 }
 
 // callOptionsOf reads options_json of a call or an open ("" for none).
@@ -46,6 +50,13 @@ func callOptionsOf(text string) (callOptions, error) {
 		return callOptions{}, invalidArgument("confidential off is refused for a call or an open: it is preferred or required")
 	}
 	opts := callOptions{confidential: conf}
+	switch {
+	case o.Report == nil, *o.Report == 0:
+	case *o.Report == 1:
+		opts.report = true
+	default:
+		return callOptions{}, invalidArgument("report is 0 or 1, not %d", *o.Report)
+	}
 	if o.Provider != "" {
 		id, err := hexID("options_json's provider", o.Provider)
 		if err != nil {
@@ -60,6 +71,16 @@ func callOptionsOf(text string) (callOptions, error) {
 		opts.creds.proofs = append(opts.creds.proofs, []byte(p))
 	}
 	return opts, nil
+}
+
+// openOptionsOf reads options_json of an open: a call's options, but no
+// "report", since a stream reports through macula_stream_report.
+func openOptionsOf(text string) (callOptions, error) {
+	opts, err := callOptionsOf(text)
+	if err == nil && opts.report {
+		return callOptions{}, invalidArgument("report is a call's option: a stream reports through macula_stream_report")
+	}
+	return opts, err
 }
 
 // serveOptions are a served procedure's options.
@@ -124,7 +145,7 @@ func macula_pool_call_opts(h C.uintptr_t, realm32 *C.uint8_t, procedure, payload
 func macula_pool_open_stream_opts(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, mode C.int32_t,
 	payloadJSON, optionsJSON *C.char, deadlineMs C.int64_t, timeoutMs C.int64_t, token C.uintptr_t,
 	errOut **C.char) C.uintptr_t {
-	opts, err := callOptionsOf(goString(optionsJSON))
+	opts, err := openOptionsOf(goString(optionsJSON))
 	if err != nil {
 		setErr(errOut, err)
 		return 0

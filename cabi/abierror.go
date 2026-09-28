@@ -35,7 +35,11 @@ const (
 	// (macula 13's E2E design): not made, or failed rather than be taken in
 	// the clear. Since macula-go v0.18.0.
 	kindConfidentiality errorKind = "confidentiality"
-	kindFailed          errorKind = "failed"
+	// kindNotSettled is a stream's seal report asked for before it settled;
+	// kindNotACaller one asked of a served stream. Since macula-go v0.19.0.
+	kindNotSettled errorKind = "not_settled"
+	kindNotACaller errorKind = "not_a_caller"
+	kindFailed     errorKind = "failed"
 )
 
 // abiError is an error as it crosses the ABI: a kind, a message for people,
@@ -102,6 +106,10 @@ func classify(ctx context.Context, err error) *abiError {
 	case errors.As(err, &confidentiality):
 		return &abiError{kind: kindConfidentiality, message: err.Error(), fields: map[string]any{
 			"reason": confidentiality.Reason, "named": keyIDHex(confidentiality.Named), "found": keyIDHex(confidentiality.Found)}}
+	case errors.Is(err, stationlink.ErrNotSettled):
+		return &abiError{kind: kindNotSettled, message: err.Error()}
+	case errors.Is(err, stationlink.ErrNotACaller):
+		return &abiError{kind: kindNotACaller, message: err.Error()}
 	case errors.Is(err, stationlink.ErrKEMAdvertiseDisabled):
 		return &abiError{kind: kindConfidentiality, message: err.Error(), fields: map[string]any{
 			"reason": "kem_advertise_disabled", "named": nil, "found": nil}}

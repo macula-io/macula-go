@@ -82,6 +82,8 @@ the call. The string is a JSON object:
 | `closed` | the pool, subscription, served procedure or stream has ended, including a call in flight when its own pool closes | |
 | `refused` | the network refused it (an advertisement, an admission, a key) | |
 | `confidentiality` | a call or stream that could not be kept confidential (since v0.18.0; see "Confidentiality") | `reason`, `named`, `found` (key ids as hex, or null) |
+| `not_settled` | a stream's seal report asked for before it settled, or of a stream that ended first (since v0.19.0; see "The seal report") | |
+| `not_a_caller` | a seal report asked of a served stream (since v0.19.0) | |
 | `failed` | anything else | |
 
 ## Threads and blocking
@@ -251,6 +253,27 @@ callers seal to that key; stations route what they cannot read.
 - What stays visible: a request's `token` and `proofs`, sizes, timing and
   routing fields. Content (`macula_pool_share_content`) is served and fetched in
   the clear, as it is public by design.
+
+## The seal report
+
+Since v0.19.0 (macula's `plans/DESIGN_E2E_SEAL_REPORT.md`). A caller learns
+whether the exchange behind its result was sealed, and to which key. It states
+that sealing ran on that exchange, nothing more.
+
+- `macula_pool_call_opts` with `"report": 1` replies `{"result", "sealed",
+  "provider", "seal_key_id"}`: `sealed` 1 when the request that produced the
+  result was sealed and its answer opened under the same key, whose 8-byte id
+  `seal_key_id` gives as hex; 0, with no `seal_key_id`, for a clear call.
+  `provider` is the node the call was addressed to. After a `sealed_refused`
+  and a reseal it names the reseal's key. An error is returned as it is, with
+  no report. `"report"` is 0 or 1; any other value, and `"report"` on
+  `macula_pool_open_stream_opts`, is `invalid_argument`.
+- `macula_stream_report` gives a caller stream's report once it has settled:
+  on the provider's first data or reply opened under the stream's key, after
+  which no reseal can happen, or on a clear stream its first data, reply or
+  end. A sealed stream's end travels clear and settles nothing, and no error
+  settles a stream. Before it settles, and on a stream that ended first, it
+  fails with `not_settled`; on a served stream with `not_a_caller`.
 
 ## Content
 

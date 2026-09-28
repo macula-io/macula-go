@@ -26,6 +26,16 @@ func call(ctx context.Context, p *pool.Pool, realm [32]byte, procedure, payloadJ
 	if opts.provider != nil {
 		c.Provider = *opts.provider
 	}
+	if opts.report {
+		result, report, err := p.CallReport(ctx, c)
+		if err != nil {
+			return "", err
+		}
+		envelope := reportFields(report)
+		envelope["result"] = json.RawMessage(payloadToJSON(result))
+		text, _ := json.Marshal(envelope)
+		return string(text), nil
+	}
 	result, err := p.Call(ctx, c)
 	if err != nil {
 		return "", err
