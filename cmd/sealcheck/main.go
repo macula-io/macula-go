@@ -60,6 +60,7 @@ func main() {
 	flag.StringVar(&cfg.StreamProcedure, "stream-procedure", "mcl-echo/echo_sealed_stream", "the sealed server-stream procedure")
 	flag.StringVar(&cfg.Clear, "clear", "mcl-echo/echo", "the plain procedure for the clear leg (empty for none)")
 	flag.IntVar(&cfg.N, "n", 20, "how many sealed calls, and as many clear ones")
+	flag.IntVar(&cfg.Chunks, "chunks", 3, "how many chunks the stream asks for")
 	flag.BoolVar(&cfg.Call, "call", true, "run the call leg")
 	flag.BoolVar(&cfg.Stream, "stream", true, "run the stream leg")
 	flag.DurationVar(&cfg.Timeout, "timeout", 10*time.Second, "each call's timeout, and the wait for advertisements")

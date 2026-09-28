@@ -33,8 +33,10 @@ type config struct {
 	Clear           string
 	Provider        *[32]byte
 	N               int
-	Call, Stream    bool
-	Timeout         time.Duration
+	// Chunks is how many chunks the stream asks for, sent as "chunks".
+	Chunks       int
+	Call, Stream bool
+	Timeout      time.Duration
 }
 
 // advertised is what the sealed provider's own advertisement says: the key it
@@ -208,14 +210,18 @@ func checked(what string, report stationlink.Report, ads map[[32]byte]advertised
 }
 
 func sealedCall(ctx context.Context, p *pool.Pool, cfg config, ads map[[32]byte]advertised, i int, out io.Writer) (float64, error) {
-	c := pool.Call{Realm: cfg.Realm, Procedure: cfg.Sealed, Payload: cbor.Text(fmt.Sprintf("sealcheck %d", i)),
+	sent := fmt.Sprintf("sealcheck %d", i)
+	c := pool.Call{Realm: cfg.Realm, Procedure: cfg.Sealed, Payload: message(sent, nil),
 		Timeout: cfg.Timeout, Confidential: stationlink.ConfidentialRequired}
 	if cfg.Provider != nil {
 		c.Provider = *cfg.Provider
 	}
 	started := time.Now()
-	_, report, err := p.CallReport(ctx, c)
+	result, report, err := p.CallReport(ctx, c)
 	ms := millis(time.Since(started))
+	if err == nil {
+		err = echoed(result, sent)
+	}
 	if err != nil {
 		fmt.Fprintf(out, "call %d sealed=- error=%q ms=%.1f\n", i, err, ms)
 		return 0, fmt.Errorf("call %d: %w", i, err)
@@ -226,10 +232,14 @@ func sealedCall(ctx context.Context, p *pool.Pool, cfg config, ads map[[32]byte]
 }
 
 func clearCall(ctx context.Context, p *pool.Pool, cfg config, i int, out io.Writer) (float64, error) {
+	sent := fmt.Sprintf("sealcheck %d", i)
 	started := time.Now()
-	_, report, err := p.CallReport(ctx, pool.Call{Realm: cfg.Realm, Procedure: cfg.Clear,
-		Payload: cbor.Text(fmt.Sprintf("sealcheck %d", i)), Timeout: cfg.Timeout})
+	result, report, err := p.CallReport(ctx, pool.Call{Realm: cfg.Realm, Procedure: cfg.Clear,
+		Payload: message(sent, nil), Timeout: cfg.Timeout})
 	ms := millis(time.Since(started))
+	if err == nil {
+		err = echoed(result, sent)
+	}
 	if err != nil {
 		fmt.Fprintf(out, "clear %d error=%q ms=%.1f\n", i, err, ms)
 		return 0, fmt.Errorf("clear call %d: %w", i, err)
@@ -242,7 +252,7 @@ func clearCall(ctx context.Context, p *pool.Pool, cfg config, i int, out io.Writ
 // which settles its report, and checks the report as a call's.
 func sealedStream(ctx context.Context, p *pool.Pool, cfg config, ads map[[32]byte]advertised, out io.Writer) error {
 	c := pool.StreamCall{Realm: cfg.Realm, Procedure: cfg.StreamProcedure, Mode: frame.ServerStream,
-		Payload: cbor.Text("sealcheck stream"), Confidential: stationlink.ConfidentialRequired}
+		Payload: message("sealcheck stream", &cfg.Chunks), Confidential: stationlink.ConfidentialRequired}
 	if cfg.Provider != nil {
 		c.Provider = *cfg.Provider
 	}
@@ -274,6 +284,26 @@ func sealedStream(ctx context.Context, p *pool.Pool, cfg config, ads map[[32]byt
 	fmt.Fprintf(out, "stream sealed=%d provider=%x key=%x station=%x ms_to_first=%.1f\n", report.Sealed, report.Provider,
 		report.SealKeyID, ads[report.Provider].station, ms)
 	return checked("stream", report, ads)
+}
+
+// message is the echo's request (mcl-echo 0.2.0): {"message": text}, and for
+// the stream also {"chunks": n}.
+func message(text string, chunks *int) cbor.Value {
+	entries := []cbor.MapEntry{{Key: cbor.Text("message"), Val: cbor.Text(text)}}
+	if chunks != nil {
+		entries = append(entries, cbor.MapEntry{Key: cbor.Text("chunks"), Val: cbor.Int(int64(*chunks))})
+	}
+	return cbor.Map(entries)
+}
+
+// echoed checks the echo answered what it was sent: {"message": text}.
+func echoed(result cbor.Value, sent string) error {
+	got, ok := result.Get("message")
+	text, isText := got.AsText()
+	if !ok || !isText || text != sent {
+		return fmt.Errorf("the echo answered %v, not the message sent", result)
+	}
+	return nil
 }
 
 // summary is the sealed and clear latencies and their difference.

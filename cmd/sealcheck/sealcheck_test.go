@@ -63,7 +63,7 @@ func world(t *testing.T, keyed bool) config {
 	serve(join(plainKey, false), pool.Offer{Realm: realm.ID, Procedure: "mcl-echo/echo", Handler: echo})
 	return config{Seeds: []pool.Seed{seed}, Profile: profile.PQPure, Realm: realm.ID, RealmKey: realm.RealmKey(),
 		Sealed: "mcl-echo/echo_sealed", Clear: "mcl-echo/echo", StreamProcedure: "mcl-echo/echo_sealed_stream",
-		N: 3, Call: true, Stream: true, Timeout: 20 * time.Second}
+		N: 3, Chunks: 2, Call: true, Stream: true, Timeout: 20 * time.Second}
 }
 
 // Against a provider that advertises its key, every report says sealed, to that
