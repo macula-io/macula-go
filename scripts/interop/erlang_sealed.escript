@@ -1,6 +1,8 @@
 #!/usr/bin/env escript
 %% Sealed calls and streams across macula 13 and macula-go (E2E seal scheme 1,
-%% design §5, amendment A1), through one station, for scripts/interop/gosealed.
+%% design §5, amendment A1), through one station, for scripts/interop/gosealed
+%% and scripts/interop/tssealed. MACULA_SEALED_PEER names the peer whose texts
+%% a call expects ("kept by <peer>", ...): "go" when unset, "ts" for tssealed.
 %%
 %%   escript erlang_sealed.escript <macula lib dir> <host> <port> <station node_id hex> <realm hex> <profile> serve <hold s>
 %%   escript erlang_sealed.escript <macula lib dir> <host> <port> <station node_id hex> <realm hex> <profile> call <provider node_id hex>
@@ -78,7 +80,8 @@ run("call", {Pool, Seed}, Realm, _Profile, _Self, [Provider]) ->
     %% macula-go's pool does. Strict against 13.0.1 (MACULA_OFF_REFUSED=1).
     Off = macula:call(Pool, Realm, Vault, #{n => 1}, 10_000, #{confidential => off}),
     io:format("off by direct dial: ~p~n", [Off]),
-    off_verdict(os:getenv("MACULA_OFF_REFUSED"), Off, verdict(Called, Streamed, Clear)).
+    Peer = list_to_binary(os:getenv("MACULA_SEALED_PEER", "go")),
+    off_verdict(os:getenv("MACULA_OFF_REFUSED"), Off, verdict(Peer, Called, Streamed, Clear)).
 
 %% The provider's advertisement reaches the DHT in its own time.
 until_served(Call, 0) -> Call();
@@ -95,10 +98,12 @@ streamed({ok, Stream}) ->
 streamed(Error) ->
     Error.
 
-verdict({ok, {text, <<"kept by go">>}}, {{chunk, <<"chunk from go">>}, {ok, {text, <<"streamed by go">>}}},
-        {error, {call_error, <<"sealed_required">>, _}}) ->
+verdict(Peer, {ok, {text, Kept}}, {{chunk, Chunk}, {ok, {text, Streamed}}},
+        {error, {call_error, <<"sealed_required">>, _}})
+  when Kept =:= <<"kept by ", Peer/binary>>, Chunk =:= <<"chunk from ", Peer/binary>>,
+       Streamed =:= <<"streamed by ", Peer/binary>> ->
     0;
-verdict(_Called, _Streamed, _Clear) ->
+verdict(_Peer, _Called, _Streamed, _Clear) ->
     1.
 
 off_verdict("1", {error, {confidentiality, off_needs_explicit_target}}, Verdict) -> Verdict;

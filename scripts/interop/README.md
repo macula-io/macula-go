@@ -169,3 +169,36 @@ Last run (2026-09-27, `macula-ci-otp@sha256:aff1d39b...`):
   `off_needs_explicit_target`, exit 0.
 - macula v13.0.0: the same, except `off by direct dial` sealed (exit 1 under
   `MACULA_OFF_REFUSED=1`, as it must be).
+
+### The TypeScript leg (`SEALED_PEER=ts`)
+
+`SEALED_PEER=ts` runs the same two directions with @macula-io/ts in place of
+macula-go: `tssealed` (TypeScript over macula-go's shared library, from npm at
+the version `tssealed/package-lock.json` pins; needs node and npm), with
+`MACULA_SEALED_PEER=ts` telling `erlang_sealed.escript` whose texts to expect.
+
+```sh
+SEALED_PEER=ts MACULA_BUILD=<compiled macula v13.x> MACULA_OFF_REFUSED=1 scripts/interop/sealed.sh pq_hybrid
+SEALED_PEER=ts MACULA_BUILD=<compiled macula v13.x> MACULA_OFF_REFUSED=1 scripts/interop/sealed.sh pq_pure
+```
+
+**Not covered by the TypeScript caller:** `gosealed call` also calls the
+Erlang provider in the clear as an explicit target and expects
+`sealed_required`. @macula-io/ts has no API for an explicit-target clear call,
+so `tssealed call` checks instead that `confidential: "off"` is refused
+(`invalid_argument`). A provider's `sealed_required` refusal is still checked in
+the other direction: `erlang_sealed.escript call` makes its `call_station/8`
+clear call against `tssealed serve`.
+
+`PODMAN_CPUS`, when set, caps the Erlang container (`podman --cpus`); unset,
+the Go runs are as before.
+
+Last run (2026-09-28, `macula-ci-otp@sha256:aff1d39b...`, @macula-io/ts 0.24.0
+on macula-go v0.18.0's shared library):
+
+- macula 13.0.1 from hex, compiled as a rebar3 dependency, with
+  `MACULA_OFF_REFUSED=1`: both profiles, both ways. A TypeScript caller:
+  `sealed call` and `sealed stream` answered by the Erlang provider, `off`
+  refused `invalid_argument`. A TypeScript provider: `sealed call` and `sealed
+  stream` answered, `clear call` refused `sealed_required`, `off by direct
+  dial` refused `off_needs_explicit_target`. Exit 0.

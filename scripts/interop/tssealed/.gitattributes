@@ -1,0 +1,2 @@
+# Read by node and npm on any runner, Windows included: keep LF.
+* text=auto eol=lf

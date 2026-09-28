@@ -1,0 +1,9 @@
+{
+  "name": "macula-go-interop-tssealed",
+  "private": true,
+  "type": "module",
+  "description": "@macula-io/ts's side of scripts/interop/sealed.sh",
+  "dependencies": {
+    "@macula-io/ts": "0.24.0"
+  }
+}
