@@ -22,7 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one kept 30 minutes (`RetiredKeyKept`), in memory only.
 - `record`: a procedure advertisement names its provider's KEM key
   (`ProcedureAdvertisementOptions.KEMKey`, `ProcedureAdvertisement.KEMKey`
-  and `KEMKeyID`), both fields or neither.
+  and `KEMKeyID`), both fields or neither. `Verify` is held to macula's keyed
+  advertisement vectors (`e2e_seal_v1_advertisements.json`, macula b51202a8,
+  amendment A1): the key as carried with its own id is accepted and read
+  back; another key's id, a key or an id alone, and a key of no profile's
+  size are refused `ErrMalformed`, in both profiles.
 - `frame`: `Sealed`, a payload sealed end to end, carried in `sealed` in
   place of the clear field, with the shape each frame's table allows
   (`ErrSealedShape`): `RequestSpec.Sealed`, `VerifiedRequest.Sealed`,
