@@ -93,4 +93,8 @@ func TestSealcheckFailsAgainstAProviderWithNoKey(t *testing.T) {
 	if !strings.Contains(out.String(), "overall: FAIL") {
 		t.Errorf("the log does not say FAIL:\n%s", out.String())
 	}
+	// The clear leg is the baseline: it runs whatever the sealed leg does.
+	if !strings.Contains(out.String(), "clear 1 sealed=0") {
+		t.Errorf("the clear leg did not run beside a failing sealed leg:\n%s", out.String())
+	}
 }

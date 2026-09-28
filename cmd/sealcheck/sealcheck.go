@@ -85,18 +85,18 @@ func run(ctx context.Context, cfg config, out io.Writer) []error {
 			return []error{err}
 		}
 		for i := 1; i <= cfg.N; i++ {
-			ms, err := sealedCall(ctx, p, cfg, ads, i, out)
-			if err != nil {
+			if ms, err := sealedCall(ctx, p, cfg, ads, i, out); err != nil {
 				failures = append(failures, err)
+			} else {
+				sealedMs = append(sealedMs, ms)
+			}
+			// The clear leg is the baseline, run whatever the sealed call did.
+			if cfg.Clear == "" {
 				continue
 			}
-			sealedMs = append(sealedMs, ms)
-			if cfg.Clear != "" {
-				ms, err := clearCall(ctx, p, cfg, i, out)
-				if err != nil {
-					failures = append(failures, err)
-					continue
-				}
+			if ms, err := clearCall(ctx, p, cfg, i, out); err != nil {
+				failures = append(failures, err)
+			} else {
 				clearMs = append(clearMs, ms)
 			}
 		}
@@ -129,7 +129,13 @@ func header(cfg config, out io.Writer) {
 	}
 }
 
-// buildVersion is this binary's macula-go module version and VCS revision.
+// sourceRevision is the macula-go commit the binary was built from, stamped with
+// -ldflags "-X main.sourceRevision=<sha>" by a build that has no VCS info (one
+// from git archive, say); empty otherwise.
+var sourceRevision string
+
+// buildVersion is this binary's macula-go module version and VCS revision, and
+// the stamped source revision when there is one.
 func buildVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -148,6 +154,9 @@ func buildVersion() string {
 		if dep.Path == "github.com/macula-io/macula-go" {
 			version = dep.Version
 		}
+	}
+	if sourceRevision != "" {
+		return fmt.Sprintf("%s source=%s", version, sourceRevision)
 	}
 	return fmt.Sprintf("%s revision=%s modified=%s", version, revision, modified)
 }
