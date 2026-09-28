@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-09-28
+
+### Fixed
+
+- `pool`: a call or stream is never written after its caller's deadline has
+  passed (#12). A candidate's link that came up at the very end of the last
+  share was called with a zero or negative timeout, which `stationlink`
+  takes as its 5 s default: the CALL went out with a provider deadline 5 s
+  ahead while the caller was told the call had failed, so the provider could
+  run a request its caller had given up on. `callAt`, its one reseal and
+  `openAt` now return the deadline error before anything is written. This is
+  a timeliness fix: 0.18.1's at most once already held.
+
+### Documentation
+
+- The 0.18.1 change has a consequence its entry did not name: a station's
+  relay error (`stationlink.RelayError`, as for a provider that left while
+  its advertisement still lives, up to 5 minutes) now ends the call instead
+  of moving it to the next candidate, as macula's provider scope does.
+- `pool.Call` states the exact property: a provider's handler is entered at
+  most once per call. After `sealed_refused` the pool calls the same provider
+  once more, and the first CALL was refused before any handler ran.
+
 ## [0.18.1] - 2026-09-28
 
 ### Fixed

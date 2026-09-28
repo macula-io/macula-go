@@ -88,7 +88,7 @@ type resolvedKey struct {
 // moves on to the next candidate only when a station cannot be reached within
 // that candidate's share of the deadline, before anything is sent: once the
 // CALL has gone out, under the whole deadline, its outcome is returned as it
-// is, a timeout included, so one Call reaches a provider at most once
+// is, a timeout included, so one Call enters a provider's handler at most once
 // (macula's call_work and failure_scope/1). A candidate that answered is
 // remembered until its advertisement expires.
 func (p *Pool) Call(ctx context.Context, c Call) (cbor.Value, error) {
@@ -158,7 +158,9 @@ func (p *Pool) unreached(ctx context.Context, err error, errs []error) error {
 
 // settled is the outcome of a call or stream sent to cand, final whatever it
 // is: a CALL that went out is never sent again elsewhere. A candidate whose
-// provider answered is remembered, one that did not is forgotten.
+// provider answered is remembered, one whose call failed or timed out is
+// forgotten; a confidentiality outcome or a closing pool leaves the memory as
+// it is.
 func (p *Pool) settled(key resolvedKey, cand candidate, err error) error {
 	var provided *stationlink.ProviderError
 	switch {
@@ -248,6 +250,9 @@ func (p *Pool) resolve(ctx context.Context, key resolvedKey, realmKey []byte) ([
 // advertisement names, when that is the key the refusal named (macula 13,
 // amendment A1).
 func (p *Pool) callAt(ctx context.Context, link *stationlink.Link, cand candidate, c Call, sealTo []byte) (cbor.Value, error) {
+	if err := expired(ctx); err != nil {
+		return cbor.Value{}, err
+	}
 	call := stationlink.Call{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
 		Payload: c.Payload, Timeout: time.Until(deadlineOf(ctx)), Token: c.Token, Proofs: c.Proofs, SealTo: sealTo, Clear: sealTo == nil}
 	result, err := link.Call(ctx, call)
@@ -256,6 +261,9 @@ func (p *Pool) callAt(ctx context.Context, link *stationlink.Link, cand candidat
 		return result, err
 	}
 	if call.SealTo, err = p.resealed(ctx, resolvedKey{c.Realm, c.Procedure, cand.Node}, cand.Node, refused.Named); err != nil {
+		return cbor.Value{}, err
+	}
+	if err := expired(ctx); err != nil {
 		return cbor.Value{}, err
 	}
 	call.Timeout = time.Until(deadlineOf(ctx))
@@ -336,6 +344,18 @@ func candidateShare(ctx context.Context, left int) time.Duration {
 }
 
 const minCandidateShare = time.Second
+
+// expired is the error a call or stream ends with, before anything is
+// written, once its caller's deadline has passed or ctx is done: a CALL
+// written then would reach a provider after the caller was told it failed
+// (macula-go#12). It reads the deadline itself, not only ctx.Err, which lags
+// the deadline by as long as the context's timer takes to fire.
+func expired(ctx context.Context) error {
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return ctx.Err()
+}
 
 func deadlineOf(ctx context.Context) time.Time {
 	deadline, _ := ctx.Deadline()
@@ -543,6 +563,9 @@ func (p *Pool) OpenStream(ctx context.Context, c StreamCall) (*stationlink.Strea
 // openAt opens the stream at the candidate's provider on link, sealed to
 // sealTo (the clear when nil).
 func (p *Pool) openAt(ctx context.Context, link *stationlink.Link, cand candidate, c StreamCall, sealTo []byte) (*stationlink.Stream, error) {
+	if err := expired(ctx); err != nil {
+		return nil, err
+	}
 	call := stationlink.StreamCall{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
 		Mode: c.Mode, Payload: c.Payload, Deadline: c.Deadline, Token: c.Token, Proofs: c.Proofs, SealTo: sealTo, Clear: sealTo == nil}
 	if sealTo != nil {
