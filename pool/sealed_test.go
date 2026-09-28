@@ -111,9 +111,10 @@ func TestARequiredCallRefusesAKeylessProvider(t *testing.T) {
 	}
 }
 
-// A call sealed to one candidate is never sent in the clear to another: when
-// the sealed CALL went out and brought no answer, a keyless next candidate
-// ends the call no_kem_key rather than take the payload in the clear.
+// A call sealed to one candidate is never sent in the clear to another: once
+// the sealed CALL went out, it has the whole deadline and its answer is the
+// call's, even from a handler slower than the candidate's share, so a keyless
+// next candidate never takes the payload in the clear.
 func TestASealedCallNeverWalksToAKeylessCandidate(t *testing.T) {
 	s, other := teststation.Start(t, profile.PQPure, "no walk"), teststation.Start(t, profile.PQPure, "no walk other")
 	teststation.ShareDHT(s, other)
@@ -152,11 +153,10 @@ func TestASealedCallNeverWalksToAKeylessCandidate(t *testing.T) {
 	if err != nil || len(found) != 2 || found[0].Node != w.provider.NodeID() {
 		t.Fatalf("the candidates: %+v, %v", found, err)
 	}
-	_, err = w.caller.Call(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("secret"),
+	result, err := w.caller.Call(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("secret"),
 		Timeout: 4 * time.Second})
-	var refused *stationlink.ConfidentialityError
-	if !errors.As(err, &refused) || refused.Reason != stationlink.ReasonNoKEMKey {
-		t.Errorf("%v, want no_kem_key", err)
+	if text, _ := result.AsText(); err != nil || text != "secret" {
+		t.Errorf("Call: %q, %v, want the keyed provider's answer", text, err)
 	}
 	if n := clearEntered.Load(); n != 0 {
 		t.Errorf("the sealed payload reached the keyless provider in the clear %d times", n)

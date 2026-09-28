@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-09-28
+
+### Fixed
+
+- `pool`: one `Pool.Call` or `Pool.OpenStream` reaches a provider at most
+  once (#8). The pool moved to the next candidate after any failure but a
+  provider's answer, a timeout included, and each attempt drew a fresh request
+  id, so a handler slower than one candidate's share of the deadline **was
+  entered twice, and a handler that is not idempotent ran its side effect
+  twice**, sealed or not. It now moves on only when a candidate's station
+  cannot be reached, before anything is sent, as macula's `call_work` and
+  `failure_scope/1` rule; once the CALL or STREAM_OPEN has gone out, its
+  outcome is returned as it is. The candidate's share of the deadline bounds
+  reaching its station only; the call itself has the whole deadline, so the
+  slow handler's answer now comes back instead of a timeout. A refusal the
+  link gives before sending, which every candidate would give alike (an open
+  over 1 MiB), is returned alone rather than joined to `ErrNoProvider`.
+
 ## [0.18.0] - 2026-09-27
 
 ### Added

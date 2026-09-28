@@ -85,10 +85,12 @@ type resolvedKey struct {
 // node signed), and tries the freshest first,
 // dialing the serving station the advertisement names, pinned by its node_id
 // from its own station_endpoint record, and calling the provider there. It
-// moves on to the next candidate when a station cannot be reached or reports
-// it cannot relay the call, and returns a provider's own answer or error as
-// it is. A candidate that answered is remembered until its advertisement
-// expires.
+// moves on to the next candidate only when a station cannot be reached within
+// that candidate's share of the deadline, before anything is sent: once the
+// CALL has gone out, under the whole deadline, its outcome is returned as it
+// is, a timeout included, so one Call reaches a provider at most once
+// (macula's call_work and failure_scope/1). A candidate that answered is
+// remembered until its advertisement expires.
 func (p *Pool) Call(ctx context.Context, c Call) (cbor.Value, error) {
 	if c.Confidential == stationlink.ConfidentialOff {
 		return cbor.Value{}, ErrConfidentialOff
@@ -109,29 +111,68 @@ func (p *Pool) Call(ctx context.Context, c Call) (cbor.Value, error) {
 		return cbor.Value{}, err
 	}
 	var errs []error
-	sealedOut := false
 	for i, cand := range candidates {
-		share, cancelShare := context.WithTimeout(ctx, candidateShare(ctx, len(candidates)-i))
-		result, sent, err := p.callAt(share, cand, c, sealedOut)
-		cancelShare()
-		sealedOut = sealedOut || sent
-		var provided *stationlink.ProviderError
-		switch {
-		case err == nil, errors.As(err, &provided):
-			p.rememberCandidate(key, cand)
-			return result, err
-		case answeredConfidentially(err):
+		sealTo, link, err := p.reach(ctx, cand, c.Confidential, len(candidates)-i)
+		if err == nil {
+			result, err := p.callAt(ctx, link, cand, c, sealTo)
+			return result, p.settled(key, cand, err)
+		}
+		if err := p.unreached(ctx, err, errs); err != nil {
 			return cbor.Value{}, err
-		case ctx.Err() != nil:
-			return cbor.Value{}, errors.Join(append(errs, err)...)
-		case p.isClosed():
-			// The provider did not fail: this pool closed under the call.
-			return cbor.Value{}, errors.Join(ErrClosed, err)
 		}
 		p.forget(key)
 		errs = append(errs, fmt.Errorf("provider %x at station %x: %w", cand.Node[:4], cand.Station[:4], err))
 	}
 	return cbor.Value{}, errors.Join(append([]error{ErrNoProvider}, errs...)...)
+}
+
+// reach is the key a call to cand is sealed to under conf (nil for the
+// clear), and a link to its serving station, reached within the candidate's
+// share of ctx's deadline with left candidates to try. Nothing is sent.
+func (p *Pool) reach(ctx context.Context, cand candidate, conf stationlink.Confidentiality, left int) ([]byte, *stationlink.Link, error) {
+	sealTo, err := p.sealTo(cand, conf)
+	if err != nil {
+		return nil, nil, err
+	}
+	share, cancel := context.WithTimeout(ctx, candidateShare(ctx, left))
+	defer cancel()
+	link, err := p.linkTo(share, cand.Station)
+	return sealTo, link, err
+}
+
+// unreached is the error that ends a call whose candidate was not reached,
+// nil when the next candidate is worth trying: a confidentiality failure,
+// which every candidate would meet alike (macula's request scope), the call's
+// own deadline, or the pool closing under it.
+func (p *Pool) unreached(ctx context.Context, err error, errs []error) error {
+	switch {
+	case answeredConfidentially(err):
+		return err
+	case ctx.Err() != nil:
+		return errors.Join(append(errs, err)...)
+	case p.isClosed():
+		return errors.Join(ErrClosed, err)
+	}
+	return nil
+}
+
+// settled is the outcome of a call or stream sent to cand, final whatever it
+// is: a CALL that went out is never sent again elsewhere. A candidate whose
+// provider answered is remembered, one that did not is forgotten.
+func (p *Pool) settled(key resolvedKey, cand candidate, err error) error {
+	var provided *stationlink.ProviderError
+	switch {
+	case err == nil, errors.As(err, &provided):
+		p.rememberCandidate(key, cand)
+		return err
+	case answeredConfidentially(err):
+		return err
+	case p.isClosed():
+		// The provider did not fail: this pool closed under the call.
+		return errors.Join(ErrClosed, err)
+	}
+	p.forget(key)
+	return err
 }
 
 // Providers is every provider whose advertisement of procedure in realm the
@@ -200,39 +241,25 @@ func (p *Pool) resolve(ctx context.Context, key resolvedKey, realmKey []byte) ([
 	return out, nil
 }
 
-// callAt calls the candidate's provider at its serving station, sealed as
-// c.Confidential and the candidate's advertisement decide. A sealed call the
-// provider refuses sealed_refused is sealed again, once, under a new request,
-// to the key a fresh lookup of its advertisement names, when that is the key
-// the refusal named (macula 13, amendment A1). sealedOut says a sealed CALL of
-// this call already went out to another candidate, so this one is never
-// called in the clear; sent says a sealed CALL went out here.
-func (p *Pool) callAt(ctx context.Context, cand candidate, c Call, sealedOut bool) (result cbor.Value, sent bool, err error) {
-	sealTo, err := p.sealTo(cand, c.Confidential)
-	switch {
-	case err != nil:
-		return cbor.Value{}, false, err
-	case sealTo == nil && sealedOut:
-		return cbor.Value{}, false, &stationlink.ConfidentialityError{Reason: stationlink.ReasonNoKEMKey}
-	}
-	link, err := p.linkTo(ctx, cand.Station)
-	if err != nil {
-		return cbor.Value{}, false, err
-	}
+// callAt calls the candidate's provider on link, to its serving station,
+// sealed to sealTo (the clear when nil), under what is left of ctx's
+// deadline. A sealed call the provider refuses sealed_refused is sealed
+// again, once, under a new request, to the key a fresh lookup of its
+// advertisement names, when that is the key the refusal named (macula 13,
+// amendment A1).
+func (p *Pool) callAt(ctx context.Context, link *stationlink.Link, cand candidate, c Call, sealTo []byte) (cbor.Value, error) {
 	call := stationlink.Call{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
 		Payload: c.Payload, Timeout: time.Until(deadlineOf(ctx)), Token: c.Token, Proofs: c.Proofs, SealTo: sealTo, Clear: sealTo == nil}
-	sent = sealTo != nil
-	result, err = link.Call(ctx, call)
+	result, err := link.Call(ctx, call)
 	var refused *stationlink.SealedRefusedError
 	if !errors.As(err, &refused) {
-		return result, sent, err
+		return result, err
 	}
 	if call.SealTo, err = p.resealed(ctx, resolvedKey{c.Realm, c.Procedure, cand.Node}, cand.Node, refused.Named); err != nil {
-		return cbor.Value{}, sent, err
+		return cbor.Value{}, err
 	}
 	call.Timeout = time.Until(deadlineOf(ctx))
-	result, err = link.Call(ctx, call)
-	return result, sent, err
+	return link.Call(ctx, call)
 }
 
 // sealTo is the key a call to cand is sealed to under conf, nil for a clear
@@ -480,9 +507,10 @@ type StreamCall struct {
 
 // OpenStream opens a streaming session at a provider of the procedure, reached
 // as Call reaches one: its trusted advertisements from the DHT, freshest
-// first, its serving station dialed pinned, the next candidate when a station
-// cannot be reached. The stream is open once its STREAM_OPEN is sent; a
-// provider's or station's refusal arrives on its first Recv.
+// first, its serving station dialed pinned, the next candidate only when a
+// station cannot be reached; the link's own outcome is final. The stream is
+// open once its STREAM_OPEN is sent; a provider's or station's refusal
+// arrives on its first Recv.
 func (p *Pool) OpenStream(ctx context.Context, c StreamCall) (*stationlink.Stream, error) {
 	if c.Confidential == stationlink.ConfidentialOff {
 		return nil, ErrConfidentialOff
@@ -498,21 +526,13 @@ func (p *Pool) OpenStream(ctx context.Context, c StreamCall) (*stationlink.Strea
 	}
 	var errs []error
 	for i, cand := range candidates {
-		share, cancel := context.WithTimeout(ctx, candidateShare(ctx, len(candidates)-i))
-		stream, err := p.openAt(share, cand, c)
-		cancel()
+		sealTo, link, err := p.reach(ctx, cand, c.Confidential, len(candidates)-i)
 		if err == nil {
-			p.rememberCandidate(key, cand)
-			return stream, nil
+			stream, err := p.openAt(ctx, link, cand, c, sealTo)
+			return stream, p.settled(key, cand, err)
 		}
-		if answeredConfidentially(err) {
+		if err := p.unreached(ctx, err, errs); err != nil {
 			return nil, err
-		}
-		if ctx.Err() != nil {
-			return nil, errors.Join(append(errs, err)...)
-		}
-		if p.isClosed() {
-			return nil, errors.Join(ErrClosed, err)
 		}
 		p.forget(key)
 		errs = append(errs, fmt.Errorf("provider %x at station %x: %w", cand.Node[:4], cand.Station[:4], err))
@@ -520,15 +540,9 @@ func (p *Pool) OpenStream(ctx context.Context, c StreamCall) (*stationlink.Strea
 	return nil, errors.Join(append([]error{ErrNoProvider}, errs...)...)
 }
 
-func (p *Pool) openAt(ctx context.Context, cand candidate, c StreamCall) (*stationlink.Stream, error) {
-	link, err := p.linkTo(ctx, cand.Station)
-	if err != nil {
-		return nil, err
-	}
-	sealTo, err := p.sealTo(cand, c.Confidential)
-	if err != nil {
-		return nil, err
-	}
+// openAt opens the stream at the candidate's provider on link, sealed to
+// sealTo (the clear when nil).
+func (p *Pool) openAt(ctx context.Context, link *stationlink.Link, cand candidate, c StreamCall, sealTo []byte) (*stationlink.Stream, error) {
 	call := stationlink.StreamCall{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
 		Mode: c.Mode, Payload: c.Payload, Deadline: c.Deadline, Token: c.Token, Proofs: c.Proofs, SealTo: sealTo, Clear: sealTo == nil}
 	if sealTo != nil {

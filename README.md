@@ -101,7 +101,9 @@ defer p.Close()
 
 // Call a procedure: its advertisements are resolved from the DHT, trusted only
 // when the realm key authorizes them, and the provider is called at the station
-// it serves from.
+// it serves from. The next candidate is tried only when a station cannot be
+// reached; once the CALL has gone out its outcome is returned, a timeout
+// included, so a handler is entered at most once per call.
 result, err := p.Call(ctx, pool.Call{Realm: realm, Procedure: "mcl-echo/echo", Payload: cbor.Text("hello")})
 
 // Serve one: the realm must have admitted the org, and the org delegated its
@@ -208,8 +210,8 @@ said it holds none, to the first key its advertisements name. A stream
 reseals the same way, once, while it has sent nothing, keeping its deadline.
 A call that could not be kept confidential ends there: the pool never moves
 it to another candidate, which might be keyless. A reseal whose lookup fails
-is `no_kem_key`, and once a sealed CALL has gone out, no later candidate is
-called in the clear (`no_kem_key`).
+is `no_kem_key`. Once a CALL has gone out, sealed or not, no other candidate
+is called at all.
 
 `KEMAdvertise` is off by default. Switch it on only once every station runs
 macula 12.11 or later, which stores and routes a keyed advertisement, and
