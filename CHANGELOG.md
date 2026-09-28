@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `cmd/sealcheck`, M4's measurement: from outside the fleet, sealed calls and
+  a sealed stream to a provider through the stations, the same calls in the
+  clear against a plain provider, and a log of each caller's seal report, the
+  key the provider's own advertisement names, the serving station and the
+  latency, ending with the sealed-vs-clear overhead and the macula-go
+  revision. It exits non-zero unless every sealed report is sealed to the
+  advertised key; against a provider that advertises no key it fails.
+
 ## [0.19.0] - 2026-09-28
 
 ### Added
