@@ -11,14 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `pool`: a call or stream is never written after its caller's deadline has
-  passed (#12). A candidate's link that came up at the very end of the last
-  share was called with a zero or negative timeout, which `stationlink`
+- `pool`: a call or stream never goes out with a provider deadline past its
+  caller's (#12). A candidate's link that came up at the very end of the
+  last share was called with a zero or negative timeout, which `stationlink`
   takes as its 5 s default: the CALL went out with a provider deadline 5 s
-  ahead while the caller was told the call had failed, so the provider could
-  run a request its caller had given up on. `callAt`, its one reseal and
-  `openAt` now return the deadline error before anything is written. This is
-  a timeliness fix: 0.18.1's at most once already held.
+  ahead of the caller's, so the provider could run a request its caller had
+  given up on. `callAt` and its one reseal now read what is left of the
+  deadline once, refuse the call before writing when nothing is, and give
+  the CALL that same reading as its timeout; `openAt` refuses a stream open
+  past the deadline before writing. Both read the deadline itself, since a
+  context's error lags it until its timer fires. This is a timeliness fix:
+  0.18.1's at most once already held.
 
 ### Documentation
 

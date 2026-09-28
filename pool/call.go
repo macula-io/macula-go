@@ -250,11 +250,12 @@ func (p *Pool) resolve(ctx context.Context, key resolvedKey, realmKey []byte) ([
 // advertisement names, when that is the key the refusal named (macula 13,
 // amendment A1).
 func (p *Pool) callAt(ctx context.Context, link *stationlink.Link, cand candidate, c Call, sealTo []byte) (cbor.Value, error) {
-	if err := expired(ctx); err != nil {
+	left, err := remaining(ctx)
+	if err != nil {
 		return cbor.Value{}, err
 	}
 	call := stationlink.Call{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
-		Payload: c.Payload, Timeout: time.Until(deadlineOf(ctx)), Token: c.Token, Proofs: c.Proofs, SealTo: sealTo, Clear: sealTo == nil}
+		Payload: c.Payload, Timeout: left, Token: c.Token, Proofs: c.Proofs, SealTo: sealTo, Clear: sealTo == nil}
 	result, err := link.Call(ctx, call)
 	var refused *stationlink.SealedRefusedError
 	if !errors.As(err, &refused) {
@@ -263,10 +264,9 @@ func (p *Pool) callAt(ctx context.Context, link *stationlink.Link, cand candidat
 	if call.SealTo, err = p.resealed(ctx, resolvedKey{c.Realm, c.Procedure, cand.Node}, cand.Node, refused.Named); err != nil {
 		return cbor.Value{}, err
 	}
-	if err := expired(ctx); err != nil {
+	if call.Timeout, err = remaining(ctx); err != nil {
 		return cbor.Value{}, err
 	}
-	call.Timeout = time.Until(deadlineOf(ctx))
 	return link.Call(ctx, call)
 }
 
@@ -345,16 +345,32 @@ func candidateShare(ctx context.Context, left int) time.Duration {
 
 const minCandidateShare = time.Second
 
-// expired is the error a call or stream ends with, before anything is
-// written, once its caller's deadline has passed or ctx is done: a CALL
-// written then would reach a provider after the caller was told it failed
-// (macula-go#12). It reads the deadline itself, not only ctx.Err, which lags
-// the deadline by as long as the context's timer takes to fire.
+// expired is the error a stream open ends with, before anything is written,
+// once its caller's deadline has passed or ctx is done (macula-go#12). It
+// reads the deadline itself, not only ctx.Err, which lags the deadline by as
+// long as the context's timer takes to fire. A call uses remaining, which
+// also gives the CALL its timeout from the same reading.
 func expired(ctx context.Context) error {
 	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
 		return context.DeadlineExceeded
 	}
 	return ctx.Err()
+}
+
+// remaining is what is left of a call's deadline, read from the clock once, so
+// the check and the CALL's timeout are the same reading: a deadline passing
+// between two readings would hand stationlink a non-positive timeout, which it
+// takes as its 5 s default (macula-go#12). A call past its deadline, or with
+// ctx done, ends with that error before anything is written.
+func remaining(ctx context.Context) (time.Duration, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	left := time.Until(deadlineOf(ctx))
+	if left <= 0 {
+		return 0, context.DeadlineExceeded
+	}
+	return left, nil
 }
 
 func deadlineOf(ctx context.Context) time.Time {
