@@ -190,6 +190,11 @@ so `tssealed call` checks instead that `confidential: "off"` is refused
 the other direction: `erlang_sealed.escript call` makes its `call_station/8`
 clear call against `tssealed serve`.
 
+Since @macula-io/ts 0.25.0 (macula-go v0.19.0) `tssealed call` also takes the
+caller's seal report of the call (`callReport`) and of the stream
+(`Stream.report()`, after the provider's first chunk) and requires each to say
+`sealed` 1, the Erlang provider's node id and a 16-hex key id; both are printed.
+
 `PODMAN_CPUS`, when set, caps the Erlang container (`podman --cpus`); unset,
 the Go runs are as before.
 

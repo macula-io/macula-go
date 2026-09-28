@@ -9,7 +9,9 @@ version `package-lock.json` pins.
   that sees a request with `sealed` 0 refuses it.
 - `call`: calls `~<provider>/vault` and opens `~<provider>/watch` with
   `confidential: "required"`, expecting the Erlang provider's texts, then checks
-  that `confidential: "off"` is refused (`invalid_argument`).
+  that `confidential: "off"` is refused (`invalid_argument`). It takes the
+  caller's seal report of the call and of the stream (@macula-io/ts 0.25.0) and
+  requires each to say `sealed` 1, the provider called and a 16-hex key id.
 
 **Not covered here:** `gosealed call` also calls the provider in the clear as an
 explicit target and expects `sealed_required`. @macula-io/ts has no API for an
