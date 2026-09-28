@@ -15,6 +15,10 @@
 # provider's sealed_required refusal is still checked the other way, by
 # erlang_sealed.escript's call_station/8 against the TypeScript provider.
 # PODMAN_CPUS, when set, caps the Erlang container's CPUs (podman --cpus).
+# CI_RUNNER_CGROUP_PARENT, when set, puts the Erlang container under that
+# systemd slice (podman --cgroup-parent), as ci_gate does under the same name:
+# a container started from inside a slice's scope otherwise lands outside its
+# ceiling. It must be a single *.slice name, or the script refuses to start.
 # MACULA_SEAL_REPORT=1 (macula 13.1.0 and macula-go 0.19.0 on) also checks each
 # caller's seal report both ways: sealed 1, addressed to the provider, the call
 # and the stream naming the same key. gosealed and erlang_sealed.escript check
@@ -25,6 +29,11 @@ image="${MACULA_CI_IMAGE:-ghcr.io/macula-io/macula-ci-otp@sha256:aff1d39bc4aa29d
 profile="${1:-pq_hybrid}"
 peer="${SEALED_PEER:-go}"
 case "$peer" in go|ts) ;; *) echo "sealed.sh: SEALED_PEER is go or ts, not $peer" >&2; exit 2 ;; esac
+slice="${CI_RUNNER_CGROUP_PARENT:-}"
+if [ -n "$slice" ] && ! [[ "$slice" =~ ^[A-Za-z0-9_.-]+\.slice$ ]]; then
+  echo "sealed.sh: CI_RUNNER_CGROUP_PARENT is a single *.slice name, not $slice" >&2
+  exit 2
+fi
 : "${MACULA_BUILD:?a compiled macula checkout at v13.x}"
 work="$(mktemp -d)"
 erl_name="macula-go-sealed-$$"
@@ -57,6 +66,7 @@ info="$(first_line "$work/stations.out" '^\{')"
 read -r host port station realm < <(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); s=d["stations"][0]; print(s["host"], s["port"], s["node_id"], d["realm_id"])' "$info")
 erl() {
   podman run --rm --name "$erl_name" --network host ${PODMAN_CPUS:+--cpus "$PODMAN_CPUS"} \
+    ${slice:+--cgroup-parent "$slice"} \
     -e MACULA_OFF_REFUSED="${MACULA_OFF_REFUSED:-}" -e MACULA_SEALED_PEER="$peer" \
     -e MACULA_SEAL_REPORT="${MACULA_SEAL_REPORT:-}" \
     -v "$MACULA_BUILD:/macula:ro" -v "$root/scripts/interop:/interop:ro" \
