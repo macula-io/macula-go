@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/macula-io/macula-go/pool"
@@ -33,7 +34,10 @@ func call(ctx context.Context, p *pool.Pool, realm [32]byte, procedure, payloadJ
 		}
 		envelope := reportFields(report)
 		envelope["result"] = json.RawMessage(payloadToJSON(result))
-		text, _ := json.Marshal(envelope)
+		text, err := json.Marshal(envelope)
+		if err != nil {
+			return "", fmt.Errorf("cabi: the report's envelope does not encode: %w", err)
+		}
 		return string(text), nil
 	}
 	result, err := p.Call(ctx, c)

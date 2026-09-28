@@ -273,7 +273,8 @@ that sealing ran on that exchange, nothing more.
   which no reseal can happen, or on a clear stream its first data, reply or
   end. A sealed stream's end travels clear and settles nothing, and no error
   settles a stream. Before it settles, and on a stream that ended first, it
-  fails with `not_settled`; on a served stream with `not_a_caller`.
+  fails with `not_settled`; on a served stream with `not_a_caller`. A stream
+  that settled and then ended, an error included, keeps its report.
 
 ## Content
 

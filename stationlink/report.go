@@ -36,7 +36,8 @@ var (
 // STREAM_REPLY or STREAM_END. A sealed stream's STREAM_END travels clear and
 // settles nothing, and no error settles a stream. After a reseal it names the
 // reseal's key. Before it settles, and on a stream that ended first, it is
-// ErrNotSettled; on a served stream, ErrNotACaller.
+// ErrNotSettled; on a served stream, ErrNotACaller. A stream that settled and
+// then ended, an error included, keeps its report.
 func (s *Stream) Report() (Report, error) {
 	if !s.caller {
 		return Report{}, ErrNotACaller

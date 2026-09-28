@@ -28,9 +28,12 @@ func TestReportOptionsAreChecked(t *testing.T) {
 	if opts, err := callOptionsOf(`{"report":0}`); err != nil || opts.report {
 		t.Errorf(`{"report":0}: %+v, %v`, opts, err)
 	}
-	// A stream reports through macula_stream_report, never through its open.
-	if _, err := openOptionsOf(`{"report":1}`); kindOf(err) != kindInvalidArgument {
-		t.Errorf("an open's report: %v, want invalid_argument", err)
+	// A stream reports through macula_stream_report, never through its open:
+	// the key has no meaning there, whatever its value.
+	for _, text := range []string{`{"report":1}`, `{"report":0}`} {
+		if _, err := openOptionsOf(text); kindOf(err) != kindInvalidArgument {
+			t.Errorf("an open's options %s: %v, want invalid_argument", text, err)
+		}
 	}
 	if _, err := openOptionsOf(`{"confidential":"required"}`); err != nil {
 		t.Errorf("an open's options: %v", err)

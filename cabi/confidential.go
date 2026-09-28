@@ -20,8 +20,11 @@ type callOptions struct {
 	provider     *[32]byte
 	creds        credentials
 	confidential stationlink.Confidentiality
-	// report asks for a call's seal report (macula's DESIGN_E2E_SEAL_REPORT).
-	report bool
+	// report asks for a call's seal report (macula's DESIGN_E2E_SEAL_REPORT);
+	// reportStated is whether options_json named "report" at all, whatever
+	// its value, which an open refuses.
+	report       bool
+	reportStated bool
 }
 
 type callOptionsJSON struct {
@@ -49,7 +52,7 @@ func callOptionsOf(text string) (callOptions, error) {
 		// an explicit target's, which the ABI does not offer.
 		return callOptions{}, invalidArgument("confidential off is refused for a call or an open: it is preferred or required")
 	}
-	opts := callOptions{confidential: conf}
+	opts := callOptions{confidential: conf, reportStated: o.Report != nil}
 	switch {
 	case o.Report == nil, *o.Report == 0:
 	case *o.Report == 1:
@@ -74,10 +77,10 @@ func callOptionsOf(text string) (callOptions, error) {
 }
 
 // openOptionsOf reads options_json of an open: a call's options, but no
-// "report", since a stream reports through macula_stream_report.
+// "report" at any value, since a stream reports through macula_stream_report.
 func openOptionsOf(text string) (callOptions, error) {
 	opts, err := callOptionsOf(text)
-	if err == nil && opts.report {
+	if err == nil && opts.reportStated {
 		return callOptions{}, invalidArgument("report is a call's option: a stream reports through macula_stream_report")
 	}
 	return opts, err
