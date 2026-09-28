@@ -15,6 +15,10 @@
 # provider's sealed_required refusal is still checked the other way, by
 # erlang_sealed.escript's call_station/8 against the TypeScript provider.
 # PODMAN_CPUS, when set, caps the Erlang container's CPUs (podman --cpus).
+# MACULA_SEAL_REPORT=1 (macula 13.1.0 and macula-go 0.19.0 on) also checks each
+# caller's seal report both ways: sealed 1, addressed to the provider, the call
+# and the stream naming the same key. gosealed and erlang_sealed.escript check
+# it; the TypeScript caller does not yet.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 image="${MACULA_CI_IMAGE:-ghcr.io/macula-io/macula-ci-otp@sha256:aff1d39bc4aa29d13044b90b38e9b7f4b757d50818cc11c5bb7e84cdbf82ac70}"
@@ -54,6 +58,7 @@ read -r host port station realm < <(python3 -c 'import json,sys; d=json.loads(sy
 erl() {
   podman run --rm --name "$erl_name" --network host ${PODMAN_CPUS:+--cpus "$PODMAN_CPUS"} \
     -e MACULA_OFF_REFUSED="${MACULA_OFF_REFUSED:-}" -e MACULA_SEALED_PEER="$peer" \
+    -e MACULA_SEAL_REPORT="${MACULA_SEAL_REPORT:-}" \
     -v "$MACULA_BUILD:/macula:ro" -v "$root/scripts/interop:/interop:ro" \
     "$image" escript /interop/erlang_sealed.escript /macula/_build/default/lib/macula "$host" "$port" "$station" "$realm" "$profile" "$@"
 }

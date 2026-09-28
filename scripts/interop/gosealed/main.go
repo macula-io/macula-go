@@ -143,6 +143,11 @@ func call(ctx context.Context, node *pool.Pool, seed pool.Seed, p profile.Profil
 	if err != nil || rerr != nil || string(body) != "chunk from erlang" || replied != "streamed by erlang" {
 		return errors.New("the sealed stream")
 	}
+	if os.Getenv("MACULA_SEAL_REPORT") == "1" {
+		if err := reports(ctx, node, stream, realm, provider, vault); err != nil {
+			return err
+		}
+	}
 	// Off at the pool is refused, never ignored: a clear call is an explicit
 	// target's, on a station link without SealTo.
 	if _, err := node.Call(ctx, pool.Call{Realm: realm, Procedure: vault, Payload: cbor.Map(nil),
@@ -160,6 +165,25 @@ func call(ctx context.Context, node *pool.Pool, seed pool.Seed, p profile.Profil
 	var refused *stationlink.ProviderError
 	if !errors.As(err, &refused) || refused.Code != "sealed_required" {
 		return errors.New("the clear call was not refused sealed_required")
+	}
+	return nil
+}
+
+// reports checks the seal reports (macula's DESIGN_E2E_SEAL_REPORT) of a
+// sealed call to the provider and of the stream already read: both sealed 1,
+// addressed to the provider, and naming the same key, the provider's.
+func reports(ctx context.Context, node *pool.Pool, stream *stationlink.Stream, realm, provider [32]byte, vault string) error {
+	_, called, err := node.CallReport(ctx, pool.Call{Realm: realm, Procedure: vault, Payload: cbor.Map(nil)})
+	fmt.Printf("call report: sealed %d, provider %x, key %x, %v\n", called.Sealed, called.Provider[:4], called.SealKeyID, err)
+	streamed, serr := stream.Report()
+	fmt.Printf("stream report: sealed %d, provider %x, key %x, %v\n", streamed.Sealed, streamed.Provider[:4], streamed.SealKeyID, serr)
+	switch {
+	case err != nil, serr != nil:
+		return errors.New("a seal report failed")
+	case called.Sealed != 1 || called.Provider != provider || called.SealKeyID == ([8]byte{}):
+		return errors.New("the call's seal report")
+	case streamed != called:
+		return errors.New("the stream's seal report differs from the call's")
 	}
 	return nil
 }

@@ -81,7 +81,31 @@ run("call", {Pool, Seed}, Realm, _Profile, _Self, [Provider]) ->
     Off = macula:call(Pool, Realm, Vault, #{n => 1}, 10_000, #{confidential => off}),
     io:format("off by direct dial: ~p~n", [Off]),
     Peer = list_to_binary(os:getenv("MACULA_SEALED_PEER", "go")),
-    off_verdict(os:getenv("MACULA_OFF_REFUSED"), Off, verdict(Peer, Called, Streamed, Clear)).
+    report_verdict(os:getenv("MACULA_SEAL_REPORT"), {Pool, Realm, Node, Vault, Watch},
+                   off_verdict(os:getenv("MACULA_OFF_REFUSED"), Off, verdict(Peer, Called, Streamed, Clear))).
+
+%% With MACULA_SEAL_REPORT=1 (macula 13.1.0 and later), the seal reports of a sealed call and a sealed stream to the
+%% provider: both sealed 1, addressed to it, and naming the same key (DESIGN_E2E_SEAL_REPORT).
+report_verdict("1", {Pool, Realm, Node, Vault, Watch}, Verdict) ->
+    CallReport = macula:call(Pool, Realm, Vault, #{n => 1}, 10_000, #{report => true}),
+    io:format("call report: ~p~n", [CallReport]),
+    StreamReport = stream_report(macula:call_stream(Pool, Realm, Watch, #{}, #{mode => server_stream})),
+    io:format("stream report: ~p~n", [StreamReport]),
+    reported(Node, CallReport, StreamReport, Verdict);
+report_verdict(_Off, _Call, Verdict) ->
+    Verdict.
+
+stream_report({ok, Stream}) ->
+    _ = macula_stream:recv(Stream, 10_000),
+    macula:stream_report(Stream);
+stream_report(Error) ->
+    Error.
+
+reported(Node, {ok, _, #{sealed := 1, provider := Node, seal_key_id := <<Key:64>>}},
+         {ok, #{sealed := 1, provider := Node, seal_key_id := <<Key:64>>}}, Verdict) ->
+    Verdict;
+reported(_Node, _CallReport, _StreamReport, _Verdict) ->
+    1.
 
 %% The provider's advertisement reaches the DHT in its own time.
 until_served(Call, 0) -> Call();
