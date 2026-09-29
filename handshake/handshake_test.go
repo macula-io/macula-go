@@ -252,7 +252,7 @@ func checkRefused(t *testing.T, name string, hello []byte, err, want error, code
 	if !errors.Is(err, want) {
 		t.Errorf("%s: %v, want %v", name, err, want)
 	}
-	_, helloErr := ReadHello(hello)
+	_, helloErr := ReadHello(hello, Station{})
 	var refused *RefusedError
 	if !errors.As(helloErr, &refused) || refused.Code != code {
 		t.Errorf("%s: the HELLO reads as %v, want a refusal with %s", name, helloErr, code)
@@ -286,7 +286,7 @@ func TestAWholeHandshakeConnectsBothSides(t *testing.T) {
 			t.Errorf("the client as the station sees it: node_id %x, capabilities %d, status until %d, binding until %d, puzzle %s",
 				client.NodeID, client.Capabilities, client.StatusExpiresAt, client.BindingNotAfter, client.Puzzle)
 		}
-		if capabilities, err := ReadHello(hello); err != nil || capabilities != stationCapabilities {
+		if capabilities, err := ReadHello(hello, station); err != nil || capabilities != stationCapabilities {
 			t.Errorf("ReadHello = (%d, %v), want the station's capabilities", capabilities, err)
 		}
 		if keys := frameKeys(t, connect); keys != "capabilities connect_binding connect_key connect_status frame_type identity_key member_endorsement proof version" {
@@ -578,15 +578,15 @@ func TestAClientReadsHelloExactly(t *testing.T) {
 		return map[string]cbor.Value{"accepted": cbor.Int(0), "refusal_code": cbor.Text(code)}
 	}
 
-	if capabilities, err := ReadHello(hello(map[string]cbor.Value{"accepted": cbor.Int(1)})); err != nil || capabilities != 7 {
+	if capabilities, err := ReadHello(hello(map[string]cbor.Value{"accepted": cbor.Int(1)}), Station{}); err != nil || capabilities != 7 {
 		t.Errorf("an accepting HELLO: (%d, %v), want capabilities 7", capabilities, err)
 	}
-	_, err := ReadHello(hello(refusing("puzzle_invalid")))
+	_, err := ReadHello(hello(refusing("puzzle_invalid")), Station{})
 	var refused *RefusedError
 	if !errors.As(err, &refused) || !errors.Is(err, ErrRefused) || refused.Code != RefusalPuzzleInvalid {
 		t.Errorf("a refusing HELLO: %v, want a refusal with puzzle_invalid", err)
 	}
-	if capabilities, err := ReadHello(hello(map[string]cbor.Value{"accepted": cbor.Int(1), "capabilities": cbor.Int(1<<53 - 1)})); err != nil || capabilities != 1<<53-1 {
+	if capabilities, err := ReadHello(hello(map[string]cbor.Value{"accepted": cbor.Int(1), "capabilities": cbor.Int(1<<53 - 1)}), Station{}); err != nil || capabilities != 1<<53-1 {
 		t.Errorf("capabilities 2^53-1: (%d, %v), want them read", capabilities, err)
 	}
 	acceptedWithCode := refusing("not_accepted")
@@ -604,7 +604,7 @@ func TestAClientReadsHelloExactly(t *testing.T) {
 		{"an opener", Opener(), ErrUnexpectedFrame},
 	}
 	for _, c := range cases {
-		if _, err := ReadHello(c.frame); !errors.Is(err, c.want) {
+		if _, err := ReadHello(c.frame, Station{}); !errors.Is(err, c.want) {
 			t.Errorf("%s: %v, want %v", c.name, err, c.want)
 		}
 	}

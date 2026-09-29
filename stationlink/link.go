@@ -200,7 +200,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 	if err != nil {
 		return nil, fmt.Errorf("stationlink: read HELLO: %w", err)
 	}
-	capabilities, err := handshake.ReadHello(hello)
+	capabilities, err := handshake.ReadHello(hello, station)
 	if err != nil {
 		return nil, err
 	}

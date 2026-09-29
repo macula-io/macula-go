@@ -66,7 +66,7 @@ func TestAConnectMaculaMadeIsAccepted(t *testing.T) {
 			if err != nil {
 				t.Fatalf("AcceptConnect: %v", err)
 			}
-			if _, err := ReadHello(hello); err != nil {
+			if _, err := ReadHello(hello, Station{}); err != nil {
 				t.Errorf("the HELLO: %v", err)
 			}
 			if client.MemberEndorsement == nil || len(client.MemberEndorsement) != 0 {

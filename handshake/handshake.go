@@ -15,12 +15,22 @@
 // Every frame decodes under the decoding rule and must hold exactly the keys of
 // its type, each of its type and length. Close reasons are local: a refusing
 // station sends only a HELLO with one coarse refusal code.
+//
+// Version 5 (macula plans/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md) binds both ends to
+// the TLS session. The opener and the challenge stay version 4; the client picks
+// 4 or 5 in CONNECT, and the station answers HELLO in the same version. In
+// version 5 the CONNECT proof (V2) also covers E, the session's TLS exporter
+// value, and the client's capabilities, and HELLO carries the station's session
+// proof, signed by its identity key over E, both frames and both node_ids, only
+// after every check on CONNECT has passed. A station with no exporter answers a
+// v5 CONNECT as an old station does, with unsupported_version.
 package handshake
 
 import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha512"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"slices"
@@ -35,12 +45,27 @@ import (
 // peer on version 3 hears unsupported_version rather than malformed_frame.
 const Version = 4
 
+// Version5 is the channel-bound handshake: both proofs over the TLS session's
+// exporter value, and no neighbour signature on any frame after HELLO.
+const Version5 = 5
+
+// ExporterLabel is the TLS 1.3 exporter label (RFC 8446 section 7.5) handshake
+// v5 binds to, over the context client node_id || station node_id, 32 bytes.
+const ExporterLabel = "EXPORTER-macula-session-v1"
+
 const (
-	nonceSize         = 32
-	maxProtocolInt    = 1 << 53
-	mldsaKeySize      = 2592
-	connectProofLabel = "MACULA-PQ-CONNECT-PROOF-V1"
+	nonceSize           = 32
+	exporterSize        = 32
+	maxProtocolInt      = 1 << 53
+	mldsaKeySize        = 2592
+	connectProofLabel   = "MACULA-PQ-CONNECT-PROOF-V1"
+	connectProofLabelV2 = "MACULA-PQ-CONNECT-PROOF-V2"
+	sessionProofLabel   = "MACULA-PQ-SESSION-PROOF-V1"
 )
+
+// Exporter is a TLS 1.3 session's exporter: label, context and length to bytes.
+// Both ends of one session export the same bytes.
+type Exporter func(label string, context []byte, length int) ([]byte, error)
 
 // The close reasons of the handshake, named as macula names them. A binding or
 // status statement that fails its check closes with identity's error for it.
@@ -71,6 +96,18 @@ var (
 	// ErrInvalidStationSession is a station session with a puzzle mode or
 	// difficulty the design does not have. It refuses every CONNECT.
 	ErrInvalidStationSession = errors.New("handshake: the station session has an unknown puzzle mode or difficulty")
+	// ErrSessionProofInvalid is a v5 HELLO whose session proof does not verify
+	// under the station's identity key over this session.
+	ErrSessionProofInvalid = errors.New("handshake: the session proof does not verify")
+	// ErrSessionProofMissing is a v5 HELLO that accepts without a session proof.
+	ErrSessionProofMissing = errors.New("handshake: the HELLO carries no session proof")
+	// ErrSessionProofRate is a station past its session proof budget.
+	ErrSessionProofRate = errors.New("handshake: the station's session proof budget is spent")
+	// ErrV4HelloToV5Connect is a v4 HELLO that accepts a v5 CONNECT: never taken
+	// as a v4 connection.
+	ErrV4HelloToV5Connect = errors.New("handshake: a v4 HELLO accepted a v5 CONNECT")
+	// ErrExporterUnavailable is a v5 session whose TLS exporter gave no value.
+	ErrExporterUnavailable = errors.New("handshake: the TLS exporter is unavailable")
 )
 
 // PeerIdentityMismatchError is ErrPeerIdentityMismatch with the node_id dialed
@@ -95,6 +132,9 @@ const (
 	// RefusalPuzzleInvalid refuses a node_id that misses the puzzle, which the
 	// client can check itself.
 	RefusalPuzzleInvalid RefusalCode = "puzzle_invalid"
+	// RefusalSessionProofRate refuses a v5 CONNECT past the station's session
+	// proof budget. Only a v5 HELLO carries it.
+	RefusalSessionProofRate RefusalCode = "session_proof_rate"
 	// RefusalNotAccepted refuses a CONNECT that failed any other check.
 	RefusalNotAccepted RefusalCode = "not_accepted"
 )
@@ -140,6 +180,7 @@ var (
 	connectKeys       = []string{"capabilities", "connect_binding", "connect_key", "connect_status", "frame_type", "identity_key", "member_endorsement", "proof", "version"}
 	helloAcceptedKeys = []string{"accepted", "capabilities", "frame_type", "version"}
 	helloRefusedKeys  = []string{"accepted", "capabilities", "frame_type", "refusal_code", "version"}
+	helloProvedKeys   = []string{"accepted", "capabilities", "frame_type", "session_proof", "version"}
 	statusKeys        = []string{"frame_type", "statement", "version"}
 )
 
@@ -199,16 +240,43 @@ type ClientSession struct {
 	// It is outside the proof; a station binds it to the node_id the proof
 	// establishes.
 	MemberEndorsement []byte
+	// Version is the version CONNECT carries: 4 when zero, or Version5, which
+	// needs Export.
+	Version int
+	// Export is this connection's TLS exporter, for version 5.
+	Export Exporter
 }
 
 // Station is what a client knows of the station once it has checked the
-// challenge.
+// challenge, and what its HELLO must answer.
 type Station struct {
 	NodeID          [32]byte
 	IdentityKey     []byte
 	TLSBinding      identity.SignedTBS
 	StatusExpiresAt int64
 	BindingNotAfter int64
+	// Version is the version the client's CONNECT carried: 4 when zero.
+	Version int
+	// What a v5 session proof covers.
+	profile        profile.Profile
+	exporterValue  []byte
+	challenge      []byte
+	connect        []byte
+	clientNodeID   [32]byte
+}
+
+func (s Station) version() int {
+	if s.Version == 0 {
+		return Version
+	}
+	return s.Version
+}
+
+func (s ClientSession) version() int {
+	if s.Version == 0 {
+		return Version
+	}
+	return s.Version
 }
 
 // AnswerChallenge checks a challenge and, when every check passes, returns the
@@ -246,11 +314,16 @@ func AnswerChallenge(challenge []byte, s ClientSession) ([]byte, Station, error)
 		return nil, Station{}, err
 	}
 	clientNodeID := identity.NodeIDOf(s.IdentityKey, s.Profile)
-	proof, err := s.ConnectKey.Sign(proofMessage(f.bytes("nonce"), stationNodeID, clientNodeID, s.Leaf, challenge))
+	version := s.version()
+	e, err := sessionExported(version, s.Export, clientNodeID, stationNodeID)
+	if err != nil {
+		return nil, Station{}, err
+	}
+	proof, err := s.ConnectKey.Sign(proofMessage(version, f.bytes("nonce"), stationNodeID, clientNodeID, s.Leaf, challenge, e, s.Capabilities))
 	if err != nil {
 		return nil, Station{}, fmt.Errorf("handshake: sign the CONNECT proof: %w", err)
 	}
-	connect := encodeFrame("connect",
+	connect := encodeFrameVersion(version, "connect",
 		entry("identity_key", cbor.Bytes(s.IdentityKey)),
 		entry("connect_key", cbor.Bytes(connectKey)),
 		entry("connect_binding", s.ConnectBinding.Value()),
@@ -264,8 +337,32 @@ func AnswerChallenge(challenge []byte, s ClientSession) ([]byte, Station, error)
 		TLSBinding:      tlsBinding,
 		StatusExpiresAt: expiresAt,
 		BindingNotAfter: binding.NotAfter,
+		Version:         version,
+		profile:         s.Profile,
+		exporterValue:   e,
+		challenge:       challenge,
+		connect:         connect,
+		clientNodeID:    clientNodeID,
 	}
 	return connect, station, nil
+}
+
+// sessionExported is E for a v5 session, with the client's node_id first in the
+// context (the initiator's), and nothing for v4.
+func sessionExported(version int, export Exporter, clientNodeID, stationNodeID [32]byte) ([]byte, error) {
+	switch {
+	case version == Version:
+		return nil, nil
+	case version != Version5:
+		return nil, ErrUnsupportedVersion
+	case export == nil:
+		return nil, ErrExporterUnavailable
+	}
+	e, err := export(ExporterLabel, append(clientNodeID[:], stationNodeID[:]...), exporterSize)
+	if err != nil || len(e) != exporterSize {
+		return nil, ErrExporterUnavailable
+	}
+	return e, nil
 }
 
 // StationSession is what a station brings to a CONNECT check: its profile, the
@@ -279,6 +376,12 @@ type StationSession struct {
 	PuzzleMode       PuzzleMode
 	Capabilities     uint64
 	NowMs            int64
+	// Export is this connection's TLS exporter, and SignSessionProof signs a
+	// v5 session proof with the station's identity key for the client named,
+	// within the station's budget (ErrSessionProofRate past it). Without both,
+	// the station answers only version 4.
+	Export           Exporter
+	SignSessionProof func(clientNodeID [32]byte, message []byte) ([]byte, error)
 }
 
 // Client is what a station knows of an accepted client.
@@ -294,6 +397,8 @@ type Client struct {
 	// MemberEndorsement is the endorsement the CONNECT carried, empty when the
 	// client holds none. Nothing here checks it: that is the station's policy.
 	MemberEndorsement []byte
+	// Version is the version the CONNECT carried, 4 or 5.
+	Version int
 }
 
 // AcceptConnect checks a CONNECT and returns the HELLO bytes to send. It
@@ -303,46 +408,71 @@ type Client struct {
 // against the challenge this station sent and the leaf it presented. On a
 // refusal the error is the local close reason, and the HELLO refuses with one
 // coarse code.
+//
+// A station with an exporter and a signer answers version 4 and 5, HELLO in the
+// CONNECT's version; in version 5 it signs the session proof only once every
+// check has passed. Without them it answers only version 4, and a v5 CONNECT
+// with unsupported_version in version 4, as an old station does.
 func AcceptConnect(connect []byte, s StationSession) (Client, []byte, error) {
-	client, err := checkConnect(connect, s)
+	client, sessionProof, err := checkConnect(connect, s)
 	if err != nil {
-		return Client{}, helloRefused(wireRefusal(err), s.Capabilities), err
+		return Client{}, helloRefused(client.Version, wireRefusal(err), s.Capabilities), err
 	}
-	return client, helloAccepted(s.Capabilities), nil
+	return client, helloAccepted(client.Version, s.Capabilities, sessionProof), nil
 }
 
-func checkConnect(connect []byte, s StationSession) (Client, error) {
+// checkConnect returns the client, with the version to answer in even on a
+// refusal, and in version 5 the session proof.
+func checkConnect(connect []byte, s StationSession) (Client, []byte, error) {
+	refused := Client{Version: Version}
 	if !knownPuzzleMode(s.PuzzleMode) || s.PuzzleDifficulty < 0 || s.PuzzleDifficulty > 256 {
-		return Client{}, ErrInvalidStationSession
+		return refused, nil, ErrInvalidStationSession
 	}
-	f, err := decode(connect, "connect", connectKeys)
+	f, err := decodeVersioned(connect, "connect", connectLayouts(s))
 	if err != nil {
-		return Client{}, err
+		return refused, nil, err
 	}
+	version := int(f.int("version"))
+	refused.Version = version
 	identityKey, connectKey, proof := f.bytes("identity_key"), f.bytes("connect_key"), f.bytes("proof")
 	switch {
 	case !identity.CarriedKeyWellFormed(identityKey, s.Profile) || !identity.CarriedKeyWellFormed(connectKey, s.Profile) ||
 		len(proof) != identity.SignatureSize(s.Profile):
-		return Client{}, ErrMalformedFrame
+		return refused, nil, ErrMalformedFrame
 	case sharesAHalf(identityKey, connectKey) || inLeaf(connectKey, s.Leaf):
-		return Client{}, ErrKeyPurposeReuse
+		return refused, nil, ErrKeyPurposeReuse
 	}
 	nodeID := identity.NodeIDOf(identityKey, s.Profile)
 	puzzle := puzzleResult(nodeID, s)
 	if puzzle == PuzzleResultUnsolved && s.PuzzleMode == PuzzleModeEnforce {
-		return Client{}, ErrPuzzleInvalid
+		return refused, nil, ErrPuzzleInvalid
 	}
 	connectBinding := f.signed("connect_binding")
 	binding, err := identity.VerifyConnectBinding(connectBinding, identityKey, s.Profile, connectKey, s.NowMs)
 	if err != nil {
-		return Client{}, err
+		return refused, nil, err
 	}
 	expiresAt, err := identity.VerifyStatus(f.signed("connect_status"), connectBinding, identityKey, s.Profile, s.NowMs)
 	if err != nil {
-		return Client{}, err
+		return refused, nil, err
 	}
-	if !proofVerifies(s, nodeID, connectKey, proof) {
-		return Client{}, ErrProofInvalid
+	challenge, err := decode(s.Challenge, "challenge", challengeKeys)
+	if err != nil {
+		return refused, nil, ErrProofInvalid
+	}
+	stationNodeID := identity.NodeIDOf(challenge.bytes("identity_key"), s.Profile)
+	e, err := sessionExported(version, s.Export, nodeID, stationNodeID)
+	if err != nil {
+		return refused, nil, err
+	}
+	capabilities := f.uint("capabilities")
+	message := proofMessage(version, challenge.bytes("nonce"), stationNodeID, nodeID, s.Leaf, s.Challenge, e, capabilities)
+	if !identity.Verify(message, proof, connectKey, s.Profile) {
+		return refused, nil, ErrProofInvalid
+	}
+	sessionProof, err := sessionProved(version, s, e, connect, stationNodeID, nodeID)
+	if err != nil {
+		return refused, nil, err
 	}
 	return Client{
 		NodeID:            nodeID,
@@ -354,7 +484,33 @@ func checkConnect(connect []byte, s StationSession) (Client, error) {
 		BindingNotAfter:   binding.NotAfter,
 		Puzzle:            puzzle,
 		MemberEndorsement: endorsementBytes(f.bytes("member_endorsement")),
-	}, nil
+		Version:           version,
+	}, sessionProof, nil
+}
+
+// connectLayouts is version 4 always, and version 5 for a station that can bind
+// to the session.
+func connectLayouts(s StationSession) map[int64][][]string {
+	if s.Export == nil || s.SignSessionProof == nil {
+		return map[int64][][]string{Version: {connectKeys}}
+	}
+	return map[int64][][]string{Version: {connectKeys}, Version5: {connectKeys}}
+}
+
+// sessionProved signs the session proof, in version 5 only, after every check
+// on CONNECT has passed.
+func sessionProved(version int, s StationSession, e, connect []byte, stationNodeID, clientNodeID [32]byte) ([]byte, error) {
+	if version != Version5 {
+		return nil, nil
+	}
+	signature, err := s.SignSessionProof(clientNodeID, sessionProofMessage(e, s.Challenge, connect, stationNodeID, clientNodeID, s.Capabilities))
+	if errors.Is(err, ErrSessionProofRate) {
+		return nil, ErrSessionProofRate
+	}
+	if err != nil {
+		return nil, fmt.Errorf("handshake: sign the session proof: %w", err)
+	}
+	return signature, nil
 }
 
 // endorsementBytes is an endorsement as sent and as handed on: never nil, so
@@ -381,31 +537,47 @@ func puzzleResult(nodeID [32]byte, s StationSession) PuzzleResult {
 	}
 }
 
-// proofVerifies checks a CONNECT proof against the challenge the station sent
-// and the leaf it presented. The station's own challenge decodes: it built it.
-func proofVerifies(s StationSession, clientNodeID [32]byte, connectKey, proof []byte) bool {
-	challenge, err := decode(s.Challenge, "challenge", challengeKeys)
-	if err != nil {
-		return false
-	}
-	stationNodeID := identity.NodeIDOf(challenge.bytes("identity_key"), s.Profile)
-	message := proofMessage(challenge.bytes("nonce"), stationNodeID, clientNodeID, s.Leaf, s.Challenge)
-	return identity.Verify(message, proof, connectKey, s.Profile)
-}
-
 // proofMessage is what the CONNECT proof signs: the label, a zero byte, the
 // nonce, the station's and the client's node_ids, the SHA-384 of the leaf DER
-// and the SHA-384 of the challenge bytes as received.
-func proofMessage(nonce []byte, stationNodeID, clientNodeID [32]byte, leafDER, challenge []byte) []byte {
+// and the SHA-384 of the challenge bytes as received. Version 5 (V2) appends E
+// and the client's capabilities, 8 bytes big-endian: every field has a fixed
+// width, so no two field sequences encode to the same bytes.
+func proofMessage(version int, nonce []byte, stationNodeID, clientNodeID [32]byte, leafDER, challenge, e []byte, capabilities uint64) []byte {
 	leafHash, challengeHash := sha512.Sum384(leafDER), sha512.Sum384(challenge)
-	out := make([]byte, 0, len(connectProofLabel)+1+len(nonce)+2*32+2*48)
-	out = append(out, connectProofLabel...)
+	label := connectProofLabel
+	if version == Version5 {
+		label = connectProofLabelV2
+	}
+	out := make([]byte, 0, len(label)+1+len(nonce)+2*32+2*48+exporterSize+8)
+	out = append(out, label...)
 	out = append(out, 0)
 	out = append(out, nonce...)
 	out = append(out, stationNodeID[:]...)
 	out = append(out, clientNodeID[:]...)
 	out = append(out, leafHash[:]...)
-	return append(out, challengeHash[:]...)
+	out = append(out, challengeHash[:]...)
+	if version != Version5 {
+		return out
+	}
+	out = append(out, e...)
+	return binary.BigEndian.AppendUint64(out, capabilities)
+}
+
+// sessionProofMessage is what the station's session proof signs: the label, a
+// zero byte, E, the SHA-384 of the challenge and of CONNECT, the station's and
+// the client's node_ids, and the station's capabilities, 8 bytes big-endian.
+// The SHA-384 of CONNECT covers the client's capabilities.
+func sessionProofMessage(e, challenge, connect []byte, stationNodeID, clientNodeID [32]byte, capabilities uint64) []byte {
+	challengeHash, connectHash := sha512.Sum384(challenge), sha512.Sum384(connect)
+	out := make([]byte, 0, len(sessionProofLabel)+1+exporterSize+2*48+2*32+8)
+	out = append(out, sessionProofLabel...)
+	out = append(out, 0)
+	out = append(out, e...)
+	out = append(out, challengeHash[:]...)
+	out = append(out, connectHash[:]...)
+	out = append(out, stationNodeID[:]...)
+	out = append(out, clientNodeID[:]...)
+	return binary.BigEndian.AppendUint64(out, capabilities)
 }
 
 func wireRefusal(err error) RefusalCode {
@@ -414,39 +586,66 @@ func wireRefusal(err error) RefusalCode {
 		return RefusalUnsupportedVersion
 	case errors.Is(err, ErrPuzzleInvalid):
 		return RefusalPuzzleInvalid
+	case errors.Is(err, ErrSessionProofRate):
+		return RefusalSessionProofRate
 	default:
 		return RefusalNotAccepted
 	}
 }
 
-func helloAccepted(capabilities uint64) []byte {
+func helloAccepted(version int, capabilities uint64, sessionProof []byte) []byte {
+	if version == Version5 {
+		return encodeFrameVersion(Version5, "hello", entry("accepted", cbor.Int(1)), entry("capabilities", cbor.Uint64(capabilities)),
+			entry("session_proof", cbor.Bytes(sessionProof)))
+	}
 	return encodeFrame("hello", entry("accepted", cbor.Int(1)), entry("capabilities", cbor.Uint64(capabilities)))
 }
 
-func helloRefused(code RefusalCode, capabilities uint64) []byte {
-	return encodeFrame("hello",
+func helloRefused(version int, code RefusalCode, capabilities uint64) []byte {
+	return encodeFrameVersion(version, "hello",
 		entry("accepted", cbor.Int(0)),
 		entry("refusal_code", cbor.Text(string(code))),
 		entry("capabilities", cbor.Uint64(capabilities)))
 }
 
-// ReadHello is the client's reading of HELLO: the station's capability bits,
-// or a *RefusedError with its refusal code.
-func ReadHello(frame []byte) (uint64, error) {
-	f, err := decode(frame, "hello", helloAcceptedKeys, helloRefusedKeys)
+// ReadHello is the client's reading of HELLO against the version its CONNECT
+// carried (station, as AnswerChallenge returned it): the station's capability
+// bits, or why not. After a v5 CONNECT an accepting HELLO must be version 5 with
+// a session proof that verifies under the station's identity key over this
+// session. A v4 refusal is how an old station answers (a *RefusedError); a v4
+// acceptance is never taken as a v4 connection.
+func ReadHello(frame []byte, station Station) (uint64, error) {
+	layouts := map[int64][][]string{Version: {helloAcceptedKeys, helloRefusedKeys}}
+	if station.version() == Version5 {
+		layouts[Version5] = [][]string{helloProvedKeys, helloAcceptedKeys, helloRefusedKeys}
+	}
+	f, err := decodeVersioned(frame, "hello", layouts)
 	if err != nil {
 		return 0, err
 	}
 	accepted, _ := f["accepted"].AsInt64()
 	_, hasCode := f["refusal_code"]
+	proof, hasProof := f["session_proof"].AsBytes()
 	switch {
-	case accepted == 1 && !hasCode:
-		return f.uint("capabilities"), nil
 	case accepted == 0 && hasCode:
 		return 0, &RefusedError{Code: RefusalCode(f.text("refusal_code"))}
-	default:
+	case accepted != 1 || hasCode:
+		return 0, ErrMalformedFrame
+	case f.int("version") == Version && station.version() == Version5:
+		return 0, ErrV4HelloToV5Connect
+	case f.int("version") == Version:
+		return f.uint("capabilities"), nil
+	case !hasProof:
+		return 0, ErrSessionProofMissing
+	case len(proof) != identity.SignatureSize(station.profile):
 		return 0, ErrMalformedFrame
 	}
+	capabilities := f.uint("capabilities")
+	message := sessionProofMessage(station.exporterValue, station.challenge, station.connect, station.NodeID, station.clientNodeID, capabilities)
+	if !identity.Verify(message, proof, station.IdentityKey, station.profile) {
+		return 0, ErrSessionProofInvalid
+	}
+	return capabilities, nil
 }
 
 // StatusFrame is a status frame carrying a fresh status statement, sent at
@@ -482,6 +681,12 @@ type frameFields map[string]cbor.Value
 // rule, the version, the frame type, exactly the keys of one of the layouts,
 // then the type and length of every field.
 func decode(frame []byte, frameType string, layouts ...[]string) (frameFields, error) {
+	return decodeVersioned(frame, frameType, map[int64][][]string{Version: layouts})
+}
+
+// decodeVersioned is decode with the layouts each version has: a version not
+// among them is ErrUnsupportedVersion.
+func decodeVersioned(frame []byte, frameType string, layouts map[int64][][]string) (frameFields, error) {
 	v, err := cbor.Decode(frame)
 	if err != nil {
 		return nil, ErrMalformedFrame
@@ -500,24 +705,24 @@ func decode(frame []byte, frameType string, layouts ...[]string) (frameFields, e
 		}
 		f[key] = e.Val
 	}
-	if err := f.checkVersion(); err != nil {
+	if err := f.checkVersion(layouts); err != nil {
 		return nil, err
 	}
 	if err := f.checkFrameType(frameType); err != nil {
 		return nil, err
 	}
-	if nonText > 0 || !f.hasLayout(layouts) || !f.typed() {
+	if nonText > 0 || !f.hasLayout(layouts[f.int("version")]) || !f.typed() {
 		return nil, ErrMalformedFrame
 	}
 	return f, nil
 }
 
-func (f frameFields) checkVersion() error {
+func (f frameFields) checkVersion(layouts map[int64][][]string) error {
 	version, isInt := f["version"].AsInt64()
-	switch {
-	case !isInt:
+	if !isInt {
 		return ErrMalformedFrame
-	case version != Version:
+	}
+	if _, known := layouts[version]; !known {
 		return ErrUnsupportedVersion
 	}
 	return nil
@@ -563,7 +768,7 @@ func fieldTyped(key string, v cbor.Value) bool {
 	case "nonce":
 		nonce, isBytes := v.AsBytes()
 		return isBytes && len(nonce) == nonceSize
-	case "identity_key", "connect_key", "proof", "member_endorsement":
+	case "identity_key", "connect_key", "proof", "member_endorsement", "session_proof":
 		_, isBytes := v.AsBytes()
 		return isBytes
 	case "tls_binding", "tls_status", "connect_binding", "connect_status", "statement":
@@ -584,7 +789,8 @@ func fieldTyped(key string, v cbor.Value) bool {
 }
 
 func knownRefusal(code RefusalCode) bool {
-	return code == RefusalUnsupportedVersion || code == RefusalPuzzleInvalid || code == RefusalNotAccepted
+	return code == RefusalUnsupportedVersion || code == RefusalPuzzleInvalid || code == RefusalSessionProofRate ||
+		code == RefusalNotAccepted
 }
 
 func (f frameFields) bytes(key string) []byte {
@@ -595,6 +801,11 @@ func (f frameFields) bytes(key string) []byte {
 func (f frameFields) text(key string) string {
 	s, _ := f[key].AsText()
 	return s
+}
+
+func (f frameFields) int(key string) int64 {
+	n, _ := f[key].AsInt64()
+	return n
 }
 
 func (f frameFields) uint(key string) uint64 {
@@ -623,8 +834,14 @@ func sharesAHalf(a, b []byte) bool {
 }
 
 func encodeFrame(frameType string, entries ...cbor.MapEntry) []byte {
+	return encodeFrameVersion(Version, frameType, entries...)
+}
+
+// encodeFrameVersion is encodeFrame in a given version: CONNECT and HELLO carry
+// the version the client chose; opener, challenge and status are always 4.
+func encodeFrameVersion(version int, frameType string, entries ...cbor.MapEntry) []byte {
 	all := append([]cbor.MapEntry{
-		entry("version", cbor.Int(Version)),
+		entry("version", cbor.Int(int64(version))),
 		entry("frame_type", cbor.Text(frameType)),
 	}, entries...)
 	return cbor.Encode(cbor.Map(all))
