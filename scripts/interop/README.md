@@ -100,6 +100,21 @@ non-zero when any check fails.
 
 To refresh the test data, give it `identity/testdata/erlang_bindings.json` as the fixtures file.
 
+## Handshake v5 on real TLS sessions
+
+`v5.sh` runs a bare macula station (`erlang_v5_station.escript`: `macula_peering` on a loopback listener, in the
+macula CI image) and dials it with `gov5link`, macula-go's `stationlink`. Each side derives E from its own TLS
+exporter (quinn's, Go's `crypto/tls`), so a label, context order or exporter that differs fails the handshake. The
+station probes the link with `liveness_ping` every 500 ms for the hold, so the link must answer. It passes when the
+link is v5 and not resumed, and every connection that ended did so after the client's GOODBYE:
+
+```sh
+MACULA_BUILD=<compiled macula checkout, 13.2.0 or later> scripts/interop/v5.sh pq_hybrid
+```
+
+The other direction, macula's client to macula-go's station, is `sealed.sh`: its `teststation` answers v5.
+`CI_RUNNER_CGROUP_PARENT` puts the station's container in that cgroup.
+
 ## Against a live station
 
 `golivelink` dials one running macula 12 station with `stationlink` and reports the handshake (time, TLS group, suite,

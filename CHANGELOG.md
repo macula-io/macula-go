@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Handshake v5, as macula 13.2.0 speaks it (macula's
+`plans/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md`): a link is authenticated once, by
+hybrid proofs bound to its TLS session, instead of a composite signature on
+every control frame in `pq_hybrid`.
+
+### Added
+
+- `handshake`: version 5. `ClientSession.Version` and `Export` (the TLS
+  exporter, `ExporterLabel`), the V2 CONNECT proof over E and the client's
+  capabilities, `StationSession.Export` and `SignSessionProof` for the station
+  side, the session proof in HELLO, and `ReadHello(frame, station)`, which
+  refuses a v5 HELLO whose session proof does not verify
+  (`ErrSessionProofInvalid`, including a composite whose RSA half is another
+  key's), one without it (`ErrSessionProofMissing`), and a v4 acceptance of a v5
+  CONNECT (`ErrV4HelloToV5Connect`). `RefusalSessionProofRate`.
+- `stationlink`: every link dials v5; a station never seen on v5 that refuses it
+  with `unsupported_version` is dialled once more with v4, and with v4 for 10
+  minutes; a station seen on v5 that answers v4 is `ErrV5DowngradeRefused`
+  until `ForgetV5Peer`. `Link.HandshakeVersion`, `HandshakeCounters`.
+- `frame`: `VerifySessionFrame`, `LivenessPingFrame`, `LivenessPongFrame`,
+  `LivenessNonce`.
+- On v5 the liveness probe is `liveness_ping`, answered by the station's
+  connection, and the link answers the station's; nothing is signed for it.
+- `scripts/interop/v5.sh`: the live check against a macula station on real TLS
+  sessions; the handshake fixture now holds v5 frames both ways.
+
+### Changed
+
+- `handshake.ReadHello` takes the `Station` `AnswerChallenge` returned.
+- `teststation` answers v5 (and v4).
+- On a v5 link no control frame is neighbour-signed; a neighbour-signed one ends
+  it as malformed.
+
 ## [0.19.0] - 2026-09-28
 
 ### Added

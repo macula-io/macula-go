@@ -27,7 +27,10 @@
 > fetched both ways with macula 12.6.0's Erlang sharer and fetcher. Manifests
 > and MCIDs are macula 12's, byte for byte. Calls and streams are sealed end
 > to end as macula 13 seals them (scheme 1), checked both ways against
-> macula 13.0.0 in `pq_pure` and `pq_hybrid`.
+> macula 13.0.0 in `pq_pure` and `pq_hybrid`. On master, links speak macula
+> 13.2.0's handshake v5, bound to the TLS session, and fall back to v4 once
+> for a station before 13.2.0; checked live against macula's own station in
+> both profiles (2026-09-29).
 
 ## What is this?
 
@@ -50,13 +53,16 @@ On the wire:
   `id-MLDSA87-RSA4096-PSS-SHA512`), whose node_id solves the admission
   puzzle.
 - **Frames:** requests, replies, publications and records are signed
-  objects; in `pq_hybrid` every control frame is also neighbour-signed.
+  objects. On a handshake v5 link (macula 13.2.0) the connection is
+  authenticated once, by hybrid proofs bound to its TLS session, and no control
+  frame carries a neighbour signature; on a v4 link, to a station before 13.2.0,
+  every control frame in `pq_hybrid` is neighbour-signed.
 
 ## Features
 
 | Primitive | Caller | Provider | Notes |
 |---|---|---|---|
-| Handshake v4 (OPENER, CHALLENGE, CONNECT, HELLO, STATUS) | ✅ | — | `stationlink.Dial`, the station pinned by node_id |
+| Handshake v5, and v4 (OPENER, CHALLENGE, CONNECT, HELLO, STATUS) | ✅ | — | `stationlink.Dial`, the station pinned by node_id: v5 bound to the TLS exporter, v4 once after a station refuses v5; a station seen on v5 that answers v4 is refused (`ErrV5DowngradeRefused`, `ForgetV5Peer`); `HandshakeCounters`. Checked live against macula 13.2.0's station in `pq_pure` and `pq_hybrid` |
 | Deterministic CBOR codec and decoding rule | ✅ | ✅ | Hand-rolled, see [Codec](#the-cbor-codec-is-hand-rolled-on-purpose) |
 | Unary RPC (signed CALL, RESULT, ERROR) | ✅ | ✅ | `pool.Call` by direct dial; `pool.Serve` answers with `handler_error`, `temporary_relay_failure` or `unknown_next_peer` |
 | Request admission | — | ✅ | Deadline window, each request run once, a copy answered from the stored reply, bounded as macula bounds it |
@@ -146,7 +152,7 @@ hex> -realm <hex> -realm-key <file> -key <node key file>`):
 | [`pool`](pool) | A node's station links: seeds, redial and replay, calls by direct dial, serving, pubsub, the DHT |
 | [`stationlink`](stationlink) | One link to one station: handshake, STATUS, liveness, calls, serving, pubsub, the DHT |
 | [`identity`](identity) | Keys, bindings, status statements, signed objects, key files |
-| [`handshake`](handshake) | The v4 handshake frames, both sides |
+| [`handshake`](handshake) | The v5 and v4 handshake frames, both sides |
 | [`frame`](frame) | Signed requests, replies, publications, stream frames, neighbour-signed control frames |
 | [`record`](record) | DHT records: sign, verify, storage keys, provider authorization |
 | [`transport`](transport) | The post-quantum QUIC dial |
@@ -154,7 +160,7 @@ hex> -realm <hex> -realm-key <file> -key <node key file>`):
 | [`profile`](profile) | The `pq_pure` and `pq_hybrid` crypto profiles |
 | [`manifest`](manifest) | Content manifests and MCIDs, as macula 12 makes them |
 | [`cabi`](cabi) | The C ABI every non-Go binding uses (.NET, Python, PHP, TypeScript): `macula.h`, its [contract](cabi/CONTRACT.md), and libmacula on each release |
-| [`teststation`](teststation) | In-process macula 12 stations for tests; `teststation/cmd/teststation` serves them to a binding's tests |
+| [`teststation`](teststation) | In-process macula 13.2.0 stations for tests (handshake v5 and v4); `teststation/cmd/teststation` serves them to a binding's tests |
 | [`ucan`](ucan) | macula 12's UCAN: mint, verify a chain against a policy, proof ids and did:keys, held to macula's vectors |
 | [`devicerequest`](devicerequest) | A device's request to a realm, signed: realm proof v2 (macula-realm#29) |
 | [`ownershipproof`](ownershipproof) | The `asserted_by` block of a payload, signed and verified: ownership proof v2 (mcl-om#7) |
