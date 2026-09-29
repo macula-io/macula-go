@@ -25,10 +25,13 @@ import (
 	"github.com/macula-io/macula-go/transport"
 )
 
-// testStation is an in-process macula 12 station for one client connection:
-// a QUIC listener with a self-signed ML-DSA-87 leaf on macula-pqc's groups,
-// macula-go's station side of the v4 handshake, and after HELLO the control
-// stream the test drives by hand.
+// testStation is an in-process macula station for one client connection: a
+// QUIC listener with a self-signed ML-DSA-87 leaf on macula-pqc's groups,
+// macula-go's station side of the handshake, and after HELLO the control stream
+// the test drives by hand. startTestStation's is a pre-v5 station: it answers a
+// v5 CONNECT with unsupported_version, as a station before macula 13.2.0 does,
+// and keeps accepting until one handshake completes, so a client's v4 fallback
+// reaches it. startTestStationV5's also answers v5.
 type testStation struct {
 	t       *testing.T
 	profile profile.Profile
@@ -41,9 +44,13 @@ type testStation struct {
 
 	// refuse makes the HELLO a refusal with this code.
 	refuse handshake.RefusalCode
+	// v5 answers handshake v5 too, with the connection's exporter and the
+	// station's identity key.
+	v5 bool
 
 	mu         sync.Mutex
 	client     handshake.Client
+	refused    int // handshakes refused before one completed
 	connection [48]byte
 	stream     *quic.Stream
 	writer     *frameWriter
@@ -68,7 +75,19 @@ func sharedIdentityKey(t *testing.T, p profile.Profile, name string) *identity.N
 
 func startTestStation(t *testing.T, p profile.Profile, refuse handshake.RefusalCode) *testStation {
 	t.Helper()
-	key := sharedIdentityKey(t, p, "station")
+	return startStation(t, p, "station", false, refuse)
+}
+
+// startTestStationV5 is a station that answers v5, with an identity of its own
+// under keyName: a client that completed v5 with a node_id refuses it on v4.
+func startTestStationV5(t *testing.T, p profile.Profile, keyName string) *testStation {
+	t.Helper()
+	return startStation(t, p, keyName, true, "")
+}
+
+func startStation(t *testing.T, p profile.Profile, keyName string, v5 bool, refuse handshake.RefusalCode) *testStation {
+	t.Helper()
+	key := sharedIdentityKey(t, p, keyName)
 	tlsKey, err := mldsa.GenerateKey(mldsa.MLDSA87())
 	if err != nil {
 		t.Fatalf("TLS key: %v", err)
@@ -106,7 +125,7 @@ func startTestStation(t *testing.T, p profile.Profile, refuse handshake.RefusalC
 	host, portText, _ := net.SplitHostPort(listener.Addr().String())
 	port, _ := strconv.Atoi(portText)
 	s := &testStation{t: t, profile: p, key: key, nodeID: nodeID, leaf: leaf, binding: binding,
-		host: host, port: uint16(port), refuse: refuse,
+		host: host, port: uint16(port), refuse: refuse, v5: v5,
 		received: make(chan []byte, 64), accepted: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
@@ -121,49 +140,71 @@ func (s *testStation) target() transport.Target {
 	return transport.Target{Host: s.host, Port: s.port, Profile: s.profile, ExpectedNodeID: s.nodeID}
 }
 
-// serve accepts one connection, runs the station's side of the handshake,
-// then hands every frame the client sends to received.
+// serve accepts connections until one handshake completes, then hands every
+// frame that client sends to received.
 func (s *testStation) serve(ctx context.Context, listener *quic.Listener) {
-	conn, err := listener.Accept(ctx)
-	if err != nil {
-		return
+	for {
+		conn, err := listener.Accept(ctx)
+		if err != nil {
+			return
+		}
+		if s.handshaken(ctx, conn) {
+			return
+		}
+		s.mu.Lock()
+		s.refused++
+		s.mu.Unlock()
 	}
+}
+
+// handshaken runs the station's side of the handshake on conn and, when it
+// completes, serves the client's frames; it reports whether it completed.
+func (s *testStation) handshaken(ctx context.Context, conn *quic.Conn) bool {
 	stream, err := conn.AcceptStream(ctx)
 	if err != nil {
-		return
+		return false
 	}
 	reader, writer := frameReader{r: stream}, &frameWriter{w: stream}
 	opener, err := reader.read(HandshakeFrameBytes)
 	if err != nil || handshake.ReadOpener(opener) != nil {
-		return
+		return false
 	}
 	now := time.Now().UnixMilli()
 	status, err := identity.StatusStatement(s.key, s.binding, now, now+3_600_000)
 	if err != nil {
 		s.t.Errorf("station: status statement: %v", err)
-		return
+		return false
 	}
 	challenge, err := handshake.Challenge(handshake.StationMaterial{
 		Profile: s.profile, IdentityKey: s.key.PublicKey(), TLSBinding: s.binding, TLSStatus: status})
 	if err != nil {
 		s.t.Errorf("station: challenge: %v", err)
-		return
+		return false
 	}
 	if err := writer.write(challenge, HandshakeFrameBytes); err != nil {
-		return
+		return false
 	}
 	connect, err := reader.read(HandshakeFrameBytes)
 	if err != nil {
-		return
+		return false
 	}
-	client, hello, err := handshake.AcceptConnect(connect, handshake.StationSession{
+	session := handshake.StationSession{
 		Profile: s.profile, Challenge: challenge, Leaf: s.leaf, PuzzleDifficulty: identity.PuzzleDifficulty,
-		PuzzleMode: handshake.PuzzleModeEnforce, Capabilities: 1, NowMs: time.Now().UnixMilli()})
+		PuzzleMode: handshake.PuzzleModeEnforce, Capabilities: 1, NowMs: time.Now().UnixMilli()}
+	if s.v5 {
+		state := conn.ConnectionState().TLS
+		session.Export = state.ExportKeyingMaterial
+		session.SignSessionProof = func(_ [32]byte, message []byte) ([]byte, error) { return s.key.Sign(message) }
+	}
+	client, hello, err := handshake.AcceptConnect(connect, session)
 	if s.refuse != "" {
 		hello = refusedHello(s.refuse)
 	}
 	if writer.write(hello, HandshakeFrameBytes) != nil || err != nil || s.refuse != "" {
-		return
+		_ = stream.Close()
+		time.Sleep(50 * time.Millisecond)
+		_ = conn.CloseWithError(0, "refused")
+		return false
 	}
 	s.mu.Lock()
 	s.client, s.connection, s.stream, s.writer = client, sha512.Sum384(challenge), stream, writer
@@ -173,7 +214,7 @@ func (s *testStation) serve(ctx context.Context, listener *quic.Listener) {
 		frame, err := reader.read(MaxFrameBytes)
 		if err != nil {
 			close(s.received)
-			return
+			return true
 		}
 		s.received <- frame
 	}

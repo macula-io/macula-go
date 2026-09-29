@@ -161,7 +161,7 @@ func TestAV5HelloMaculaMadeProvesTheSession(t *testing.T) {
 			clientNodeID := identity.NodeIDOf(connectFields.bytes("identity_key"), p)
 			station := Station{NodeID: stationNodeID, IdentityKey: stationKey, Version: Version5, profile: p,
 				exporterValue: exported("session_a", append(clientNodeID[:], stationNodeID[:]...)),
-				challenge: challenge, connect: connect, clientNodeID: clientNodeID}
+				challenge:     challenge, connect: connect, clientNodeID: clientNodeID}
 			if capabilities, err := ReadHello(unhex(t, e.ErlangHelloV5), station); err != nil || capabilities != 5 {
 				t.Errorf("ReadHello of macula's v5 HELLO: (%d, %v), want the station's capabilities 5", capabilities, err)
 			}

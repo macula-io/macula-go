@@ -258,11 +258,11 @@ type Station struct {
 	// Version is the version the client's CONNECT carried: 4 when zero.
 	Version int
 	// What a v5 session proof covers.
-	profile        profile.Profile
-	exporterValue  []byte
-	challenge      []byte
-	connect        []byte
-	clientNodeID   [32]byte
+	profile       profile.Profile
+	exporterValue []byte
+	challenge     []byte
+	connect       []byte
+	clientNodeID  [32]byte
 }
 
 func (s Station) version() int {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/handshake"
 	"github.com/macula-io/macula-go/seal"
 )
 
@@ -219,8 +220,11 @@ func (l *Link) verifiedOutcome(v cbor.Value, pending *pendingCall) (callOutcome,
 }
 
 // probe sends a liveness probe every livenessEvery and ends the link after two
-// misses in a row. Any verified answer counts, a provider's or a relay error
-// from the station alike: it proves the station is there.
+// misses in a row. On v5 the probe is a liveness_ping, answered by the
+// station's connection with a liveness_pong of its nonce, and nothing is
+// signed. On v4 it is a _macula.ping CALL: any verified answer counts, a
+// provider's or a relay error from the station alike, as it proves the station
+// is there.
 func (l *Link) probe() {
 	ticker := time.NewTicker(livenessEvery)
 	defer ticker.Stop()
@@ -231,11 +235,39 @@ func (l *Link) probe() {
 			return
 		case <-ticker.C:
 		}
-		_, err := l.Call(context.Background(), Call{Procedure: livenessProcedure, Payload: cbor.Map(nil), Timeout: livenessTimeout})
-		misses = missesAfter(err, misses)
+		misses = missesAfter(l.probeOnce(), misses)
 		if misses >= 2 {
 			l.end(ErrLivenessLost)
 			return
+		}
+	}
+}
+
+// probeOnce is one liveness probe: nil when answered, ErrCallTimeout when not
+// within livenessTimeout.
+func (l *Link) probeOnce() error {
+	if l.version != handshake.Version5 {
+		_, err := l.Call(context.Background(), Call{Procedure: livenessProcedure, Payload: cbor.Map(nil), Timeout: livenessTimeout})
+		return err
+	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	if err := l.sendControl(frame.LivenessPingFrame(nonce)); err != nil {
+		return err
+	}
+	deadline := time.After(livenessTimeout)
+	for {
+		select {
+		case answered := <-l.pongs:
+			if answered == nonce {
+				return nil
+			}
+		case <-deadline:
+			return ErrCallTimeout
+		case <-l.done:
+			return ErrClosed
 		}
 	}
 }

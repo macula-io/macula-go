@@ -1,7 +1,9 @@
-// Package teststation is an in-process macula 12 station for tests of the
+// Package teststation is an in-process macula 13.2.0 station for tests of the
 // clients built on macula-go, in Go or through its bindings: a QUIC listener with an ML-DSA-87 leaf on
 // macula-pqc's groups that accepts any number of client connections, runs the
-// station's side of the v4 handshake on each, and then does what a station
+// station's side of the handshake on each (v5, bound to the connection's TLS
+// exporter, or v4 for a client that sends it; on v5 it answers liveness_ping and
+// reads frames with no neighbour signature), and then does what a station
 // does with their frames: answers _macula.ping and the _dht.* procedures from
 // an in-memory DHT, routes a CALL to the connection that advertised its
 // procedure and the reply back to the caller, and delivers each PUBLISH as an
@@ -105,6 +107,7 @@ type conn struct {
 	client     handshake.Client
 	connection [48]byte
 	recvSeq    uint64
+	version    int
 	topics     map[routeKey]bool
 }
 
@@ -353,14 +356,19 @@ func (s *Station) serve(ctx context.Context, qconn *quic.Conn) {
 	if err != nil {
 		return
 	}
+	// A station of macula 13.2.0: it answers handshake v5, binding its session
+	// proof to this connection's TLS exporter, and v4.
+	state := qconn.ConnectionState().TLS
 	client, hello, err := handshake.AcceptConnect(connect, handshake.StationSession{
 		Profile: s.Profile, Challenge: challenge, Leaf: s.leaf, PuzzleDifficulty: identity.PuzzleDifficulty,
-		PuzzleMode: handshake.PuzzleModeEnforce, Capabilities: 1, NowMs: time.Now().UnixMilli()})
+		PuzzleMode: handshake.PuzzleModeEnforce, Capabilities: 1, NowMs: time.Now().UnixMilli(),
+		Export:           state.ExportKeyingMaterial,
+		SignSessionProof: func(_ [32]byte, message []byte) ([]byte, error) { return s.Key.Sign(message) }})
 	if w.write(hello, handshakeFrameBytes) != nil || err != nil {
 		return
 	}
 	c := &conn{nodeID: client.NodeID, qconn: qconn, writer: w, client: client, connection: sha512.Sum384(challenge),
-		topics: map[routeKey]bool{}}
+		version: client.Version, topics: map[routeKey]bool{}}
 	s.mu.Lock()
 	if s.stopped {
 		s.mu.Unlock()
@@ -409,15 +417,17 @@ func (s *Station) received(c *conn, payload []byte) {
 	if frameType == "status" {
 		return
 	}
-	opened, err := frame.VerifyNeighbour(v, frame.NeighbourPeer{Profile: s.Profile, PeerKey: c.client.IdentityKey,
-		Connection: c.connection, Seq: c.recvSeq})
+	if livenessType, nonce, isLiveness := frame.LivenessNonce(v); isLiveness && c.version == handshake.Version5 {
+		if livenessType == "liveness_ping" {
+			_ = c.writer.write(cbor.Encode(frame.LivenessPongFrame(nonce)), maxFrameBytes)
+		}
+		return
+	}
+	opened, err := s.opened(c, v, frameType)
 	if err != nil {
 		s.t.Errorf("teststation: a frame from %x that does not open: %v", c.nodeID[:4], err)
 		_ = c.qconn.CloseWithError(1, "malformed")
 		return
-	}
-	if frame.NeighbourSigned(s.Profile, frameType) {
-		c.recvSeq++
 	}
 	switch frameType {
 	case "call":
@@ -435,6 +445,20 @@ func (s *Station) received(c *conn, payload []byte) {
 	case "goodbye":
 		_ = c.qconn.CloseWithError(0, "goodbye")
 	}
+}
+
+// opened is a frame as the station reads it: on v5 with no neighbour signature,
+// on v4 opened from its neighbour signature at the next seq.
+func (s *Station) opened(c *conn, v cbor.Value, frameType string) (cbor.Value, error) {
+	if c.version == handshake.Version5 {
+		return frame.VerifySessionFrame(v)
+	}
+	opened, err := frame.VerifyNeighbour(v, frame.NeighbourPeer{Profile: s.Profile, PeerKey: c.client.IdentityKey,
+		Connection: c.connection, Seq: c.recvSeq})
+	if err == nil && frame.NeighbourSigned(s.Profile, frameType) {
+		c.recvSeq++
+	}
+	return opened, err
 }
 
 // called answers a station procedure itself, and routes any other CALL to the
