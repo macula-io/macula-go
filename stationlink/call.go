@@ -254,6 +254,12 @@ func (l *Link) probeOnce() error {
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return err
 	}
+	// A pong that arrived after its probe's deadline must not take the place of
+	// this probe's.
+	select {
+	case <-l.pongs:
+	default:
+	}
 	if err := l.sendControl(frame.LivenessPingFrame(nonce)); err != nil {
 		return err
 	}

@@ -1,12 +1,14 @@
 package stationlink
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/handshake"
 	"github.com/macula-io/macula-go/profile"
 )
 
@@ -189,5 +191,41 @@ func TestAV4LinkRefusesLivenessFrames(t *testing.T) {
 	s.send(cbor.Encode(frame.LivenessPingFrame([16]byte{1})))
 	if err := waitDone(t, link); !errors.Is(err, frame.ErrMalformedFrame) {
 		t.Errorf("a liveness_ping on v4 ended the link with %v, want ErrMalformedFrame", err)
+	}
+}
+
+// A v4 handshake that completes to a node this process has already seen on v5 is refused, whichever dial saw it
+// first (Fable): two dials racing, one completing v5 while the other retries v4, cannot leave a v4 link to a v5 node.
+func TestAV4HandshakeToANodeSeenOnV5IsRefusedWhicheverDialFinishesFirst(t *testing.T) {
+	keyName := "raced station"
+	v5 := startTestStationV5(t, profile.PQPure, keyName)
+	if _, err := dial(t, v5, newClient(t, profile.PQPure)); err != nil {
+		t.Fatalf("Dial v5: %v", err)
+	}
+	before := HandshakeCounters()
+	c := newClient(t, profile.PQPure)
+	preV5 := startStation(t, profile.PQPure, keyName, false, "")
+	_, err := dialOnce(context.Background(), Config{Target: preV5.target(), IdentityKey: c.key, Issuer: c.issuer}, handshake.Version)
+	if !errors.Is(err, ErrV5DowngradeRefused) {
+		t.Fatalf("a v4 handshake to a node seen on v5: %v, want ErrV5DowngradeRefused", err)
+	}
+	if counted("v5_downgrade_refused", before) != 1 || counted("v4_connections", before) != 0 {
+		t.Errorf("counters %v, want one refused downgrade and no v4 connection", HandshakeCounters())
+	}
+}
+
+// On v5 a liveness frame is read like any other first: one that carries a neighbour signature ends the link.
+func TestAV5LinkRefusesANeighbourSignedLivenessFrame(t *testing.T) {
+	s := startTestStationV5(t, profile.PQPure, "v5 signed liveness station")
+	link, err := dial(t, s, newClient(t, profile.PQPure))
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	s.waitAccepted()
+	ping, _ := frame.LivenessPingFrame([16]byte{5}).AsMap()
+	signed := cbor.Map(append(ping, cbor.MapEntry{Key: cbor.Text("neighbour"), Val: cbor.Map(nil)}))
+	s.send(cbor.Encode(signed))
+	if err := waitDone(t, link); !errors.Is(err, frame.ErrMalformedFrame) {
+		t.Errorf("a neighbour-signed liveness_ping on v5 ended the link with %v, want ErrMalformedFrame", err)
 	}
 }

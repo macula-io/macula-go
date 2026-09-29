@@ -152,6 +152,8 @@ func Start(t T, p profile.Profile, name string) *Station {
 	listener, err := quic.ListenAddr("127.0.0.1:0", &tls.Config{
 		Certificates:     []tls.Certificate{{Certificate: [][]byte{leaf}, PrivateKey: tlsKey}},
 		CurvePreferences: transport.KeyExchangeGroups, MinVersion: tls.VersionTLS13, NextProtos: []string{transport.ALPN},
+		// No resumption on either side, as a macula 13.2.0 station issues no tickets.
+		SessionTicketsDisabled: true,
 	}, &quic.Config{})
 	if err != nil {
 		t.Fatalf("teststation: listen: %v", err)

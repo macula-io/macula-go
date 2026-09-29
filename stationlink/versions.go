@@ -57,16 +57,25 @@ func (v *peerVersions) unsupportedVersion(nodeID [32]byte, now time.Time) bool {
 	return true
 }
 
-func (v *peerVersions) completed(nodeID [32]byte, version int) {
+// completed records a handshake that completed with nodeID in version. A v4
+// handshake to a node this process has seen on v5 is ErrV5DowngradeRefused,
+// whichever dial saw it first: two dials racing, one completing v5 while the
+// other's v4 retry completes, cannot leave a v4 link to a v5 node.
+func (v *peerVersions) completed(nodeID [32]byte, version int) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if version == 5 {
+	switch {
+	case version == 5:
 		v.seenV5[nodeID] = true
 		delete(v.v4Until, nodeID)
 		v.counters["v5_connections"]++
-		return
+	case v.seenV5[nodeID]:
+		v.counters["v5_downgrade_refused"]++
+		return ErrV5DowngradeRefused
+	default:
+		v.counters["v4_connections"]++
 	}
-	v.counters["v4_connections"]++
+	return nil
 }
 
 func (v *peerVersions) count(name string) {

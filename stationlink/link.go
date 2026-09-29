@@ -246,7 +246,9 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config, versio
 	if err != nil {
 		return nil, err
 	}
-	versions.completed(station.NodeID, station.Version)
+	if err := versions.completed(station.NodeID, station.Version); err != nil {
+		return nil, err
+	}
 	_ = stream.SetReadDeadline(time.Time{})
 	self, err := cfg.IdentityKey.NodeID()
 	if err != nil {
@@ -430,12 +432,12 @@ func (l *Link) received(payload []byte) error {
 	if frameType == "status" {
 		return l.statusRenewed(payload)
 	}
-	if livenessType, nonce, isLiveness := frame.LivenessNonce(v); isLiveness {
-		return l.liveness(livenessType, nonce)
-	}
 	opened, err := l.opened(v, frameType)
 	if err != nil {
 		return err
+	}
+	if livenessType, nonce, isLiveness := frame.LivenessNonce(opened); isLiveness {
+		return l.liveness(livenessType, nonce)
 	}
 	switch frameType {
 	case "event":
