@@ -1,12 +1,17 @@
 // Command gohandshake is macula-go's step of the cross-stack handshake check:
-// it answers each CHALLENGE macula's macula_handshake made, and makes a
-// CHALLENGE of its own for macula to answer. See
+// it answers each CHALLENGE macula's macula_handshake made, in version 4 and in
+// version 5, and makes a CHALLENGE of its own for macula to answer. Version 5
+// binds to a TLS exporter, which a file cannot carry, so both stacks use the
+// same stand-in: HMAC-SHA256 keyed by the session's name over the label and
+// the context, session "session_a". See
 // scripts/interop/erlang_handshake.escript and scripts/interop/run.sh.
 //
 //	go run ./scripts/interop/gohandshake <erlang_challenges.json> <go_handshake.json>
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -35,6 +40,7 @@ type erlangChallenge struct {
 type goEntry struct {
 	Profile       string `json:"profile"`
 	Connect       string `json:"connect"`
+	ConnectV5     string `json:"connect_v5"`
 	Challenge     string `json:"challenge"`
 	StationNodeID string `json:"station_node_id"`
 }
@@ -86,15 +92,19 @@ func both(c erlangChallenge) (goEntry, error) {
 	if err != nil {
 		return goEntry{}, err
 	}
-	connect, err := answer(p, leaf, challenge, stationNodeID, c.Now)
+	connect, err := answer(p, leaf, challenge, stationNodeID, c.Now, handshake.Version)
 	if err != nil {
 		return goEntry{}, fmt.Errorf("answer macula's CHALLENGE: %w", err)
+	}
+	connectV5, err := answer(p, leaf, challenge, stationNodeID, c.Now, handshake.Version5)
+	if err != nil {
+		return goEntry{}, fmt.Errorf("answer macula's CHALLENGE in version 5: %w", err)
 	}
 	ownChallenge, ownNodeID, err := station(p, leaf, c.Now)
 	if err != nil {
 		return goEntry{}, fmt.Errorf("make a CHALLENGE: %w", err)
 	}
-	return goEntry{Profile: c.Profile, Connect: hex.EncodeToString(connect),
+	return goEntry{Profile: c.Profile, Connect: hex.EncodeToString(connect), ConnectV5: hex.EncodeToString(connectV5),
 		Challenge: hex.EncodeToString(ownChallenge), StationNodeID: hex.EncodeToString(ownNodeID[:])}, nil
 }
 
@@ -113,8 +123,9 @@ func decoded(c erlangChallenge) (leaf, challenge []byte, stationNodeID [32]byte,
 	return
 }
 
-// answer is macula-go's CONNECT to a macula CHALLENGE, from a fresh client.
-func answer(p profile.Profile, leaf, challenge []byte, stationNodeID [32]byte, now int64) ([]byte, error) {
+// answer is macula-go's CONNECT to a macula CHALLENGE, from a fresh client, in
+// version 4 or 5.
+func answer(p profile.Profile, leaf, challenge []byte, stationNodeID [32]byte, now int64, version int) ([]byte, error) {
 	client, err := identity.GenerateIdentityKey(p, 0)
 	if err != nil {
 		return nil, err
@@ -134,9 +145,20 @@ func answer(p profile.Profile, leaf, challenge []byte, stationNodeID [32]byte, n
 	connect, _, err := handshake.AnswerChallenge(challenge, handshake.ClientSession{
 		Profile: p, ExpectedNodeID: stationNodeID, Leaf: leaf, IdentityKey: client.PublicKey(),
 		ConnectKey: connectKey, ConnectBinding: binding, ConnectStatus: status,
-		Capabilities: capabilities, NowMs: now + minuteMs,
+		Capabilities: capabilities, NowMs: now + minuteMs, Version: version, Export: standIn("session_a"),
 	})
 	return connect, err
+}
+
+// standIn is the exporter both stacks use for the check: the same session name,
+// label, context and length give the same bytes in either.
+func standIn(session string) handshake.Exporter {
+	return func(label string, context []byte, length int) ([]byte, error) {
+		mac := hmac.New(sha256.New, []byte(session))
+		mac.Write([]byte(label))
+		mac.Write(context)
+		return mac.Sum(nil)[:length], nil
+	}
 }
 
 // station is a fresh macula-go station's CHALLENGE over leaf, and its node_id.

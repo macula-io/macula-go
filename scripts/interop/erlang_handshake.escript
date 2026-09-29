@@ -7,7 +7,14 @@
 %%       macula accepts macula-go's CONNECTs (and checks each member_endorsement arrives empty) and answers
 %%       macula-go's CHALLENGEs; writes the fixture handshake/erlang_interop_test.go verifies
 %%
-%% Every step runs at macula's own test instant, so the fixture stays valid.
+%% Both steps run in version 4 and in version 5 (macula plans/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md). Version 5 binds to
+%% a TLS exporter, which a file cannot carry, so both stacks use the same stand-in: HMAC-SHA256 keyed by the session's
+%% name over the label and the context, session "session_a". A proof over another context order, message or
+%% capability encoding than macula's fails in the other stack. The challenge step keeps each station's throwaway key
+%% in the work file, never in the fixture, so the answer step can sign the station's v5 session proof.
+%%
+%% Every step runs at macula's own test instant, so the fixture stays valid. MACULA_REVISION names macula in the
+%% fixture's generator.
 -mode(compile).
 
 -define(NOW, 1789000000000).
@@ -32,7 +39,8 @@ main(["answer", Ebin, ChallengesPath, GoPath, Out]) ->
     lists:foreach(fun({Name, Ok}) -> io:format("~s ~s~n", [verdict(Ok), Name]) end, Checks),
     Failed = [N || {N, false} <- Checks],
     io:format("handshake: ~b checks, ~b failed~n", [length(Checks), length(Failed)]),
-    Fixture = #{<<"generator">> => <<"macula_handshake at macula v12.1.0, OTP 28">>,
+    Fixture = #{<<"generator">> => iolist_to_binary(["macula_handshake at macula ", os:getenv("MACULA_REVISION", "unknown"),
+                                                      ", OTP ", erlang:system_info(otp_release)]),
                 <<"now">> => ?NOW, <<"leaf">> => binary:encode_hex(?LEAF, lowercase),
                 <<"entries">> => [E || {_C, E} <- Results]},
     ok = file:write_file(Out, json:encode(Fixture)),
@@ -47,7 +55,8 @@ challenge_entry(Profile) ->
                                              tls_binding => Binding, tls_status => Status}),
     #{<<"profile">> => atom_to_binary(Profile), <<"now">> => ?NOW, <<"leaf">> => hex(?LEAF),
       <<"challenge">> => hex(Challenge),
-      <<"station_node_id">> => hex(macula_node_keys:node_id(Public, Profile))}.
+      <<"station_node_id">> => hex(macula_node_keys:node_id(Public, Profile)),
+      <<"station_key">> => hex(term_to_binary(StationId))}.
 
 answer(ProfileName, ErlangChallenge, Go) ->
     Profile = binary_to_existing_atom(ProfileName),
@@ -55,18 +64,39 @@ answer(ProfileName, ErlangChallenge, Go) ->
     Station = #{profile => Profile, challenge => unhex(maps:get(<<"challenge">>, ErlangChallenge)), leaf => ?LEAF,
                 puzzle => #{difficulty => 0, mode => enforce}, capabilities => ?CAPABILITIES, now => ?NOW + ?MINUTE},
     Accepted = macula_handshake:accept_connect(unhex(maps:get(<<"connect">>, Go)), Station),
-    {ErlangConnect, Answered} = answer_go_challenge(Profile, Go),
+    StationKey = binary_to_term(unhex(maps:get(<<"station_key">>, ErlangChallenge))),
+    StationV5 = Station#{export => stand_in(<<"session_a">>),
+                         sign_session_proof => fun(_ClientNodeId, Message) ->
+                                                   {ok, macula_node_keys:sign(Message, StationKey)}
+                                               end},
+    AcceptedV5 = macula_handshake:accept_connect(unhex(maps:get(<<"connect_v5">>, Go)), StationV5),
+    {ErlangConnect, Answered} = answer_go_challenge(Profile, Go, #{}),
+    {ErlangConnectV5, AnsweredV5} = answer_go_challenge(Profile, Go, #{version => 5, export => stand_in(<<"session_a">>)}),
     Checks = [{Name("macula accepts macula-go's CONNECT"), accepted(Accepted)},
               {Name("macula is handed an empty member_endorsement"), endorsement(Accepted) =:= <<>>},
-              {Name("macula answers macula-go's CHALLENGE"), Answered}],
+              {Name("macula answers macula-go's CHALLENGE"), Answered},
+              {Name("macula accepts macula-go's v5 CONNECT, in version 5"), version(AcceptedV5) =:= 5},
+              {Name("macula answers macula-go's CHALLENGE in version 5"), AnsweredV5}],
     Entry = #{<<"profile">> => ProfileName,
               <<"erlang_challenge">> => maps:get(<<"challenge">>, ErlangChallenge),
               <<"erlang_station_node_id">> => maps:get(<<"station_node_id">>, ErlangChallenge),
               <<"go_challenge">> => maps:get(<<"challenge">>, Go),
-              <<"erlang_connect">> => hex(ErlangConnect)},
+              <<"erlang_connect">> => hex(ErlangConnect),
+              <<"go_connect_v5">> => maps:get(<<"connect_v5">>, Go),
+              <<"erlang_hello_v5">> => hex(hello(AcceptedV5)),
+              <<"erlang_connect_v5">> => hex(ErlangConnectV5)},
     {Checks, Entry}.
 
-answer_go_challenge(Profile, Go) ->
+%% The exporter stand-in both stacks use: the same session, label, context and length give the same bytes.
+stand_in(Session) ->
+    fun(Label, Context, Length) -> {ok, binary:part(crypto:mac(hmac, sha256, Session, [Label, Context]), 0, Length)} end.
+
+version({accepted, #{version := Version}, _Hello}) -> Version;
+version({refused, Reason, _Hello}) -> io:format("accept_connect v5 refused: ~p~n", [Reason]), refused.
+
+hello({_Verdict, _ClientOrReason, Hello}) -> Hello.
+
+answer_go_challenge(Profile, Go, V5) ->
     {ok, ClientId} = macula_node_keys:generate(identity, Profile),
     {ok, Connect} = macula_node_keys:generate(connect, Profile),
     ConnectPublic = macula_node_keys:public_key(Connect),
@@ -76,8 +106,8 @@ answer_go_challenge(Profile, Go) ->
                 identity_key => macula_node_keys:public_key(ClientId), connect_key => Connect,
                 connect_binding => Binding, connect_status => Status, capabilities => ?CAPABILITIES,
                 now => ?NOW + ?MINUTE},
-    case macula_handshake:answer_challenge(unhex(maps:get(<<"challenge">>, Go)), Session) of
-        {ok, Connect1, _Station} -> {Connect1, true};
+    case macula_handshake:answer_challenge(unhex(maps:get(<<"challenge">>, Go)), maps:merge(Session, V5)) of
+        {ok, Connect1, _Station, _ExpectHello} -> {Connect1, true};
         {error, Reason} -> io:format("answer_challenge: ~p~n", [Reason]), {<<>>, false}
     end.
 

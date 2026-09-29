@@ -44,7 +44,7 @@ escript "$here/verify_go_bindings.escript" "$lib/ebin" "$work/go_binding_artifac
 # handshake/testdata/erlang_handshake.json for handshake/erlang_interop_test.go.
 escript "$here/erlang_handshake.escript" challenge "$lib/ebin" "$work/erlang_challenges.json"
 (cd "$root" && go run ./scripts/interop/gohandshake "$work/erlang_challenges.json" "$work/go_handshake.json")
-escript "$here/erlang_handshake.escript" answer "$lib/ebin" "$work/erlang_challenges.json" "$work/go_handshake.json" \
+MACULA_REVISION=${revision:0:8} escript "$here/erlang_handshake.escript" answer "$lib/ebin" "$work/erlang_challenges.json" "$work/go_handshake.json" \
   "$work/erlang_handshake.json" || status=1
 if [ -n "$fixtures" ]; then
   cp "$work/erlang_handshake.json" "$root/handshake/testdata/erlang_handshake.json"

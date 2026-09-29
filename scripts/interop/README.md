@@ -13,7 +13,12 @@ These scripts check macula-go's post-quantum identity against a compiled macula,
 - macula's `macula_handshake` accepts the CONNECT macula-go sends to a macula CHALLENGE, is handed its empty
   `member_endorsement`, and answers a CHALLENGE macula-go made (`erlang_handshake.escript` around
   `gohandshake`). The frames macula made go to `handshake/testdata/erlang_handshake.json`, which
-  `handshake/erlang_interop_test.go` checks in every `go test`.
+  `handshake/erlang_interop_test.go` checks in every `go test`. The same runs in handshake version 5 (macula 13.2.0):
+  macula accepts macula-go's v5 CONNECT and answers macula-go's CHALLENGE in version 5, and macula-go accepts
+  macula's v5 CONNECT and verifies the session proof in macula's v5 HELLO. A file cannot carry a TLS exporter, so both
+  stacks use one stand-in (HMAC-SHA256 keyed by the session's name over the label and the context): a proof message,
+  exporter context order or capability encoding that differs between the stacks fails there. The station's throwaway
+  key stays in the run's work file, never in the fixture.
 
 - macula's `macula_frame` verifies the control frames a client link sends (ADVERTISE, UNADVERTISE, SUBSCRIBE,
   UNSUBSCRIBE, GOODBYE) as macula-go neighbour-signs them in `pq_hybrid` and sends them in `pq_pure`, and refuses one
