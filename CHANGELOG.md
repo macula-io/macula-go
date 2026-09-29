@@ -5,12 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.20.0] - 2026-09-29
 
 Handshake v5, as macula 13.2.0 speaks it (macula's
 `plans/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md`): a link is authenticated once, by
 hybrid proofs bound to its TLS session, instead of a composite signature on
-every control frame in `pq_hybrid`.
+every control frame in `pq_hybrid`. With macula 13.2.1's fix for macula#53: no
+ordering keeps a v4 link to a station this process has seen on v5. Checked live
+against macula 13.2.1 from hex.pm, both directions, `pq_pure` and `pq_hybrid`
+(`scripts/interop/v5.sh` and `sealed.sh`; the log is a release asset).
 
 ### Added
 

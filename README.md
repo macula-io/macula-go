@@ -19,7 +19,7 @@
 
 ---
 
-> **Status, 2026-09-27:** master speaks the **macula 12** wire and nothing
+> **Status, 2026-09-29:** master speaks the **macula 12** wire and nothing
 > older. Handshake, calls, streaming RPC, publish/subscribe, the DHT, serving
 > procedures (under an org or in a node's own namespace) and node-served
 > content work against live macula stations, including calls and streams by
@@ -29,8 +29,8 @@
 > to end as macula 13 seals them (scheme 1), checked both ways against
 > macula 13.0.0 in `pq_pure` and `pq_hybrid`. On master, links speak macula
 > 13.2.0's handshake v5, bound to the TLS session, and fall back to v4 once
-> for a station before 13.2.0; checked live against macula's own station in
-> both profiles (2026-09-29).
+> for a station before 13.2.0; checked live against macula 13.2.1 from hex.pm
+> in both profiles and both directions (v0.20.0).
 
 ## What is this?
 
