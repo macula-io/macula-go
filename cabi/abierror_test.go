@@ -81,7 +81,13 @@ func TestAnEndedContextNamesWhyItEnded(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cancelTimed()
-	time.Sleep(10 * time.Millisecond)
+	// Wait for the deadline itself: a fixed sleep can end before the context's
+	// timer has fired on a loaded host, and the context is not yet done then.
+	select {
+	case <-timed.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("a 1 ms timeout never ended its context")
+	}
 	if got := classify(timed, errors.New("stream reset")).kind; got != kindTimeout {
 		t.Errorf("a timeout: %s, want timeout", got)
 	}
