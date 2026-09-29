@@ -18,7 +18,7 @@ const v4Cache = 10 * time.Minute
 
 var versions = &peerVersions{
 	seenV5: map[[32]byte]bool{}, v4Until: map[[32]byte]time.Time{}, fallbacks: map[[32]byte]uint64{},
-	counters: map[string]uint64{},
+	v4Links: map[[32]byte]map[*Link]struct{}{}, counters: map[string]uint64{},
 }
 
 type peerVersions struct {
@@ -26,6 +26,7 @@ type peerVersions struct {
 	seenV5    map[[32]byte]bool
 	v4Until   map[[32]byte]time.Time
 	fallbacks map[[32]byte]uint64
+	v4Links   map[[32]byte]map[*Link]struct{} // this process's open v4 links, by station
 	counters  map[string]uint64
 }
 
@@ -36,6 +37,9 @@ var counterNames = []string{"v4_connections", "v5_connections", "v4_fallbacks", 
 func (v *peerVersions) dialVersion(nodeID [32]byte, now time.Time) int {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if v.seenV5[nodeID] {
+		return 5
+	}
 	if until, cached := v.v4Until[nodeID]; cached && now.Before(until) {
 		return 4
 	}
@@ -57,25 +61,56 @@ func (v *peerVersions) unsupportedVersion(nodeID [32]byte, now time.Time) bool {
 	return true
 }
 
-// completed records a handshake that completed with nodeID in version. A v4
-// handshake to a node this process has seen on v5 is ErrV5DowngradeRefused,
-// whichever dial saw it first: two dials racing, one completing v5 while the
-// other's v4 retry completes, cannot leave a v4 link to a v5 node.
-func (v *peerVersions) completed(nodeID [32]byte, version int) error {
+// completed records link's handshake with its station, in the link's version,
+// so that no ordering keeps a v4 link to a node this process has seen on v5
+// (macula#53). A v4 link to a node seen on v5 is ErrV5DowngradeRefused; any
+// other v4 link is registered, under the same lock as the check, and a later v5
+// completion with that node ends every registered one as a downgrade.
+func (v *peerVersions) completed(nodeID [32]byte, link *Link) error {
+	superseded, err := v.recorded(nodeID, link)
+	for _, old := range superseded {
+		old.end(ErrV5DowngradeRefused)
+	}
+	return err
+}
+
+// recorded is completed under the lock: it returns the v4 links a v5
+// completion supersedes, to be ended outside it.
+func (v *peerVersions) recorded(nodeID [32]byte, link *Link) ([]*Link, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	switch {
-	case version == 5:
+	case link.version == 5:
 		v.seenV5[nodeID] = true
 		delete(v.v4Until, nodeID)
 		v.counters["v5_connections"]++
+		superseded := make([]*Link, 0, len(v.v4Links[nodeID]))
+		for old := range v.v4Links[nodeID] {
+			superseded = append(superseded, old)
+			v.counters["v5_downgrade_refused"]++
+		}
+		delete(v.v4Links, nodeID)
+		return superseded, nil
 	case v.seenV5[nodeID]:
 		v.counters["v5_downgrade_refused"]++
-		return ErrV5DowngradeRefused
-	default:
-		v.counters["v4_connections"]++
+		return nil, ErrV5DowngradeRefused
 	}
-	return nil
+	if v.v4Links[nodeID] == nil {
+		v.v4Links[nodeID] = map[*Link]struct{}{}
+	}
+	v.v4Links[nodeID][link] = struct{}{}
+	v.counters["v4_connections"]++
+	return nil, nil
+}
+
+// v4Ended forgets a v4 link that ended.
+func (v *peerVersions) v4Ended(nodeID [32]byte, link *Link) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	delete(v.v4Links[nodeID], link)
+	if len(v.v4Links[nodeID]) == 0 {
+		delete(v.v4Links, nodeID)
+	}
 }
 
 func (v *peerVersions) count(name string) {

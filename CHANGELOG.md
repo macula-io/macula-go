@@ -25,7 +25,11 @@ every control frame in `pq_hybrid`.
 - `stationlink`: every link dials v5; a station never seen on v5 that refuses it
   with `unsupported_version` is dialled once more with v4, and with v4 for 10
   minutes; a station seen on v5 that answers v4 is `ErrV5DowngradeRefused`
-  until `ForgetV5Peer`. `Link.HandshakeVersion`, `HandshakeCounters`.
+  until `ForgetV5Peer`. No ordering keeps a v4 link to a station this process
+  has seen on v5 (macula#53): a v4 handshake completing after the v5 one is
+  refused, and a v4 link open when the v5 one completes is ended, both with
+  `ErrV5DowngradeRefused`. A station seen on v5 is always dialled with v5.
+  `Link.HandshakeVersion`, `HandshakeCounters`.
 - `frame`: `VerifySessionFrame`, `LivenessPingFrame`, `LivenessPongFrame`,
   `LivenessNonce`.
 - On v5 the liveness probe is `liveness_ping`, answered by the station's

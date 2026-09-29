@@ -246,9 +246,6 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config, versio
 	if err != nil {
 		return nil, err
 	}
-	if err := versions.completed(station.NodeID, station.Version); err != nil {
-		return nil, err
-	}
 	_ = stream.SetReadDeadline(time.Time{})
 	self, err := cfg.IdentityKey.NodeID()
 	if err != nil {
@@ -284,8 +281,18 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config, versio
 		keyring: cfg.Keyring, kemAdvertise: cfg.KEMAdvertise,
 		done: make(chan struct{}),
 	}
-	link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })
-	link.bindingTimer = time.AfterFunc(untilMs(station.BindingNotAfter, 0), func() { link.end(ErrBindingExpired) })
+	if err := versions.completed(station.NodeID, link); err != nil {
+		unsubscribe()
+		return nil, err
+	}
+	// Under the link's lock, and only for a link a v5 completion has not already
+	// ended since it was registered: end reads the timers under the same lock.
+	link.mu.Lock()
+	if link.err == nil {
+		link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })
+		link.bindingTimer = time.AfterFunc(untilMs(station.BindingNotAfter, 0), func() { link.end(ErrBindingExpired) })
+	}
+	link.mu.Unlock()
 	go link.sendStatements(statements)
 	go link.read(reader)
 	go link.acceptStreams()
@@ -526,6 +533,9 @@ func (l *Link) end(err error) {
 		l.endServed(err)
 		l.endStreams(err)
 		_ = l.conn.CloseWithError(0, "link ended")
+		if l.version == handshake.Version {
+			versions.v4Ended(l.station.NodeID, l)
+		}
 		close(l.done)
 	})
 }

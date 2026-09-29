@@ -229,3 +229,29 @@ func TestAV5LinkRefusesANeighbourSignedLivenessFrame(t *testing.T) {
 		t.Errorf("a neighbour-signed liveness_ping on v5 ended the link with %v, want ErrMalformedFrame", err)
 	}
 }
+
+// The other ordering (macula#53): a v4 link completes first, then this process completes v5 with the same node on
+// another link. The v4 link is ended then, as a downgrade, so no ordering keeps a v4 link to a node seen on v5.
+func TestAV4LinkOpenWhenItsNodeCompletesV5IsEnded(t *testing.T) {
+	keyName := "closure station"
+	preV5 := startStation(t, profile.PQPure, keyName, false, "")
+	v4Link, err := dial(t, preV5, newClient(t, profile.PQPure))
+	if err != nil || v4Link.HandshakeVersion() != 4 {
+		t.Fatalf("the v4 link: %v, version %d", err, v4Link.HandshakeVersion())
+	}
+	before := HandshakeCounters()
+	// The other dial chose v5 before the fallback cached v4 for this node: as if it had, drop the cache entry.
+	versions.mu.Lock()
+	delete(versions.v4Until, preV5.nodeID)
+	versions.mu.Unlock()
+	v5 := startTestStationV5(t, profile.PQPure, keyName)
+	if _, err := dial(t, v5, newClient(t, profile.PQPure)); err != nil {
+		t.Fatalf("the v5 link: %v", err)
+	}
+	if err := waitDone(t, v4Link); !errors.Is(err, ErrV5DowngradeRefused) {
+		t.Errorf("the v4 link ended with %v, want ErrV5DowngradeRefused", err)
+	}
+	if counted("v5_downgrade_refused", before) != 1 {
+		t.Errorf("counters %v, want one refused downgrade", HandshakeCounters())
+	}
+}
