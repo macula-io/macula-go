@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-09-30
+
+A station endpoint names the release its station runs, as macula 13.3.0 reads it.
+
+### Added
+
+- `record`: `StationEndpoint.StationVersion`, the release a station says it runs
+  (its app vsn). `ReadStationEndpoint` fills it only when the payload carries
+  `station_version` as text of 1 to 64 bytes, macula's
+  `read_station_endpoint/1` rule; none, bytes, empty text or text past 64 bytes
+  read as empty. It is self-attested: the signature says who claims it, not
+  that the running code matches.
+- `record`: `TestStationEndpointVectors` holds the reader to macula's
+  `test/vectors/station_endpoint_v1.json` (5370915f), both profiles, copied by
+  `scripts/interop/copy_station_endpoint_vectors.sh`.
+
 ## [0.20.0] - 2026-09-29
 
 Handshake v5, as macula 13.2.0 speaks it (macula's

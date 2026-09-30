@@ -7,6 +7,10 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 )
 
+// maxStationVersionBytes bounds the release a station endpoint names, as
+// macula_record's MAX_STATION_VERSION_BYTES does.
+const maxStationVersionBytes = 64
+
 // ErrInvalidPort is a station endpoint's QUIC port of 0.
 var ErrInvalidPort = errors.New("record: a QUIC port outside 1 to 65535")
 
@@ -43,10 +47,14 @@ func NewStationEndpoint(quicPort uint16, opts StationEndpointOptions) (Record, e
 
 // StationEndpoint is a station endpoint's payload, as macula_record's
 // read_station_endpoint/1 reads it: its QUIC port, 0 when the payload carries
-// none from 1 to 65535, and the hosts it is dialled at.
+// none from 1 to 65535, the hosts it is dialled at, and the release the station
+// says it runs. StationVersion is empty unless the payload carries it as text
+// of 1 to 64 bytes; it is self-attested, so the signature says who claims it,
+// not that the running code matches.
 type StationEndpoint struct {
 	QUICPort       uint16
 	HostAdvertised []string
+	StationVersion string
 }
 
 // ReadStationEndpoint reads a station endpoint's payload. A record of another
@@ -58,6 +66,9 @@ func ReadStationEndpoint(r Record) (StationEndpoint, error) {
 	endpoint := StationEndpoint{HostAdvertised: hostList(payloadField(r.Payload, "host_advertised"))}
 	if port, isInt := payloadField(r.Payload, "quic_port").AsInt64(); isInt && port >= 1 && port <= 65535 {
 		endpoint.QUICPort = uint16(port)
+	}
+	if release, isText := payloadField(r.Payload, "station_version").AsText(); isText && len(release) <= maxStationVersionBytes {
+		endpoint.StationVersion = release
 	}
 	return endpoint, nil
 }
