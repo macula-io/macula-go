@@ -69,6 +69,18 @@ int32_t macula_verify(const uint8_t *data, size_t data_len, const uint8_t *signa
                       const uint8_t *public_key, size_t public_key_len, const char *profile, char **err_out);
 void macula_key_free(macula_handle key);
 
+/* ---- Signed objects (macula_signed_object) ---------------------------- */
+/* Since macula-go v0.22.0. */
+
+/* Verifies object, the CBOR bytes of a signed object that carries its key
+ * ({key, tbs, signature}), under label and profile (NULL is "pq_hybrid"), as
+ * macula_signed_object:verify/3: {"node_id", "key", "tbs", "fields"}, node_id
+ * as hex, key and tbs as {"$bytes"}, fields the tbs map. label is
+ * NUL-terminated. One that does not verify is
+ * "unverified" with "reason" malformed, signature_invalid or alg_mismatch. */
+char *macula_signed_object_verify(const char *label, const uint8_t *object, size_t object_len, const char *profile,
+                                  char **err_out);
+
 /* ---- Device request proofs (realm proof v2, macula-realm#29) ----------- */
 /* Since macula-go v0.14.0. */
 

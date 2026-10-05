@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-10-05
+
+A binding verifies a signed object through the C ABI, as macula_signed_object
+does: what macula-ts and macula-mcp need to show a corpus signature verified.
+
+### Added
+
+- `cabi`: `macula_signed_object_verify(label, object, object_len, profile,
+  err_out)` verifies the CBOR bytes of a signed object that carries its key
+  (`{key, tbs, signature}`) under a label and profile, with
+  `identity.VerifyObject`, and gives `{"node_id", "key", "tbs", "fields"}`,
+  node_id as hex like every id the ABI returns.
+  node_id comes from the verified key, so a caller compares it with the
+  provider it pinned. A new error kind, `unverified`, names macula's refusal
+  in `reason`: `malformed`, `signature_invalid` or `alg_mismatch`.
+- `cabi`: `TestMaculaRagSignedCorpusVectors` holds it to macula-rag's
+  `test/vectors/signed_corpus.json` (ef6c536, label `macula-rag corpus v1`):
+  each profile's object verifies to its signer and corpus_hash, and is
+  malformed under the other profile.
+
 ## [0.21.0] - 2026-09-30
 
 A station endpoint names the release its station runs, as macula 13.3.0 reads it.

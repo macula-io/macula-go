@@ -84,6 +84,7 @@ the call. The string is a JSON object:
 | `confidentiality` | a call or stream that could not be kept confidential (since v0.18.0; see "Confidentiality") | `reason`, `named`, `found` (key ids as hex, or null) |
 | `not_settled` | a stream's seal report asked for before it settled, or of a stream that ended first (since v0.19.0; see "The seal report") | |
 | `not_a_caller` | a seal report asked of a served stream (since v0.19.0) | |
+| `unverified` | a signed object that did not verify (since v0.22.0; see "Signed objects") | `reason`: `malformed`, `signature_invalid` or `alg_mismatch` |
 | `failed` | anything else | |
 
 ## Threads and blocking
@@ -284,6 +285,20 @@ the pool is open or until `macula_pool_unshare_content`; it gives the MCID.
 `macula_pool_get_content` finds the nodes that announced an MCID and fetches
 from them, checking every block against it; `not_shared` means none shares
 it, `unavailable` that all failed.
+
+## Signed objects
+
+`macula_signed_object_verify` checks a signed object that carries its
+signer's key, `{key, tbs, signature}` in CBOR, as `macula_signed_object`
+does: exactly those three byte strings, the key in the profile's carried
+form, the signature over the label, a zero byte, the SHA-384 of the key and
+the tbs as received, and only then the tbs, a map whose `alg` names the
+profile's algorithm. It gives the signer's `node_id` (hex, as every id),
+its `key` and the `tbs` bytes (`{"$bytes"}`, as they go back on the wire)
+and their `fields`. A library that cannot verify at all is `failed`, never
+`unverified`. The label is the one the object was signed under;
+an empty label is `invalid_argument`. Verifying says who signed the fields,
+never that what they claim is true.
 
 ## Test harness
 

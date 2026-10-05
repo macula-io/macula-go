@@ -39,6 +39,9 @@ const (
 	// kindNotACaller one asked of a served stream. Since macula-go v0.19.0.
 	kindNotSettled errorKind = "not_settled"
 	kindNotACaller errorKind = "not_a_caller"
+	// kindUnverified is a signed object that did not verify, with macula's
+	// refusal as reason. Since macula-go v0.22.0.
+	kindUnverified errorKind = "unverified"
 	kindFailed     errorKind = "failed"
 )
 
