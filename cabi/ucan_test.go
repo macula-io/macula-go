@@ -55,6 +55,20 @@ func TestUCANArgumentsAreChecked(t *testing.T) {
 			t.Errorf("caps %s, options %s: %v, want invalid_argument", c.caps, c.options, err)
 		}
 	}
+	caps := `[{"with":"mri:realm:io.macula","can":"invoke"}]`
+	ms := time.Now().UnixMilli() + 3_600_000
+	if _, err := ucanCreate(root, [32]byte{}, caps, ms, ``); kindOf(err) != kindInvalidArgument ||
+		!strings.Contains(err.Error(), fmt.Sprintf("exp %d", ms)) {
+		t.Errorf("an exp in milliseconds: %v, want invalid_argument", err)
+	}
+	nbf := time.Now().Unix() + 120
+	if _, err := ucanCreate(root, [32]byte{}, caps, nbf-60, fmt.Sprintf(`{"nbf":%d}`, nbf)); kindOf(err) != kindInvalidArgument ||
+		!strings.Contains(err.Error(), fmt.Sprintf("nbf %d, exp %d", nbf, nbf-60)) {
+		t.Errorf("an nbf after its exp: %v, want invalid_argument", err)
+	}
+	if _, err := ucanCreate(root, [32]byte{}, caps, time.Now().Unix()+366*24*3600, ``); err != nil {
+		t.Errorf("a token for a year: %v", err)
+	}
 	for _, proofs := range []string{`"a token"`, `[1]`, `{}`} {
 		if _, err := credentialsOf("", proofs); kindOf(err) != kindInvalidArgument {
 			t.Errorf("proofs %s: %v, want invalid_argument", proofs, err)

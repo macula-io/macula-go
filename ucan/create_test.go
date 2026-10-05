@@ -3,8 +3,10 @@ package ucan
 import (
 	"crypto/sha256"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
@@ -84,5 +86,46 @@ func TestCreateRefusesAKeyThatIsNotAnIdentityKey(t *testing.T) {
 	}
 	if _, err := Create(connect, [32]byte{}, nil, Options{Exp: 1}); err == nil {
 		t.Fatal("a CONNECT key minted a token")
+	}
+}
+
+// An expiry is seconds. One in milliseconds, or more than MaxLifetime past
+// now, is refused at minting, as is a window that never opens; each refusal
+// names both values. A token for a year is minted.
+func TestCreateRefusesAnAbsurdWindow(t *testing.T) {
+	root := teststation.Key(t, profile.PQPure, "ucan bounds")
+	now := time.Now().Unix()
+	year := now + 366*24*3600
+	early, late := now+120, now+60
+	for name, c := range map[string]struct {
+		o     Options
+		want  error
+		names []int64
+	}{
+		"an exp in milliseconds":       {Options{Exp: time.Now().UnixMilli() + 3_600_000}, ErrExpBeyondMaxLifetime, nil},
+		"an exp just past MaxLifetime": {Options{Exp: now + MaxLifetime + 60}, ErrExpBeyondMaxLifetime, []int64{now + MaxLifetime + 60}},
+		"an nbf after its exp":         {Options{Exp: late, Nbf: &early}, ErrWindowNeverOpens, []int64{early, late}},
+		"an nbf at its exp":            {Options{Exp: late, Nbf: &late}, ErrWindowNeverOpens, []int64{late}},
+	} {
+		_, err := Create(root, [32]byte{}, nil, c.o)
+		if !errors.Is(err, c.want) {
+			t.Errorf("%s: %v, want %v", name, err, c.want)
+			continue
+		}
+		for _, v := range append(c.names, c.o.Exp) {
+			if !strings.Contains(err.Error(), strconv.FormatInt(v, 10)) {
+				t.Errorf("%s: %q does not name %d", name, err, v)
+			}
+		}
+	}
+	nbf := now
+	for name, o := range map[string]Options{
+		"a year":                {Exp: year},
+		"a year, from now":      {Exp: year, Nbf: &nbf},
+		"just inside the bound": {Exp: now + MaxLifetime - 60},
+	} {
+		if _, err := Create(root, [32]byte{}, nil, o); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

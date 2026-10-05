@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-10-06
+
+Minting a UCAN refuses an expiry that cannot be meant. An `exp` in
+milliseconds, read as seconds, minted a token valid for some 50,000 years
+([#21](https://github.com/macula-io/macula-go/issues/21)).
+
+### Changed
+
+- `ucan.Create`, and `macula_ucan_create` through it, refuses an `exp` more
+  than `ucan.MaxLifetime` (ten years) past now (`ErrExpBeyondMaxLifetime`),
+  and an `nbf` not before `exp`, a token that would never be valid
+  (`ErrWindowNeverOpens`). Each error names the values it compared;
+  `macula_ucan_create` reports it as `invalid_argument`. Every binding mints
+  through this one function, so each inherits the refusal on its next
+  libmacula bump.
+- Verifying is unchanged. `ucan.Authorize` reaches macula's verdicts, and
+  macula's `macula_ucan` accepts any integer `exp`; a Go provider that alone
+  refused a far `exp` would refuse tokens an Erlang provider accepts. The
+  same bound at verification belongs in macula's UCAN_V1 contract first.
+
 ## [0.23.0] - 2026-10-05
 
 Every dial now settles on SecP384r1MLKEM1024, the one hybrid group that meets

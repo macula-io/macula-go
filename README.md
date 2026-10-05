@@ -75,7 +75,7 @@ On the wire:
 | Streaming RPC (server, client and bidi streams) | ✅ | ✅ | A QUIC stream per session; `pool.OpenStream` by direct dial, `Offer.Stream` to serve; admission, session and inbox bounds as macula's; every stream released on every path |
 | Content manifests and MCIDs | ✅ | ✅ | SHA-384, 50-byte MCIDs, byte for byte with macula's `macula_manifest` |
 | Node-served content (D27) | ✅ | ✅ | `pool.ShareContent` serves on `~<node_id>/content_v1` and announces; `pool.GetContent` checks the block, the manifest and every chunk against their content ids, bounded, with no realm key; cross-checked both ways against macula 12.6.0 |
-| Gated procedures (UCAN) | ✅ | ✅ | `ucan.Create` mints macula 12's post-quantum UCAN, `Call.Token` and `Proofs` present it and its chain, `Offer.Policy` gates a procedure as macula's link does (`unauthorized`, or `malformed_frame` for a proof no token names); held to macula's UCAN vectors and checked against `macula_ucan` both ways |
+| Gated procedures (UCAN) | ✅ | ✅ | `ucan.Create` mints macula 12's post-quantum UCAN (refusing an `exp` more than ten years out), `Call.Token` and `Proofs` present it and its chain, `Offer.Policy` gates a procedure as macula's link does (`unauthorized`, or `malformed_frame` for a proof no token names); held to macula's UCAN vectors and checked against `macula_ucan` both ways |
 | End-to-end sealing (macula 13, scheme 1) | ✅ | ✅ | A call's or a stream's payloads sealed to the KEM key the provider's advertisement names, so a station routes what it cannot read; see [Sealing](#sealing) |
 
 No cgo outside `cabi`, which is a C ABI and so cgo by nature, and no

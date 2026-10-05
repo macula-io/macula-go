@@ -199,6 +199,9 @@ and macula-go's `ucan` package passes its vectors):
   parent in `options_json`'s `prf` by `macula_ucan_proof_id`, and is minted
   for the node that presents it: the token's audience is always the caller
   that presents it.
+  `exp_s` is Unix seconds, at most ten years past now, and an `nbf` in
+  `options_json` must be before it; either refusal is `invalid_argument`,
+  naming the values (since v0.24.0).
 - `macula_pool_call_with` and `macula_pool_open_stream_with` present a token
   and its chain's proofs (the parents, as a JSON list of their text). Every
   proof sent must be one the chain names.

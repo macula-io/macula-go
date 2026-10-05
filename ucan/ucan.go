@@ -33,6 +33,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
@@ -129,6 +130,19 @@ type Capability struct {
 	Can  string `json:"can"`
 }
 
+// MaxLifetime is the furthest past now, in seconds, that Create sets a
+// token's exp: ten years of 365.25 days. An exp in milliseconds lies far
+// beyond it, so the slip that would mint a token for tens of thousands of
+// years is refused instead.
+const MaxLifetime = int64(10 * 36525 * 24 * 3600 / 100)
+
+// Create's refusals of a validity window, each wrapped in an error that names
+// the values.
+var (
+	ErrExpBeyondMaxLifetime = errors.New("ucan: exp is more than MaxLifetime past now (milliseconds, where seconds are meant?)")
+	ErrWindowNeverOpens     = errors.New("ucan: nbf is not before exp, so the token is never valid")
+)
+
 // Options are a token's claims beyond iss, aud and cap: Exp (seconds) is
 // required, the rest optional.
 type Options struct {
@@ -141,10 +155,14 @@ type Options struct {
 }
 
 // Create is a token from issuer's identity key, for the audience's node_id,
-// granting caps until o.Exp.
+// granting caps until o.Exp. An exp more than MaxLifetime past now, or an nbf
+// not before exp, is refused.
 func Create(issuer *identity.NodeKey, audience [32]byte, caps []Capability, o Options) ([]byte, error) {
 	if issuer.Purpose() != identity.PurposeIdentity {
 		return nil, fmt.Errorf("ucan: a token is signed by an identity key, not a %s key", issuer.Purpose())
+	}
+	if err := windowOpens(o, time.Now().Unix()); err != nil {
+		return nil, err
 	}
 	algorithm, err := alg(issuer.Profile())
 	if err != nil {
@@ -182,6 +200,18 @@ func Create(issuer *identity.NodeKey, audience [32]byte, caps []Capability, o Op
 		return nil, err
 	}
 	return []byte(input + "." + base64.RawURLEncoding.EncodeToString(signature)), nil
+}
+
+// windowOpens is whether o's validity window is one Create mints at now: an
+// exp at most MaxLifetime past now, and an nbf, if any, before exp.
+func windowOpens(o Options, now int64) error {
+	if o.Exp > now+MaxLifetime {
+		return fmt.Errorf("%w: exp %d, now %d, at most %d", ErrExpBeyondMaxLifetime, o.Exp, now, now+MaxLifetime)
+	}
+	if o.Nbf != nil && *o.Nbf >= o.Exp {
+		return fmt.Errorf("%w: nbf %d, exp %d", ErrWindowNeverOpens, *o.Nbf, o.Exp)
+	}
+	return nil
 }
 
 func alg(p profile.Profile) (string, error) {

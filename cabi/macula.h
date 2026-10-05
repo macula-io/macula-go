@@ -125,7 +125,8 @@ uint8_t *macula_ownership_proof_message(const uint8_t identity[32], const uint8_
 /* key's token for the node audience_node_id, granting caps_json (a JSON array
  * of {"with","can"}, each "with" an MRI) until exp_s (Unix seconds).
  * options_json (NULL for none): {"nbf","nnc","fct","prf"}, prf a list of at
- * most one parent's proof id. key is an identity key. */
+ * most one parent's proof id. key is an identity key. An exp_s more than ten
+ * years past now, or an nbf not before it, is invalid_argument (v0.24.0). */
 char *macula_ucan_create(macula_handle key, const uint8_t audience_node_id[32], const char *caps_json, int64_t exp_s,
                          const char *options_json, char **err_out);
 /* The proof id a child's "prf" names a token by: lowercase hex SHA-384 of its
