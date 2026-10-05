@@ -11,7 +11,7 @@ Minting a UCAN refuses an expiry that cannot be meant. An `exp` in
 milliseconds, read as seconds, minted a token valid for some 50,000 years
 ([#21](https://github.com/macula-io/macula-go/issues/21)).
 
-### Changed
+### Security
 
 - `ucan.Create`, and `macula_ucan_create` through it, refuses an `exp` more
   than `ucan.MaxLifetime` (ten years) past now (`ErrExpBeyondMaxLifetime`),
