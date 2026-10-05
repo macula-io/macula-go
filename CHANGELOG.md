@@ -18,9 +18,10 @@ Go clients landed on SecP256r1MLKEM768 with every station
   ignores the order of `CurvePreferences` and offers the groups in its own
   order, SecP256r1MLKEM768 first with the only key share. A station's rustls
   takes the first group in the client's order that it accepts, so a list of
-  both always landed on SecP256r1MLKEM768. A dial now refuses a station that
-  settles on SecP256r1MLKEM768 (`ErrWrongKeyExchangeGroup`). Every macula 12
-  station accepts SecP384r1MLKEM1024.
+  both always landed on SecP256r1MLKEM768. A dial to a station that accepts
+  only SecP256r1MLKEM768 now fails in the TLS handshake, and a handshake that
+  settled on any other group is refused (`ErrWrongKeyExchangeGroup`). Every
+  macula 12 station accepts SecP384r1MLKEM1024.
 - `teststation` still accepts both of macula-pqc's groups, as a macula
   station does, so a client tested against it is not refused for offering
   SecP256r1MLKEM768.
