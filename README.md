@@ -46,8 +46,9 @@ realm can call. Any node can also serve procedures in its own namespace,
 On the wire:
 
 - **Transport:** QUIC with the ALPN `macula`, TLS 1.3 with a hybrid
-  post-quantum key exchange, on macula-pqc's hybrid ML-KEM groups only
-  (SecP384r1MLKEM1024, SecP256r1MLKEM768).
+  post-quantum key exchange on SecP384r1MLKEM1024 alone, the one hybrid
+  group that meets both CNSA 2.0 and BSI TR-02102. Every macula 12 station
+  accepts it.
 - **Identity:** an ML-DSA-87 key (`pq_pure`) or the composite ML-DSA-87 +
   RSA-PSS-4096 (`pq_hybrid`, the fleet's profile; LAMPS
   `id-MLDSA87-RSA4096-PSS-SHA512`), whose node_id solves the admission
@@ -312,7 +313,9 @@ GOFIPS140=v1.0.0 go test ./identity ./handshake ./transport ./frame ./record -ru
 Measured against a live macula-station 0.6.1 (`pq_hybrid`, puzzle enforced),
 2026-09-24, with [`scripts/interop/golivelink`](scripts/interop/golivelink):
 
-- handshake accepted in 14 to 48 ms, on SecP256r1MLKEM768 with an ML-DSA leaf;
+- handshake accepted in 14 to 48 ms, on SecP256r1MLKEM768 with an ML-DSA leaf
+  (since 0.23.0 every dial settles on SecP384r1MLKEM1024: all six fleet
+  stations did, 2026-10-05);
 - `_dht.*` finds and puts, each record verified, 17 to 25 ms;
 - a publication delivered back as a verified event in 9 ms;
 - a server stream opened by direct dial from a second node's pool: first chunk

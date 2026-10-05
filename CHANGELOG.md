@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-10-05
+
+Every dial now settles on SecP384r1MLKEM1024, the one hybrid group that meets
+both CNSA 2.0 (ML-KEM-1024 with P-384) and BSI TR-02102 (hybrid only). Before,
+Go clients landed on SecP256r1MLKEM768 with every station
+([#20](https://github.com/macula-io/macula-go/issues/20)).
+
+### Changed
+
+- `transport.KeyExchangeGroups` is SecP384r1MLKEM1024 alone. crypto/tls
+  ignores the order of `CurvePreferences` and offers the groups in its own
+  order, SecP256r1MLKEM768 first with the only key share. A station's rustls
+  takes the first group in the client's order that it accepts, so a list of
+  both always landed on SecP256r1MLKEM768. A dial now refuses a station that
+  settles on SecP256r1MLKEM768 (`ErrWrongKeyExchangeGroup`). Every macula 12
+  station accepts SecP384r1MLKEM1024.
+- `teststation` still accepts both of macula-pqc's groups, as a macula
+  station does, so a client tested against it is not refused for offering
+  SecP256r1MLKEM768.
+- `scripts/interop/gov5link` (and `v5.sh`) fails unless the link to macula's
+  station settled on SecP384r1MLKEM1024.
+
+### Added
+
+- `transport`: the client hello offers SecP384r1MLKEM1024 alone and settles on
+  it with a station that accepts both groups, in either order.
+- `transport`: `TestDialTargetSettlesOnSecP384r1MLKEM1024WithALiveStation`
+  dials a live station named by `MACULA_GO_LIVE_STATION` (host:port) and
+  fails unless the negotiated group is SecP384r1MLKEM1024. On 2026-10-05 all
+  six fleet stations settled on SecP384r1MLKEM1024, and with the old list the
+  same test landed on SecP256r1MLKEM768.
+
 ## [0.22.0] - 2026-10-05
 
 A binding verifies a signed object through the C ABI, as macula_signed_object

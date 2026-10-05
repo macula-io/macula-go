@@ -43,6 +43,9 @@ type stationSpec struct {
 	// protocols before crypto/tls negotiates: crypto/tls (Go 1.27) hands
 	// GetConfigForClient the hello's own slices.
 	selects string
+	// offered receives the key exchange groups of each client hello, in the
+	// order the client sent them, when set.
+	offered chan<- []tls.CurveID
 }
 
 // testStation is a station in a test: a QUIC listener on loopback, and the
@@ -137,14 +140,17 @@ func stationProtocols(spec stationSpec) []string {
 	return []string{ALPN}
 }
 
-// rewriteHello is a station's GetConfigForClient when its spec changes the
-// client hello crypto/tls negotiates from: the offered protocols replaced by
-// the one the station selects.
+// rewriteHello is a station's GetConfigForClient when its spec records the
+// groups a client hello offers, or changes the hello crypto/tls negotiates
+// from: the offered protocols replaced by the one the station selects.
 func rewriteHello(spec stationSpec) func(*tls.ClientHelloInfo) (*tls.Config, error) {
-	if spec.selects == "" {
+	if spec.selects == "" && spec.offered == nil {
 		return nil
 	}
 	return func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		if spec.offered != nil {
+			spec.offered <- slices.Clone(hello.SupportedCurves)
+		}
 		if spec.selects != "" {
 			fill(hello.SupportedProtos, spec.selects)
 		}
@@ -190,34 +196,60 @@ func checkClientRefused(t *testing.T, err error, alert quic.TransportErrorCode) 
 	}
 }
 
-// A profile dial reaches a station over either key exchange group macula's
-// stations offer (macula-pqc: SecP384r1MLKEM1024, then SecP256r1MLKEM768),
-// whatever the node's profile and whatever TLS 1.3 suite the station picks,
-// and returns the leaf DER exactly as the station presented it. No connection
-// resumes a session or sends early data.
-func TestDialTargetReachesAStationOverEitherOfMaculasGroups(t *testing.T) {
+// maculaStationGroups are the key exchange groups a macula station accepts,
+// macula-pqc's: SecP384r1MLKEM1024, then SecP256r1MLKEM768.
+var maculaStationGroups = []tls.CurveID{tls.SecP384r1MLKEM1024, tls.SecP256r1MLKEM768}
+
+// A profile dial offers SecP384r1MLKEM1024 and nothing else, so it settles on
+// SecP384r1MLKEM1024 with a station that accepts both of macula-pqc's groups,
+// in either order. crypto/tls ignores the order of CurvePreferences and offers
+// its groups in its own order, SecP256r1MLKEM768 first, so a client that
+// listed both would land on SecP256r1MLKEM768 with a station that, like
+// rustls, walks the client's order.
+func TestDialTargetOffersAndSettlesOnSecP384r1MLKEM1024Alone(t *testing.T) {
+	for _, groups := range [][]tls.CurveID{maculaStationGroups, {tls.SecP256r1MLKEM768, tls.SecP384r1MLKEM1024}} {
+		t.Run(groups[0].String()+" first", func(t *testing.T) {
+			offered := make(chan []tls.CurveID, 1)
+			station := startStation(t, stationSpec{groups: groups, key: mldsa87Key(t), offered: offered})
+			dialed, err := dialWithin(t, targetFor(station, profile.PQPure))
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			if hello := <-offered; !slices.Equal(hello, []tls.CurveID{tls.SecP384r1MLKEM1024}) {
+				t.Errorf("the client hello offered %v, want SecP384r1MLKEM1024 alone", hello)
+			}
+			if group := dialed.Conn.ConnectionState().TLS.CurveID; group != tls.SecP384r1MLKEM1024 {
+				t.Errorf("the dial settled on %s, want SecP384r1MLKEM1024", group)
+			}
+		})
+	}
+}
+
+// A profile dial reaches a macula station over SecP384r1MLKEM1024, whatever
+// the node's profile and whatever TLS 1.3 suite the station picks, and returns
+// the leaf DER exactly as the station presented it. No connection resumes a
+// session or sends early data.
+func TestDialTargetReachesAMaculaStation(t *testing.T) {
 	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
-		for _, group := range KeyExchangeGroups {
-			t.Run(string(p)+" "+group.String(), func(t *testing.T) {
-				station := startStation(t, stationSpec{groups: []tls.CurveID{group}, key: mldsa87Key(t)})
-				for dial := range 2 {
-					dialed, err := dialWithin(t, targetFor(station, p))
-					if err != nil {
-						t.Fatalf("dial %d: %v", dial+1, err)
-					}
-					state := dialed.Conn.ConnectionState()
-					if state.TLS.CurveID != group {
-						t.Errorf("dial %d settled on %s, want %s", dial+1, state.TLS.CurveID, group)
-					}
-					if !bytes.Equal(dialed.Leaf, station.leaf) {
-						t.Errorf("dial %d: the leaf differs from the DER the station presented", dial+1)
-					}
-					if state.TLS.DidResume || state.Used0RTT {
-						t.Errorf("dial %d resumed %t, used early data %t; want a full handshake", dial+1, state.TLS.DidResume, state.Used0RTT)
-					}
+		t.Run(string(p), func(t *testing.T) {
+			station := startStation(t, stationSpec{groups: maculaStationGroups, key: mldsa87Key(t)})
+			for dial := range 2 {
+				dialed, err := dialWithin(t, targetFor(station, p))
+				if err != nil {
+					t.Fatalf("dial %d: %v", dial+1, err)
 				}
-			})
-		}
+				state := dialed.Conn.ConnectionState()
+				if state.TLS.CurveID != tls.SecP384r1MLKEM1024 {
+					t.Errorf("dial %d settled on %s, want SecP384r1MLKEM1024", dial+1, state.TLS.CurveID)
+				}
+				if !bytes.Equal(dialed.Leaf, station.leaf) {
+					t.Errorf("dial %d: the leaf differs from the DER the station presented", dial+1)
+				}
+				if state.TLS.DidResume || state.Used0RTT {
+					t.Errorf("dial %d resumed %t, used early data %t; want a full handshake", dial+1, state.TLS.DidResume, state.Used0RTT)
+				}
+			}
+		})
 	}
 }
 
@@ -225,7 +257,7 @@ func TestDialTargetReachesAStationOverEitherOfMaculasGroups(t *testing.T) {
 // parsed certificate among the connections that received the same bytes, so a
 // caller writing into one dial's leaf must not reach another dial's.
 func TestDialTargetReturnsALeafItsCallerOwns(t *testing.T) {
-	station := startStation(t, stationSpec{groups: KeyExchangeGroups[:1], key: mldsa87Key(t)})
+	station := startStation(t, stationSpec{groups: KeyExchangeGroups, key: mldsa87Key(t)})
 	first, err := dialWithin(t, targetFor(station, profile.PQPure))
 	if err != nil {
 		t.Fatalf("first dial: %v", err)
@@ -241,16 +273,19 @@ func TestDialTargetReturnsALeafItsCallerOwns(t *testing.T) {
 }
 
 // A profile dial refuses a station that does not follow macula's TLS posture: a
-// key exchange group macula's stations do not offer, a leaf that is not
+// key exchange group other than SecP384r1MLKEM1024, a leaf that is not
 // ML-DSA-87, or more than one certificate. A station that accepts only another
 // ALPN protocol refuses the dial itself.
 func TestDialTargetRefusesAStationThatDoesNotFollowTheProfile(t *testing.T) {
-	pure := KeyExchangeGroups[:1]
+	groups := KeyExchangeGroups
 	cases := []struct {
 		name string
 		spec func(t *testing.T) stationSpec
 		want error
 	}{
+		{"a SecP256r1MLKEM768 station", func(t *testing.T) stationSpec {
+			return stationSpec{groups: []tls.CurveID{tls.SecP256r1MLKEM768}, key: mldsa87Key(t)}
+		}, nil},
 		{"an ML-KEM-1024 station, which macula no longer offers", func(t *testing.T) stationSpec {
 			return stationSpec{groups: []tls.CurveID{tls.MLKEM1024}, key: mldsa87Key(t)}
 		}, nil},
@@ -265,27 +300,27 @@ func TestDialTargetRefusesAStationThatDoesNotFollowTheProfile(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ECDSA key: %v", err)
 			}
-			return stationSpec{groups: pure, key: key}
+			return stationSpec{groups: groups, key: key}
 		}, ErrStationCertificate},
 		{"a station with an ML-DSA-65 leaf", func(t *testing.T) stationSpec {
 			key, err := mldsa.GenerateKey(mldsa.MLDSA65())
 			if err != nil {
 				t.Fatalf("ML-DSA-65 key: %v", err)
 			}
-			return stationSpec{groups: pure, key: key}
+			return stationSpec{groups: groups, key: key}
 		}, ErrStationCertificate},
 		{"a station that presents two certificates", func(t *testing.T) stationSpec {
-			return stationSpec{groups: pure, key: mldsa87Key(t), chain: true}
+			return stationSpec{groups: groups, key: mldsa87Key(t), chain: true}
 		}, ErrStationCertificate},
 		{"a station with an Ed25519 leaf", func(t *testing.T) stationSpec {
 			_, key, err := ed25519.GenerateKey(rand.Reader)
 			if err != nil {
 				t.Fatalf("Ed25519 key: %v", err)
 			}
-			return stationSpec{groups: pure, key: key}
+			return stationSpec{groups: groups, key: key}
 		}, ErrStationCertificate},
 		{"a station that accepts only another ALPN protocol", func(t *testing.T) stationSpec {
-			return stationSpec{groups: pure, key: mldsa87Key(t), protocols: []string{"not-macula"}}
+			return stationSpec{groups: groups, key: mldsa87Key(t), protocols: []string{"not-macula"}}
 		}, nil},
 	}
 	for _, c := range cases {
@@ -308,7 +343,7 @@ func TestDialTargetRefusesAStationThatDoesNotFollowTheProfile(t *testing.T) {
 // connection handshake binds the node_id to this leaf, and relies on that
 // check.
 func TestDialTargetRefusesAStationWhoseHandshakeIsSignedByAnotherKey(t *testing.T) {
-	station := startStation(t, stationSpec{groups: KeyExchangeGroups[:1], key: mldsa87Key(t), signer: mldsa87Key(t)})
+	station := startStation(t, stationSpec{groups: KeyExchangeGroups, key: mldsa87Key(t), signer: mldsa87Key(t)})
 	_, err := dialWithin(t, targetFor(station, profile.PQPure))
 	checkClientRefused(t, err, alertDecryptError)
 }
@@ -327,12 +362,7 @@ func TestDialTargetRefusesAStationThatSelectsNoOrAnotherALPNProtocol(t *testing.
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			spec := c.spec
-			// macula's second group, deliberately: the station's in-place rewrite
-			// of the client hello (rewriteHello) makes the Go station's own
-			// handshake fail with SecP384r1MLKEM1024's larger key share, before
-			// the client could refuse anything. The refusal under test is the
-			// client's ALPN check, which no group changes.
-			spec.groups, spec.key = KeyExchangeGroups[1:], mldsa87Key(t)
+			spec.groups, spec.key = KeyExchangeGroups, mldsa87Key(t)
 			station := startStation(t, spec)
 			_, err := dialWithin(t, targetFor(station, profile.PQPure))
 			checkClientRefused(t, err, alertNoApplicationProtocol)
@@ -390,8 +420,8 @@ func TestProfileTLSConfigFollowsTheProfile(t *testing.T) {
 			if config.MinVersion != tls.VersionTLS13 || config.MaxVersion != tls.VersionTLS13 {
 				t.Errorf("versions %#x to %#x, want TLS 1.3 alone", config.MinVersion, config.MaxVersion)
 			}
-			if !slices.Equal(config.CurvePreferences, KeyExchangeGroups) {
-				t.Errorf("groups %v, want %v in that order", config.CurvePreferences, KeyExchangeGroups)
+			if !slices.Equal(config.CurvePreferences, []tls.CurveID{tls.SecP384r1MLKEM1024}) {
+				t.Errorf("groups %v, want SecP384r1MLKEM1024 alone", config.CurvePreferences)
 			}
 			if !slices.Equal(config.NextProtos, []string{ALPN}) {
 				t.Errorf("ALPN protocols %q, want %q alone", config.NextProtos, ALPN)
@@ -437,8 +467,8 @@ func TestCheckProfileConnection(t *testing.T) {
 		state func() tls.ConnectionState
 		want  error
 	}{
-		{"macula's first group", func() tls.ConnectionState { return following }, nil},
-		{"macula's second group", func() tls.ConnectionState { s := following; s.CurveID = tls.SecP256r1MLKEM768; return s }, nil},
+		{"SecP384r1MLKEM1024", func() tls.ConnectionState { return following }, nil},
+		{"SecP256r1MLKEM768", func() tls.ConnectionState { s := following; s.CurveID = tls.SecP256r1MLKEM768; return s }, ErrWrongKeyExchangeGroup},
 		{"any TLS 1.3 suite", func() tls.ConnectionState { s := following; s.CipherSuite = tls.TLS_AES_128_GCM_SHA256; return s }, nil},
 		{"ML-KEM-1024 alone", func() tls.ConnectionState { s := following; s.CurveID = tls.MLKEM1024; return s }, ErrWrongKeyExchangeGroup},
 		{"a classical group", func() tls.ConnectionState { s := following; s.CurveID = tls.X25519; return s }, ErrWrongKeyExchangeGroup},

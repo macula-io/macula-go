@@ -32,7 +32,7 @@ func TestDialTargetSaysWhetherTheBinaryHasMLDSA(t *testing.T) {
 		}
 		return
 	}
-	station := startStation(t, stationSpec{groups: KeyExchangeGroups[:1], key: mldsa87Key(t)})
+	station := startStation(t, stationSpec{groups: KeyExchangeGroups, key: mldsa87Key(t)})
 	if _, err := dialWithin(t, targetFor(station, profile.PQPure)); err != nil {
 		t.Fatalf("DialTarget with the module %s: %v, want the station reached", fips140.Version(), err)
 	}

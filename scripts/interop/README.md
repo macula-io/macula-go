@@ -106,7 +106,9 @@ To refresh the test data, give it `identity/testdata/erlang_bindings.json` as th
 macula CI image) and dials it with `gov5link`, macula-go's `stationlink`. Each side derives E from its own TLS
 exporter (quinn's, Go's `crypto/tls`), so a label, context order or exporter that differs fails the handshake. The
 station probes the link with `liveness_ping` every 500 ms for the hold, so the link must answer. It passes when the
-link is v5 and not resumed, and every connection that ended did so after the client's GOODBYE:
+link is v5 on SecP384r1MLKEM1024 and not resumed, and every connection that ended did so after the client's GOODBYE.
+The group is the station's rustls choice from the client's offer, so this is where macula-go is held to the group a
+real station negotiates:
 
 ```sh
 MACULA_BUILD=<compiled macula checkout, 13.2.0 or later> scripts/interop/v5.sh pq_hybrid
@@ -133,6 +135,13 @@ go run ./scripts/interop/golivelink ... -hold 0s -serve 90s -every 15s
 ```
 
 Point it only at a station you run for the purpose: it puts records in the station's DHT.
+
+`transport`'s `TestDialTargetSettlesOnSecP384r1MLKEM1024WithALiveStation` dials a live station's TLS alone, puts
+nothing, and fails unless it settles on SecP384r1MLKEM1024 (skipped unless `MACULA_GO_LIVE_STATION` is set):
+
+```sh
+MACULA_GO_LIVE_STATION=<host>:<port> go test -run LiveStation -v ./transport
+```
 
 `goownershipproof` and `erlang_ownership_proof.escript` check ownership proof v2 (mcl-om#7) against mcl_om's own
 `mcl_om_ownership_proof`, compiled from an mcl-om checkout. `emit` writes `ownershipproof/testdata/vector` (the

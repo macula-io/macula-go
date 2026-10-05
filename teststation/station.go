@@ -113,6 +113,11 @@ type conn struct {
 
 var keys sync.Map // name+profile -> *identity.NodeKey: puzzle-solved keys take a while
 
+// maculaPQCGroups are the key exchange groups a macula station accepts,
+// macula-pqc's. A client the station is a test for meets macula's own bar
+// only when it settles on the first.
+var maculaPQCGroups = []tls.CurveID{tls.SecP384r1MLKEM1024, tls.SecP256r1MLKEM768}
+
 // Key is a puzzle-solved identity key for name in profile p, the same one each
 // time it is asked for in a test binary.
 func Key(t T, p profile.Profile, name string) *identity.NodeKey {
@@ -151,7 +156,7 @@ func Start(t T, p profile.Profile, name string) *Station {
 	nodeID, _ := key.NodeID()
 	listener, err := quic.ListenAddr("127.0.0.1:0", &tls.Config{
 		Certificates:     []tls.Certificate{{Certificate: [][]byte{leaf}, PrivateKey: tlsKey}},
-		CurvePreferences: transport.KeyExchangeGroups, MinVersion: tls.VersionTLS13, NextProtos: []string{transport.ALPN},
+		CurvePreferences: maculaPQCGroups, MinVersion: tls.VersionTLS13, NextProtos: []string{transport.ALPN},
 		// No resumption on either side, as a macula 13.2.0 station issues no tickets.
 		SessionTicketsDisabled: true,
 	}, &quic.Config{})

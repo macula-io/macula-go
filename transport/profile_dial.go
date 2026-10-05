@@ -113,10 +113,18 @@ func dialable(target Target) (profile.Definition, error) {
 }
 
 // KeyExchangeGroups are the TLS key exchange groups a dial offers and accepts,
-// in order: macula-pqc's, the crate every macula 12 station builds its TLS
-// from, whatever a node's profile. Nothing classical. A profile's own group is
-// a declared target in macula and not what a connection negotiates.
-var KeyExchangeGroups = []tls.CurveID{tls.SecP384r1MLKEM1024, tls.SecP256r1MLKEM768}
+// whatever a node's profile: SecP384r1MLKEM1024 alone, the one hybrid group
+// that meets both CNSA 2.0 (ML-KEM-1024 with P-384) and BSI TR-02102 (hybrid
+// only). Every macula 12 station accepts it (macula-pqc: SecP384r1MLKEM1024,
+// then SecP256r1MLKEM768).
+//
+// It is one group because the list's order is not what a dial negotiates.
+// crypto/tls ignores the order of CurvePreferences: it offers the groups the
+// list contains in its own fixed order, SecP256r1MLKEM768 ahead of
+// SecP384r1MLKEM1024, with a key share for the first alone, and a station's
+// rustls settles on the first group of the client's order it accepts. A list
+// that held both would land on SecP256r1MLKEM768 with every station.
+var KeyExchangeGroups = []tls.CurveID{tls.SecP384r1MLKEM1024}
 
 // profileTLSConfig is a profile's TLS 1.3 client configuration. It holds no
 // session cache and disables session tickets, so no connection resumes, and

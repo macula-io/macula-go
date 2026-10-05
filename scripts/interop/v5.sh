@@ -3,7 +3,7 @@
 # macula_peering on macula_quic, run in the macula CI image) and macula-go's stationlink (gov5link) dialling it. Both
 # derive E from their own TLS exporter (quinn's, Go's crypto/tls), so a context order, label or exporter that differs
 # fails the handshake. The station probes the link with liveness_ping every 500 ms for the hold, so the link must
-# answer. Passes when the link is v5, not resumed, and both sides kept it up.
+# answer. Passes when the link is v5 on SecP384r1MLKEM1024, not resumed, and both sides kept it up.
 #
 #   MACULA_BUILD=<compiled macula checkout, 13.2.0 or later> scripts/interop/v5.sh [profile]
 #

@@ -1,13 +1,14 @@
 // Command gov5link is macula-go's side of the live handshake v5 check (scripts/interop/v5.sh): it dials one
 // running station with stationlink, reports the handshake version, the TLS group and whether the session resumed,
 // holds the link for -hold while the station probes it with liveness_ping, and reports whether the link is still
-// up. It exits non-zero unless the link was version 5, not resumed, and survived the hold.
+// up. It exits non-zero unless the link was version 5 on SecP384r1MLKEM1024, not resumed, and survived the hold.
 //
 //	go run ./scripts/interop/gov5link -host 127.0.0.1 -port 44330 -profile pq_hybrid -node <64 hex> -hold 5s
 package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -79,6 +80,8 @@ func run(host string, port uint16, profileName, node string, hold time.Duration)
 	switch {
 	case link.HandshakeVersion() != 5:
 		return fmt.Errorf("handshake version %d, want 5", link.HandshakeVersion())
+	case state.CurveID != tls.SecP384r1MLKEM1024:
+		return fmt.Errorf("tls group %s, want SecP384r1MLKEM1024", state.CurveID)
 	case state.DidResume:
 		return fmt.Errorf("the TLS session resumed")
 	}
