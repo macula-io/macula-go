@@ -257,7 +257,7 @@ callers seal to that key; stations route what they cannot read.
 
 ## The seal report
 
-Since v0.19.0 (macula's `plans/DESIGN_E2E_SEAL_REPORT.md`). A caller learns
+Since v0.19.0 (macula's `docs/design/DESIGN_E2E_SEAL_REPORT.md`). A caller learns
 whether the exchange behind its result was sealed, and to which key. It states
 that sealing ran on that exchange, nothing more.
 

@@ -16,7 +16,7 @@
 // its type, each of its type and length. Close reasons are local: a refusing
 // station sends only a HELLO with one coarse refusal code.
 //
-// Version 5 (macula plans/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md) binds both ends to
+// Version 5 (macula docs/design/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md) binds both ends to
 // the TLS session. The opener and the challenge stay version 4; the client picks
 // 4 or 5 in CONNECT, and the station answers HELLO in the same version. In
 // version 5 the CONNECT proof (V2) also covers E, the session's TLS exporter

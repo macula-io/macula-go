@@ -9,7 +9,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 )
 
-// Handshake v5 (macula plans/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md section 3): after HELLO no frame carries a
+// Handshake v5 (macula docs/design/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md section 3): after HELLO no frame carries a
 // neighbour signature, and the liveness probe is liveness_ping / liveness_pong, answered by the peer's connection.
 
 func TestAV5ConnectionReadsFramesWithoutANeighbourSignatureAndRefusesOneThatHasIt(t *testing.T) {

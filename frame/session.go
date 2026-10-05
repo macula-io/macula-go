@@ -4,7 +4,7 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 )
 
-// Handshake v5 (macula plans/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md section 3): the
+// Handshake v5 (macula docs/design/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md section 3): the
 // session proofs authenticate the neighbour once, so after HELLO no frame
 // carries a neighbour signature, and QUIC's AEAD authenticates every frame. The
 // liveness probe is liveness_ping, answered with liveness_pong and the same

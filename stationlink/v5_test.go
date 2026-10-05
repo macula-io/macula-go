@@ -12,7 +12,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 )
 
-// Handshake v5 on the link (macula plans/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md sections 3 and 4): a link dials v5,
+// Handshake v5 on the link (macula docs/design/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md sections 3 and 4): a link dials v5,
 // falls back to v4 once, only after unsupported_version, from a station never seen on v5, and refuses a station
 // seen on v5 that answers v4 until ForgetV5Peer. On v5 no frame carries a neighbour signature and the liveness
 // probe is liveness_ping, answered by the other end's connection.

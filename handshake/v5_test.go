@@ -14,7 +14,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 )
 
-// Handshake v5 (macula plans/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md section 3): both proofs bound to the TLS session's
+// Handshake v5 (macula docs/design/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md section 3): both proofs bound to the TLS session's
 // exporter value E. These mirror macula's macula_handshake_tests v5 cases.
 
 const (

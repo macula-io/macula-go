@@ -7,7 +7,7 @@
 %%       macula accepts macula-go's CONNECTs (and checks each member_endorsement arrives empty) and answers
 %%       macula-go's CHALLENGEs; writes the fixture handshake/erlang_interop_test.go verifies
 %%
-%% Both steps run in version 4 and in version 5 (macula plans/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md). Version 5 binds to
+%% Both steps run in version 4 and in version 5 (macula docs/design/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md). Version 5 binds to
 %% a TLS exporter, which a file cannot carry, so both stacks use the same stand-in: HMAC-SHA256 keyed by the session's
 %% name over the label and the context, session "session_a". A proof over another context order, message or
 %% capability encoding than macula's fails in the other stack. The challenge step keeps each station's throwaway key

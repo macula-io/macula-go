@@ -242,7 +242,7 @@ first data, reply or end) and is `ErrNotSettled` before that; a served stream
 has none (`ErrNotACaller`). Through the ABI: `"report": 1` in
 `macula_pool_call_opts`, and `macula_stream_report`. It states that sealing ran
 on that exchange, nothing more: see macula's
-[design](https://github.com/macula-io/macula/blob/main/plans/DESIGN_E2E_SEAL_REPORT.md).
+[design](https://github.com/macula-io/macula/blob/main/docs/design/DESIGN_E2E_SEAL_REPORT.md).
 
 Not sealed: publications (macula 13 does not seal them yet, and a sealed
 EVENT is counted and not delivered, as macula 13 does), the DHT, and
@@ -326,9 +326,6 @@ On the fleet, 2026-09-24, against amsterdam (station-nl-ams.macula.io): HELLO
 in 52 ms, DHT reads and a put, a publication heard back in 86 ms, and
 `mcl-echo/echo`, served from another station, called by direct dial and
 answered in 348 ms.
-
-The macula 12 port and what remains of it are tracked in
-[`plans/PLAN_MACULA_12_RUNTIME.md`](plans/PLAN_MACULA_12_RUNTIME.md).
 
 ## Related projects
 

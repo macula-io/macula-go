@@ -6,7 +6,7 @@ import (
 )
 
 // Which handshake version a link dials each station with, and the handshake counters, for this process (macula
-// plans/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md sections 3, 4 and 6), as macula's macula_peer_versions keeps them.
+// docs/design/DESIGN_NEIGHBOUR_CHANNEL_BINDING.md sections 3, 4 and 6), as macula's macula_peer_versions keeps them.
 //
 // A station never seen is dialled with version 5. One that refused a v5 CONNECT with unsupported_version is dialled
 // with version 4 for the next 10 minutes, then with 5 again. One that completed a v5 handshake in this process is
