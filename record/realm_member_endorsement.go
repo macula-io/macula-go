@@ -91,7 +91,9 @@ func endorsementWindow(payload cbor.Value, nowMs int64) error {
 		return ErrEndorsementExpired
 	case until < from:
 		return ErrEndorsementWindowReversed
-	case until-from > MaxEndorsementWindowMs:
+	// until >= from here, so a negative length is int64 overflow: a window
+	// longer than any int64, which macula's integers measure and refuse.
+	case until-from < 0 || until-from > MaxEndorsementWindowMs:
 		return ErrEndorsementWindowTooLong
 	case nowMs < from:
 		return fmt.Errorf("%w: the endorsement's window starts at %d", ErrNotYetValid, from)

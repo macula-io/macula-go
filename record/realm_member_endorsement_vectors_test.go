@@ -4,11 +4,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 
+	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
 )
@@ -140,4 +142,25 @@ func id32(t *testing.T, s string) [32]byte {
 		t.Fatalf("%s is not 32 bytes", s)
 	}
 	return id
+}
+
+// A window from -2^63 to 2^63-1 is far over 30 days. Its length overflows
+// int64, so it must be refused by its own name rather than wrap to a negative
+// length and admit at every time, as macula's bignum arithmetic refuses it.
+func TestAWindowWhoseLengthOverflowsIsTooLong(t *testing.T) {
+	realmKey := authorizationKeysFor(t).realm
+	realm, member := [32]byte{1}, [32]byte{2}
+	payload := cbor.Map([]cbor.MapEntry{
+		bytesEntry("realm_id", realm[:]),
+		bytesEntry("member_node", member[:]),
+		valueEntry("roles", cbor.List([]cbor.Value{cbor.Text("peer")})),
+		valueEntry("valid_from", cbor.NegInt(math.MaxInt64)),
+		valueEntry("valid_until", cbor.Int(math.MaxInt64)),
+	})
+	now := nowMs()
+	wire := signedByHand(t, label, recordFields(t, TypeRealmMemberEndorsement, payload, now, testHour), realmKey)
+	trust := Trust{Profile: realmKey.Profile(), RealmKey: realmKey.PublicKey()}
+	if roles, err := VerifyRealmMemberEndorsement(wire, trust, realm, member, now); !errors.Is(err, ErrEndorsementWindowTooLong) {
+		t.Fatalf("got %v, %v; want ErrEndorsementWindowTooLong", roles, err)
+	}
 }
