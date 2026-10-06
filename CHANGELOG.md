@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `record.VerifyRealmMemberEndorsement(wire, trust, realm, member, nowMs)`
+  (#16): whether a realm member endorsement (0x05) admitted a member to a realm
+  at `nowMs`, and the roles it endorsed, checked as macula's
+  `verify_endorsement/4` does. `nowMs` is the time the admission is checked
+  for, so a historical check (was an observation's signer a member when it
+  signed?) passes that time. Refusals: `ErrWrongType`, `ErrUntrustedSigner`,
+  `ErrWrongRealm`, `ErrWrongMember`, `ErrEndorsementExpired`,
+  `ErrEndorsementWindowTooLong`, `ErrEndorsementWindowReversed`, a window not
+  started yet as `ErrNotYetValid`, plus `Verify`'s and `ErrNoRealmKey`. Held to
+  macula's vectors (`record/testdata/realm_member_endorsement_v1.json`).
+
 ### Changed
 
 - A station that cannot be dialed for want of a usable endpoint record is now
