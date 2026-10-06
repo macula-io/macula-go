@@ -199,6 +199,12 @@ Last run (2026-09-27, `macula-ci-otp@sha256:aff1d39b...`):
 - macula v13.0.0: the same, except `off by direct dial` sealed (exit 1 under
   `MACULA_OFF_REFUSED=1`, as it must be).
 
+CI runs the Go leg on every PR and master push, and on a `v*` tag before the release
+is published (`.github/workflows/sealed-interop.yml`): macula from hex at the version
+above, compiled in the same image, both profiles, `MACULA_OFF_REFUSED=1`. The tag's
+release carries the log as `sealed-interop-<tag>.log`. Move the workflow's
+`MACULA_VERSION` together with the version recorded here.
+
 ### The TypeScript leg (`SEALED_PEER=ts`)
 
 `SEALED_PEER=ts` runs the same two directions with @macula-io/ts in place of
