@@ -234,13 +234,21 @@ func TestAnAbandonedStreamIsReleasedAtBothEnds(t *testing.T) {
 }
 
 // A session over the per-caller bound is refused too_many_sessions.
+//
+// The provider admits each opened stream on a goroutine of its own, so two
+// opens sent one after the other can be counted in either order. The second
+// is opened only once the first holds its session (its handler runs), or under
+// load the second can take the one session and the first be refused
+// (macula-io/macula-go#17).
 func TestSessionsAreBoundedPerCaller(t *testing.T) {
 	restore := stationlink.SetStreamSessionLimits(1, 1000)
 	t.Cleanup(restore)
 	w := newStreamWorld(t, "sessions")
 	hold := make(chan struct{})
 	t.Cleanup(func() { close(hold) })
+	admitted := make(chan struct{}, 1)
 	w.serve(t, frame.ServerStream, func(ctx context.Context, s *stationlink.Stream) error {
+		admitted <- struct{}{}
 		select {
 		case <-hold:
 		case <-ctx.Done():
@@ -248,6 +256,11 @@ func TestSessionsAreBoundedPerCaller(t *testing.T) {
 		return s.Close()
 	})
 	first := w.open(t, frame.ServerStream, cbor.Map(nil))
+	select {
+	case <-admitted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first session was never admitted")
+	}
 	var refused *stationlink.StreamError
 	if _, err := recv(t, w.open(t, frame.ServerStream, cbor.Map(nil))); !errors.As(err, &refused) || refused.Code != "too_many_sessions" {
 		t.Errorf("a second session: %v", err)
