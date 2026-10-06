@@ -65,6 +65,7 @@ var (
 	ErrNotTheIssuer          = &Refusal{"not_the_issuer"}
 	ErrNotTheAudience        = &Refusal{"not_the_audience"}
 	ErrExpired               = &Refusal{"expired"}
+	ErrExpBeyondMaxLifetime  = &Refusal{"exp_beyond_max_lifetime"}
 	ErrNotYetValid           = &Refusal{"not_yet_valid"}
 	ErrMissingCapability     = &Refusal{"missing_capability"}
 	ErrMissingProof          = &Refusal{"missing_proof"}
@@ -130,18 +131,16 @@ type Capability struct {
 	Can  string `json:"can"`
 }
 
-// MaxLifetime is the furthest past now, in seconds, that Create sets a
-// token's exp: ten years of 365.25 days. An exp in milliseconds lies far
-// beyond it, so the slip that would mint a token for tens of thousands of
-// years is refused instead.
+// MaxLifetime is the furthest past now, in seconds, that a token's exp may
+// lie: ten years of 365.25 days, as macula_ucan:max_lifetime/0. UCAN_V1 has
+// no revocation, so exp is the only bound on a token's life. An exp in
+// milliseconds lies far beyond it, so a token minted with one is refused, by
+// Create and by Authorize, rather than valid for tens of thousands of years.
 const MaxLifetime = int64(10 * 36525 * 24 * 3600 / 100)
 
-// Create's refusals of a validity window, each wrapped in an error that names
-// the values.
-var (
-	ErrExpBeyondMaxLifetime = errors.New("ucan: exp is more than MaxLifetime past now (milliseconds, where seconds are meant?)")
-	ErrWindowNeverOpens     = errors.New("ucan: nbf is not before exp, so the token is never valid")
-)
+// ErrWindowNeverOpens is Create's refusal of an nbf not before exp, a token
+// that would never be valid, wrapped in an error that names both.
+var ErrWindowNeverOpens = errors.New("ucan: nbf is not before exp, so the token is never valid")
 
 // Options are a token's claims beyond iss, aud and cap: Exp (seconds) is
 // required, the rest optional.
@@ -205,11 +204,21 @@ func Create(issuer *identity.NodeKey, audience [32]byte, caps []Capability, o Op
 // windowOpens is whether o's validity window is one Create mints at now: an
 // exp at most MaxLifetime past now, and an nbf, if any, before exp.
 func windowOpens(o Options, now int64) error {
-	if o.Exp > now+MaxLifetime {
-		return fmt.Errorf("%w: exp %d, now %d, at most %d", ErrExpBeyondMaxLifetime, o.Exp, now, now+MaxLifetime)
+	if err := withinMaxLifetime(o.Exp, now); err != nil {
+		return err
 	}
 	if o.Nbf != nil && *o.Nbf >= o.Exp {
 		return fmt.Errorf("%w: nbf %d, exp %d", ErrWindowNeverOpens, *o.Nbf, o.Exp)
+	}
+	return nil
+}
+
+// withinMaxLifetime is whether exp lies at most MaxLifetime past now; a
+// refusal names both values, and the furthest exp it would take.
+func withinMaxLifetime(exp, now int64) error {
+	if exp > now+MaxLifetime {
+		return fmt.Errorf("%w: exp %d, now %d, at most %d (milliseconds, where seconds are meant?)",
+			ErrExpBeyondMaxLifetime, exp, now, now+MaxLifetime)
 	}
 	return nil
 }
@@ -522,6 +531,9 @@ func validAt(now int64, c *checked) error {
 	exp, _ := integer(c.claims["exp"])
 	if now >= exp {
 		return ErrExpired
+	}
+	if err := withinMaxLifetime(exp, now); err != nil {
+		return err
 	}
 	raw, present := c.claims["nbf"]
 	if !present {

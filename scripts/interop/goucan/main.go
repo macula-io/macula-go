@@ -66,6 +66,9 @@ func main() {
 		add("presented by another node", toAlice, nil, bob, "not_the_audience")
 		add("chain without its proof", toBob, nil, bob, "missing_proof")
 		add("expired", mint(root, alice, "mri:realm:io.macula", ucan.Options{Exp: now}), nil, alice, "expired")
+		// The furthest exp either side accepts: macula refuses one second more.
+		add("exp at the max lifetime", mint(root, alice, "mri:realm:io.macula", ucan.Options{Exp: now + ucan.MaxLifetime}),
+			nil, alice, "ok")
 	}
 	out, err := json.MarshalIndent(cases, "", "  ")
 	must(err)

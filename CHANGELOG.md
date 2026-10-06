@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] - 2026-10-06
+
+### Security
+
+- `ucan.Authorize` refuses, for every link of a chain, an `exp` more than
+  `ucan.MaxLifetime` past now, as macula's `macula_ucan` now does
+  (macula#68): a token minted with an `exp` in milliseconds by an earlier
+  macula-go, a binding or `macula_ucan:create/4` no longer authorizes
+  anything. The refusal is macula's `exp_beyond_max_lifetime`, checked right
+  after `expired`, and its error names the `exp` and `now` it compared.
+- `ErrExpBeyondMaxLifetime` is now that `*Refusal`, so Create's error and
+  Authorize's are one: `errors.Is` matches either, and `RefusalName` gives
+  `exp_beyond_max_lifetime` for both.
+- `ucan/testdata` holds macula's regenerated vectors, with four cases for the
+  bound; `goucan` adds a token minted at the bound, which macula accepts.
+
 ## [0.24.0] - 2026-10-06
 
 Minting a UCAN refuses an expiry that cannot be meant. An `exp` in

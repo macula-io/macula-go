@@ -12,7 +12,7 @@ import (
 )
 
 // The vectors are macula's test/vectors/ucan_v1.json (UCAN_V1.md beside it)
-// at 0e2724cc97a5689542b8da7b06d392cf0d34b205, copied by
+// at eb4c19ad0cd36ffccd6760c2e7ec9023864ab1e5, copied by
 // scripts/interop/copy_ucan_vectors.sh: tokens macula_ucan minted,
 // each with its policy, context and the verdict macula_ucan:authorize/3
 // reaches. Every verdict here must be macula's.

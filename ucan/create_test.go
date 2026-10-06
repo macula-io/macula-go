@@ -2,6 +2,9 @@ package ucan
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -127,5 +130,75 @@ func TestCreateRefusesAnAbsurdWindow(t *testing.T) {
 		if _, err := Create(root, [32]byte{}, nil, o); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// signedClaims is a token from issuer to audience with these claims over one
+// capability, minted past Create's checks, as an older SDK could have minted
+// it.
+func signedClaims(t *testing.T, issuer *identity.NodeKey, audience [32]byte, claims map[string]any) []byte {
+	t.Helper()
+	algorithm, err := alg(issuer.Profile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims["iss"] = DIDKey(issuer.PublicKey(), issuer.Profile())
+	claims["aud"] = hex.EncodeToString(audience[:])
+	claims["cap"] = []Capability{{With: "mri:realm:io.macula", Can: "invoke"}}
+	header, _ := json.Marshal(map[string]string{"alg": algorithm, "typ": typ, "ucv": ucv})
+	payload, _ := json.Marshal(claims)
+	input := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
+	signature, err := issuer.Sign([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []byte(input + "." + base64.RawURLEncoding.EncodeToString(signature))
+}
+
+// UCAN_V1 has no revocation, so a token's exp is the only bound on its life.
+// Authorize refuses an exp more than MaxLifetime past now, whoever minted it,
+// as macula_ucan does, and the refusal names the exp and now it compared. An
+// exp at the bound is valid.
+func TestAuthorizeRefusesAnExpBeyondMaxLifetime(t *testing.T) {
+	root := teststation.Key(t, profile.PQPure, "ucan lifetime root")
+	alice := teststation.Key(t, profile.PQPure, "ucan lifetime alice")
+	const now = int64(1790000000)
+	policy := UCANRequired{Issuer: nodeOf(t, root)}
+	ctx := Context{Caller: nodeOf(t, alice), Profile: profile.PQPure, Now: now}
+	authorize := func(claims map[string]any) error {
+		_, err := Authorize(signedClaims(t, root, nodeOf(t, alice), claims), policy, ctx)
+		return err
+	}
+	if err := authorize(map[string]any{"exp": now + MaxLifetime}); err != nil {
+		t.Fatalf("an exp at MaxLifetime: %v", err)
+	}
+	for name, exp := range map[string]int64{
+		"one second past MaxLifetime": now + MaxLifetime + 1,
+		"an exp in milliseconds":      (now + 3600) * 1000,
+	} {
+		err := authorize(map[string]any{"exp": exp})
+		if !errors.Is(err, ErrExpBeyondMaxLifetime) || RefusalName(err) != "exp_beyond_max_lifetime" {
+			t.Errorf("%s: %v, want exp_beyond_max_lifetime", name, err)
+			continue
+		}
+		for _, v := range []int64{exp, now} {
+			if !strings.Contains(err.Error(), strconv.FormatInt(v, 10)) {
+				t.Errorf("%s: %q does not name %d", name, err, v)
+			}
+		}
+	}
+	// Beside expired in the check order: before nbf.
+	if err := authorize(map[string]any{"exp": (now + 3600) * 1000, "nbf": now + 60}); !errors.Is(err, ErrExpBeyondMaxLifetime) {
+		t.Errorf("an exp in milliseconds with an nbf to come: %v, want exp_beyond_max_lifetime", err)
+	}
+}
+
+// Create's refusal of an exp beyond MaxLifetime is the refusal Authorize
+// gives, by macula's name.
+func TestCreateRefusesAnExpBeyondMaxLifetimeByMaculasName(t *testing.T) {
+	root := teststation.Key(t, profile.PQPure, "ucan lifetime name")
+	_, err := Create(root, [32]byte{}, nil, Options{Exp: time.Now().UnixMilli()})
+	if RefusalName(err) != "exp_beyond_max_lifetime" {
+		t.Fatalf("%v, want exp_beyond_max_lifetime", err)
 	}
 }
