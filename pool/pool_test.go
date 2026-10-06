@@ -3,6 +3,8 @@ package pool
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -273,6 +275,24 @@ func nodeIDOf(t *testing.T, name string) [32]byte {
 	return id
 }
 
+// A station that published no endpoint record is refused naming the station,
+// with reason absent, and the store's own error still underneath it.
+func TestAMissingStationEndpointNamesTheStation(t *testing.T) {
+	s := teststation.Start(t, profile.PQPure, "lonely")
+	realm := teststation.NewRealm(t, profile.PQPure, "endpoints", org)
+	p := connect(t, "endpoint caller", realm, s)
+	var nobody [32]byte
+	nobody[0] = 0x42
+	_, err := p.endpointOf(t.Context(), nobody)
+	var refused *StationEndpointError
+	if !errors.As(err, &refused) || refused.Station != nobody || refused.Reason != EndpointAbsent {
+		t.Fatalf("no endpoint record: %#v, want the station and %q", err, EndpointAbsent)
+	}
+	if !errors.Is(err, ErrNoStationEndpoint) || !errors.Is(err, stationlink.ErrRecordNotFound) {
+		t.Errorf("no endpoint record: %v, want ErrNoStationEndpoint wrapping ErrRecordNotFound", err)
+	}
+}
+
 // A station's endpoint is trusted only when the station signed it: an
 // endpoint another key signed, as a lying station would answer, is refused.
 func TestAStationEndpointMustBeTheStationsOwn(t *testing.T) {
@@ -293,8 +313,17 @@ func TestAStationEndpointMustBeTheStationsOwn(t *testing.T) {
 		t.Fatalf("encode: %v", err)
 	}
 	s.Forge(record.StationEndpointKey(victim.NodeID), wire)
-	if _, err := p.endpointOf(t.Context(), victim.NodeID); !errors.Is(err, ErrNoStationEndpoint) {
+	_, err = p.endpointOf(t.Context(), victim.NodeID)
+	if !errors.Is(err, ErrNoStationEndpoint) {
 		t.Errorf("an endpoint the liar signed for the victim: %v, want ErrNoStationEndpoint", err)
+	}
+	// macula-dotnet#1: the refusal names the station and why.
+	var refused *StationEndpointError
+	if !errors.As(err, &refused) || refused.Station != victim.NodeID || refused.Reason != EndpointNotSignedByStation {
+		t.Errorf("an endpoint the liar signed for the victim: %#v, want the victim and %q", err, EndpointNotSignedByStation)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("%x", victim.NodeID)) {
+		t.Errorf("the message %q does not name the station", err)
 	}
 	if target, err := p.endpointOf(t.Context(), s.NodeID); err != nil || target.ExpectedNodeID != s.NodeID {
 		t.Errorf("the liar's own endpoint: %+v, %v", target, err)

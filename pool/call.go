@@ -454,17 +454,70 @@ func (p *Pool) linkTo(ctx context.Context, station [32]byte) (*stationlink.Link,
 	return nil, fmt.Errorf("pool: station %x not reached: %w", station[:4], errors.Join(ctx.Err(), existing.lastErr()))
 }
 
+// Why a station's endpoint could not be used, as StationEndpointError.Reason.
+const (
+	EndpointAbsent             = "absent"                    // no station_endpoint record under the station's key
+	EndpointExpired            = "expired"                   // the record found had expired
+	EndpointUnverifiable       = "unverifiable"              // the record found did not verify
+	EndpointNotSignedByStation = "not signed by the station" // another key signed it
+	EndpointUnreadable         = "unreadable"                // it verified but is not a station_endpoint
+	EndpointNoPort             = "no QUIC port"
+	EndpointNoHost             = "no advertised host"
+)
+
+// StationEndpointError is ErrNoStationEndpoint for one station: which station
+// could not be dialed, and why (macula-dotnet#1). errors.Is(err,
+// ErrNoStationEndpoint) holds for it, and so does errors.Is for the store's
+// own error underneath (stationlink.ErrRecordNotFound, record.ErrExpired).
+type StationEndpointError struct {
+	Station [32]byte
+	Reason  string
+	Err     error // what the record lookup said, when it said anything
+}
+
+func (e *StationEndpointError) Error() string {
+	msg := fmt.Sprintf("pool: station %x has no usable endpoint record: %s", e.Station, e.Reason)
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+func (e *StationEndpointError) Unwrap() []error {
+	if e.Err == nil {
+		return []error{ErrNoStationEndpoint}
+	}
+	return []error{ErrNoStationEndpoint, e.Err}
+}
+
 // endpointOf is where station is dialed, from the station_endpoint record the
-// station signed itself.
+// station signed itself. A refusal is a *StationEndpointError naming the
+// station and the reason.
 func (p *Pool) endpointOf(ctx context.Context, station [32]byte) (transport.Target, error) {
+	refuse := func(reason string, err error) (transport.Target, error) {
+		return transport.Target{}, &StationEndpointError{Station: station, Reason: reason, Err: err}
+	}
 	verified, err := p.FindRecord(ctx, record.StationEndpointKey(station))
-	if err != nil {
-		return transport.Target{}, fmt.Errorf("%w: %w", ErrNoStationEndpoint, err)
+	switch {
+	case errors.Is(err, stationlink.ErrRecordNotFound):
+		return refuse(EndpointAbsent, err)
+	case errors.Is(err, record.ErrExpired):
+		return refuse(EndpointExpired, err)
+	case err != nil:
+		return refuse(EndpointUnverifiable, err)
 	}
 	r := verified.Record()
+	if r.KeyID != station {
+		return refuse(EndpointNotSignedByStation, nil)
+	}
 	endpoint, err := record.ReadStationEndpoint(r)
-	if err != nil || r.KeyID != station || endpoint.QUICPort == 0 || len(endpoint.HostAdvertised) == 0 {
-		return transport.Target{}, ErrNoStationEndpoint
+	switch {
+	case err != nil:
+		return refuse(EndpointUnreadable, err)
+	case endpoint.QUICPort == 0:
+		return refuse(EndpointNoPort, nil)
+	case len(endpoint.HostAdvertised) == 0:
+		return refuse(EndpointNoHost, nil)
 	}
 	return transport.Target{Host: endpoint.HostAdvertised[0], Port: endpoint.QUICPort, Profile: p.key.Profile(),
 		ExpectedNodeID: station}, nil

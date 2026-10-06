@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- A station that cannot be dialed for want of a usable endpoint record is now
+  refused as a `*pool.StationEndpointError` naming the station's node id and
+  the reason: `absent`, `expired`, `unverifiable`, `not signed by the station`,
+  `unreadable`, `no QUIC port` or `no advertised host`. It still matches
+  `pool.ErrNoStationEndpoint` with `errors.Is`, and the record lookup's own
+  error stays underneath it (macula-io/macula-dotnet#1, whose .NET exception
+  had the same gap before .NET moved onto libmacula).
+
 ## [0.25.0] - 2026-10-06
 
 ### Security
