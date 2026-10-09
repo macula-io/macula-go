@@ -741,11 +741,20 @@ func DIDKey(carried []byte, p profile.Profile) string {
 	return "did:key:z" + base58btcEncode(append(varint(codec(p)), carried...))
 }
 
+// MaxDIDKeyEncoded is the longest base58btc text after "did:key:z" a did:key
+// for a carried key can have (macula#87): a pq_hybrid key, the longest, is the
+// 3-byte codec varint, the 2,592-byte ML-DSA-87 key and a DER RSA-4096 public
+// key of about 526 bytes, some 4,270 characters. macula pins it in
+// ucan_v1.json (did_key_length) so every SDK refuses at the same length.
+const MaxDIDKeyEncoded = 4400
+
 // CarriedKey is the key a did:key carries, when it is a key in its one
-// carried form for p (D13).
+// carried form for p (D13). A did:key longer than MaxDIDKeyEncoded is
+// refused before it is decoded: base58 decodes in time quadratic in its
+// length, and a token's issuer is decoded before its signature is checked.
 func CarriedKey(did string, p profile.Profile) ([]byte, error) {
 	encoded, ok := strings.CutPrefix(did, "did:key:z")
-	if !ok {
+	if !ok || len(encoded) > MaxDIDKeyEncoded {
 		return nil, ErrMalformed
 	}
 	prefix := varint(codec(p))

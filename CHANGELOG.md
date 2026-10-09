@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `ucan.CarriedKey` refuses a did:key whose text after `did:key:z` is longer
+  than `ucan.MaxDIDKeyEncoded` (4,400 characters) as `ErrMalformed`, before it
+  is decoded (#27, macula#87). Base58 decodes in time quadratic in its length,
+  and a presented token's issuer is decoded before its signature is checked: a
+  200,000-character `iss` took 10.5 s to refuse. The longest carried key's
+  did:key, pq_hybrid's, is about 4,270 characters. The vectors are copied from
+  macula v14.5.0, which pins the bound and a did:key one past it
+  (`did_key_length`); macula 14.5.0 and macula-rust 0.9.0 refuse at the same
+  length.
+
 ### Added
 
 - `record.VerifyRealmMemberEndorsement(wire, trust, realm, member, nowMs)`

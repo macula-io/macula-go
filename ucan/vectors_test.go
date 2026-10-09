@@ -12,7 +12,7 @@ import (
 )
 
 // The vectors are macula's test/vectors/ucan_v1.json (UCAN_V1.md beside it)
-// at eb4c19ad0cd36ffccd6760c2e7ec9023864ab1e5, copied by
+// at v14.5.0 (26e8dca6), copied by
 // scripts/interop/copy_ucan_vectors.sh: tokens macula_ucan minted,
 // each with its policy, context and the verdict macula_ucan:authorize/3
 // reaches. Every verdict here must be macula's.
@@ -62,6 +62,11 @@ type vectorFile struct {
 		Child  string `json:"child"`
 		Covers bool   `json:"covers"`
 	} `json:"covers"`
+	DIDKeyLength struct {
+		MaxEncodedChars int    `json:"max_encoded_chars"`
+		OverBound       string `json:"over_bound"`
+		Verdict         string `json:"verdict"`
+	} `json:"did_key_length"`
 }
 
 func loadVectors(t *testing.T) vectorFile {
@@ -176,6 +181,23 @@ func TestVectorsKeys(t *testing.T) {
 					t.Errorf("%s %s: node_id %x, want %s", name, keyName, got, k.NodeID)
 				}
 			}
+		}
+	}
+}
+
+// macula#87: a did:key whose text after did:key:z is longer than
+// max_encoded_chars is malformed, in both profiles, as macula refuses it.
+func TestVectorsDIDKeyLength(t *testing.T) {
+	bound := loadVectors(t).DIDKeyLength
+	if bound.MaxEncodedChars != MaxDIDKeyEncoded {
+		t.Fatalf("the bound is %d, macula's is %d", MaxDIDKeyEncoded, bound.MaxEncodedChars)
+	}
+	if bound.Verdict != "malformed" || len(bound.OverBound) != len("did:key:z")+bound.MaxEncodedChars+1 {
+		t.Fatalf("over_bound is %d characters, verdict %q", len(bound.OverBound), bound.Verdict)
+	}
+	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
+		if _, err := CarriedKey(bound.OverBound, p); err != ErrMalformed {
+			t.Fatalf("%v: %v", p, err)
 		}
 	}
 }
