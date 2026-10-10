@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `macula_library_version()` returns the macula-go release the C library was
+  built from (`"v0.27.0"`), stamped from the tag by the libmacula build
+  (`scripts/libmacula/build.sh`), or `"devel"` for a build that is not a
+  release; the libmacula workflow's load check asserts it on every build. A
+  binding with a release floor reads it at load and refuses an older library,
+  naming both versions, instead of inferring a floor from function presence
+  and silently linking against a library that predates what it relies on
+  (#18).
+  See `cabi/CONTRACT.md` "Version".
+
 ## [0.26.0] - 2026-10-09
 
 ### Security

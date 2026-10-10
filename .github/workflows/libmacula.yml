@@ -2,15 +2,23 @@ name: libmacula
 
 # Builds libmacula (cabi as a C shared library) for every release platform,
 # checks each against the floor cabi/CONTRACT.md promises, proves it loads
-# where the runner can run it, and uploads each as an artifact. CI calls this
-# on every push, so a platform that stops building fails before a tag does;
-# release.yml calls it for a tag and publishes what it built.
+# where the runner can run it and reports the release it was built from (the
+# running tag on a release build, "devel" otherwise), and uploads each as an
+# artifact. CI calls this on every push, so a platform that stops building
+# fails before a tag does; release.yml calls it for a tag and publishes what
+# it built.
 
 on:
   workflow_call:
 
 permissions:
   contents: read
+
+env:
+  # What build.sh stamps into the library as its release. release.yml calls
+  # this workflow on a v* tag, and that tag is the release; every other
+  # caller (CI, on a push or a pull request) gets an unstamped "devel" build.
+  MACULA_LIBRARY_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'devel' }}
 
 jobs:
   linux:
@@ -37,13 +45,14 @@ jobs:
         run: |
           docker run --rm -v "$PWD":/w -v "$(go env GOROOT)":/opt/go:ro -w /w \
             -e GOCACHE=/tmp/gocache -e GOPATH=/tmp/gopath -e GOFLAGS=-buildvcs=false -e GOTOOLCHAIN=local \
+            -e MACULA_LIBRARY_VERSION="$MACULA_LIBRARY_VERSION" \
             ${{ matrix.image }} \
             bash -c 'export PATH=/opt/go/bin:$PATH GOROOT=/opt/go; scripts/libmacula/build.sh ${{ matrix.platform }} out'
       - name: Load it here
         run: |
           sudo chown -R "$(id -u)" out
           cc -I cabi -o load_check scripts/libmacula/load_check.c "$PWD/out/libmacula-${{ matrix.platform }}.so" -Wl,-rpath,"$PWD/out"
-          ./load_check
+          ./load_check "$MACULA_LIBRARY_VERSION"
       - uses: actions/upload-artifact@v4
         with:
           name: libmacula-${{ matrix.platform }}
@@ -73,7 +82,7 @@ jobs:
           if [ "${{ matrix.platform }}" = macos-x64 ]; then arch=x86_64; fi
           clang -arch "$arch" -mmacosx-version-min=13.0 -I cabi -o load_check scripts/libmacula/load_check.c \
             "$PWD/out/libmacula-${{ matrix.platform }}.dylib" -Wl,-rpath,"$PWD/out"
-          arch -"$arch" ./load_check
+          arch -"$arch" ./load_check "$MACULA_LIBRARY_VERSION"
       - uses: actions/upload-artifact@v4
         with:
           name: libmacula-${{ matrix.platform }}
@@ -97,7 +106,7 @@ jobs:
         run: |
           gcc -I cabi -o load_check.exe scripts/libmacula/load_check.c out/macula-windows-x64.dll
           cp out/macula-windows-x64.dll .
-          ./load_check.exe
+          ./load_check.exe "$MACULA_LIBRARY_VERSION"
       - uses: actions/upload-artifact@v4
         with:
           name: libmacula-windows-x64
