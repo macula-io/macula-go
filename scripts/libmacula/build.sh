@@ -13,10 +13,23 @@
 # its SONAME or install name (@rpath/<file> on macOS), so a program linked
 # against it finds it through its rpath. Run from the repository root with a Go
 # toolchain on PATH.
+#
+# MACULA_LIBRARY_VERSION is the release the library reports through
+# macula_library_version(): the workflow passes its tag on a release build,
+# and an unset value makes an unstamped "devel" build (cabi/CONTRACT.md
+# "Version").
 set -euo pipefail
 
 platform=$1
 out=$2
+version=${MACULA_LIBRARY_VERSION:-devel}
+case "$version" in
+  devel | v[0-9]*.[0-9]*.[0-9]*) ;;
+  *)
+    echo "build.sh: MACULA_LIBRARY_VERSION '$version' is neither a vX.Y.Z tag nor devel" >&2
+    exit 2
+    ;;
+esac
 glibc_floor=2.28
 # Go 1.27's linker targets macOS 13.0 (cmd/link's macOS macVersionFlag), so
 # no lower floor can be claimed honestly.
@@ -51,7 +64,7 @@ case "$platform" in
   macos-*) name_flag="-Wl,-install_name,@rpath/$file" ;;
   *) name_flag="" ;;
 esac
-go build -buildmode=c-shared -trimpath -ldflags="-s -extldflags '$name_flag'" -o "$out/$file" ./cabi
+go build -buildmode=c-shared -trimpath -ldflags="-s -X main.libraryVersion=$version -extldflags '$name_flag'" -o "$out/$file" ./cabi
 # cgo's own header is not released: cabi/macula.h is the contract.
 rm -f "$out/${file%.*}.h"
 
@@ -77,4 +90,4 @@ case "$platform" in
     echo "$file: minos $minos"
     ;;
 esac
-echo "built $out/$file"
+echo "built $out/$file ($version)"

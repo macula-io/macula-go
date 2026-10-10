@@ -19,6 +19,7 @@ import "C"
 
 import (
 	"runtime/cgo"
+	"sync"
 	"unsafe"
 )
 
@@ -27,6 +28,28 @@ const abiVersion = 1
 
 //export macula_abi_version
 func macula_abi_version() C.int32_t { return abiVersion }
+
+// libraryVersion is the macula-go release this library was built from,
+// stamped by scripts/libmacula/build.sh (-ldflags "-X main.libraryVersion=v0.27.0");
+// a build that is not a release stays "devel". A binding with a release floor
+// compares it at load and refuses an older library (CONTRACT.md "Version").
+var libraryVersion = "devel"
+
+func libraryVersionString() string { return libraryVersion }
+
+var (
+	libraryVersionOnce  sync.Once
+	libraryVersionCText *C.char
+)
+
+// macula_library_version returns the release as a C string the library owns:
+// made once, never freed, so a binding must not pass it to macula_free_string.
+//
+//export macula_library_version
+func macula_library_version() *C.char {
+	libraryVersionOnce.Do(func() { libraryVersionCText = C.CString(libraryVersion) })
+	return libraryVersionCText
+}
 
 //export macula_free_string
 func macula_free_string(s *C.char) { C.free(unsafe.Pointer(s)) }

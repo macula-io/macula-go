@@ -37,6 +37,12 @@ typedef uintptr_t macula_handle;
 /* MACULA_ABI_VERSION of the library loaded, to compare with this header's. */
 int32_t macula_abi_version(void);
 
+/* Since macula-go v0.27.0. The macula-go release the library was built from,
+ * e.g. "v0.27.0", or "devel" for a build that is not a release. The library
+ * owns the string: never free it. A binding with a release floor compares it
+ * at load. */
+const char *macula_library_version(void);
+
 /* Free a string or byte buffer the library returned. NULL is a no-op. */
 void macula_free_string(char *s);
 void macula_free_bytes(uint8_t *b);

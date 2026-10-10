@@ -15,6 +15,16 @@ the version; a new function does not, and `macula.h` says since which
 macula-go version it exists, so a binding that uses one pins at least that
 version. The set of declarations is fixed per macula-go tag.
 
+`macula_library_version()` (since v0.27.0) returns the macula-go release the
+library was built from, e.g. `"v0.27.0"`, stamped at build time from the tag,
+or `"devel"` for a build that is not a release. The library owns the string:
+never free it. `macula_abi_version` tells a binding whether the declarations
+are usable as `macula.h` declares them; the library release tells it which
+macula-go they came from, so a binding that needs a minimum release reads it
+at load and refuses an older library, naming both versions, instead of
+inferring a floor from function presence and silently linking against a
+library that predates what it relies on.
+
 An error `kind` a binding does not know is `failed` to it: kinds may be added
 without a new version.
 
