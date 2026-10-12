@@ -20,7 +20,7 @@ func TestControlFramesReadBackThroughTheirTables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	goodbye, err := GoodbyeFrame("normal", []byte("moving to beam01"))
+	goodbye, err := GoodbyeFrame("normal", []byte("moving to another station"))
 	if err != nil {
 		t.Fatal(err)
 	}
