@@ -227,17 +227,19 @@ func TestProviderFrameFieldsTheDesignDoesNotAllowAreMalformed(t *testing.T) {
 		tbs       []cbor.MapEntry
 	}{
 		{"a STREAM_DATA without its body", frameTypeStreamData, withoutEntry(chunk, "body")},
-		{"an encoding outside its set", frameTypeStreamData, withEntry(chunk, "encoding", cbor.Text("json"))},
 		{"a raw body as text", frameTypeStreamData, withEntry(chunk, "body", cbor.Text("chunk"))},
 		{"a seq of 2^53", frameTypeStreamData, withEntry(chunk, "seq", cbor.Uint64(maxProtocolInt))},
 		{"a STREAM_DATA with a role", frameTypeStreamData, withEntry(chunk, "role", cbor.Text("both"))},
 		{"a field no stream frame has", frameTypeStreamData, withEntry(chunk, "extra", cbor.Uint64(1))},
-		{"a role outside its set", frameTypeStreamEnd, streamTBSOf(open, frameTypeStreamEnd, signer, 0, textEntry("role", "recv"))},
 		{"a STREAM_END around a STREAM_DATA's fields", frameTypeStreamEnd, chunk},
 		{"a tbs of another frame type", frameTypeStreamData, withEntry(chunk, "frame_type", cbor.Text(frameTypeCall))},
 	} {
 		wantStreamRefusal(t, c.name, verify(c.frameType, c.tbs), ErrMalformedFrame)
 	}
+	// An encoding or role outside its set is an enum value this library does
+	// not know: refused by name, not as malformed (WIRE_1_0.md section 3.4).
+	wantEnumUnknown(t, "an encoding outside its set", verify(frameTypeStreamData, withEntry(chunk, "encoding", cbor.Text("json"))), "encoding")
+	wantEnumUnknown(t, "a role outside its set", verify(frameTypeStreamEnd, streamTBSOf(open, frameTypeStreamEnd, signer, 0, textEntry("role", "recv"))), "role")
 }
 
 // Before the provider's first frame the verifier holds no key, so a frame

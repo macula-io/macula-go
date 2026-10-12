@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
 )
@@ -596,7 +597,8 @@ func TestAClientReadsHelloExactly(t *testing.T) {
 		frame []byte
 		want  error
 	}{
-		{"a refusal code HELLO never sends", hello(refusing("proof_invalid")), ErrMalformedFrame},
+		{"a refusal code that is not text", hello(map[string]cbor.Value{"accepted": cbor.Int(0), "refusal_code": cbor.Int(1), "capabilities": cbor.Int(0)}), ErrMalformedFrame},
+		{"an empty refusal code", hello(refusing("")), ErrMalformedFrame},
 		{"a refusal without a code", hello(map[string]cbor.Value{"accepted": cbor.Int(0)}), ErrMalformedFrame},
 		{"an acceptance with a refusal code", hello(acceptedWithCode), ErrMalformedFrame},
 		{"accepted 2", hello(map[string]cbor.Value{"accepted": cbor.Int(2)}), ErrMalformedFrame},
@@ -688,4 +690,23 @@ func TestAStationSessionOutsideTheDesignRefusesEveryConnect(t *testing.T) {
 			checkRefused(t, c.name, hello, err, ErrInvalidStationSession, RefusalNotAccepted)
 		}
 	})
+}
+
+// A HELLO refusal_code is per-hop: one this library does not know reads as
+// not_accepted and is counted, and profile_unsupported is one it knows
+// (macula docs/design/WIRE_1_0.md sections 3.4 and 4.4).
+func TestAnUnknownRefusalCodeReadsAsNotAccepted(t *testing.T) {
+	before := frame.WireCounters().EnumFallback["refusal_code"]
+	_, err := ReadHello(helloRefused(Version, "quota_exceeded_v2", 0), Station{})
+	var refused *RefusedError
+	if !errors.As(err, &refused) || refused.Code != RefusalNotAccepted {
+		t.Errorf("a HELLO refused with quota_exceeded_v2: %v, want a refusal read as not_accepted", err)
+	}
+	if got := frame.WireCounters().EnumFallback["refusal_code"]; got != before+1 {
+		t.Errorf("wire_enum_fallback{refusal_code} = %d, want %d", got, before+1)
+	}
+	_, err = ReadHello(helloRefused(Version, RefusalProfileUnsupported, 0), Station{})
+	if !errors.As(err, &refused) || refused.Code != RefusalProfileUnsupported {
+		t.Errorf("a HELLO refused with profile_unsupported: %v, want that refusal", err)
+	}
 }

@@ -264,6 +264,9 @@ func VerifyRelayError(v cbor.Value, request VerifiedRequest, p profile.Profile, 
 	if !ok || !hasFields(fields, "frame_type", "request_id", "request_hash", "reported_by", "code") {
 		return VerifiedRelayError{}, ErrMalformedFrame
 	}
+	if err := tbsEnum(fields, "code", relayCodes...); err != nil {
+		return VerifiedRelayError{}, err
+	}
 	relayError := VerifiedRelayError{FrameType: frameType, Code: textOf(fields["code"])}
 	fixedBytes(relayError.ReportedBy[:], fields["reported_by"])
 	if hop, has := fields["offending_hop"]; has {
@@ -288,7 +291,7 @@ func relayErrorTable(frameType string) map[string]fieldRule {
 		"request_id":    bytesOf(16),
 		"request_hash":  bytesOf(48),
 		"reported_by":   bytesOf(32),
-		"code":          textIn(relayCodes...),
+		"code":          enumText,
 		"offending_hop": bytesOf(32),
 	}
 }

@@ -613,7 +613,7 @@ func TestARelayCodeOutsideTheClosedSetIsRefused(t *testing.T) {
 	fields := withEntry(relayTBS(request, keys.station), "code", cbor.Text("no_route"))
 	frame := crafted(frameTypeError, "relay_error", signedWith(t, relayErrorLabel, fields, keys.station))
 	_, err = VerifyRelayError(onWire(t, frame), request, profile.PQPure, keys.station.KeyID())
-	wantRefusal(t, "a relay error with code no_route", err, ErrMalformedFrame)
+	wantEnumUnknown(t, "a relay error with code no_route", err, "code")
 }
 
 func TestARelayErrorForAnotherRequestIsRefused(t *testing.T) {

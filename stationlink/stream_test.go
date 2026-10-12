@@ -539,3 +539,73 @@ func TestAnUnknownFrameTypeInASessionAbortsItsStreamWithCodeFive(t *testing.T) {
 	default:
 	}
 }
+
+// A caller's stream frame carrying an encoding this library does not know is
+// refused by name: the session ends with StreamError enum_unknown, not
+// malformed_frame, and the link stays up (WIRE_1_0.md section 3.4).
+func TestACallerFrameOfAnUnknownEncodingEndsTheSessionAsEnumUnknown(t *testing.T) {
+	s := teststation.Start(t, profile.PQPure, "unknown encoding")
+	realm := teststation.NewRealm(t, profile.PQPure, "unknown encoding", "mcl-tube")
+	provider := dialAs(t, s, "unknown encoding provider")
+	realm.Admit(t, s, provider.NodeID())
+	ended := make(chan error, 1)
+	if _, err := provider.Serve(t.Context(), stationlink.Offer{Realm: realm.ID, Procedure: streamProcedure, RealmKey: realm.RealmKey(),
+		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: func(ctx context.Context, stream *stationlink.Stream) error {
+			_, err := stream.Recv(ctx)
+			ended <- err
+			return err
+		}}}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	callerKey := teststation.Key(t, profile.PQPure, "unknown encoding caller")
+	mode := frame.Bidi
+	open, err := frame.SignStreamOpen(frame.RequestSpec{RequestID: [16]byte{9}, Realm: realm.ID, Procedure: streamProcedure,
+		Target: provider.NodeID(), Deadline: uint64(time.Now().Add(time.Minute).UnixMilli()), Payload: cbor.Map(nil), Mode: &mode}, callerKey)
+	if err != nil {
+		t.Fatalf("SignStreamOpen: %v", err)
+	}
+	verifiedOpen, err := frame.VerifyRequest(open, profile.PQPure)
+	if err != nil {
+		t.Fatalf("VerifyRequest: %v", err)
+	}
+	caller := callerKey.KeyID()
+	held, err := identity.SignHeldObject("MACULA-PQ-CALLER-STREAM-V1", []cbor.MapEntry{
+		{Key: cbor.Text("frame_type"), Val: cbor.Text("stream_data")},
+		{Key: cbor.Text("request_id"), Val: cbor.Bytes(verifiedOpen.RequestID[:])},
+		{Key: cbor.Text("request_hash"), Val: cbor.Bytes(verifiedOpen.RequestHash[:])},
+		{Key: cbor.Text("signer"), Val: cbor.Bytes(caller[:])},
+		{Key: cbor.Text("seq"), Val: cbor.Int(0)},
+		{Key: cbor.Text("encoding"), Val: cbor.Text("cbor_v2")},
+		{Key: cbor.Text("body"), Val: cbor.Bytes([]byte("x"))},
+	}, callerKey)
+	if err != nil {
+		t.Fatalf("SignHeldObject: %v", err)
+	}
+	data := cbor.Map([]cbor.MapEntry{
+		{Key: cbor.Text("version"), Val: cbor.Int(frame.ProtocolVersion)},
+		{Key: cbor.Text("frame_type"), Val: cbor.Text("stream_data")},
+		{Key: cbor.Text("caller_stream"), Val: held.Value()},
+	})
+	var raw []byte
+	for _, v := range []cbor.Value{open, data} {
+		encoded := cbor.Encode(v)
+		raw = append(binary.BigEndian.AppendUint32(raw, uint32(len(encoded))), encoded...)
+	}
+	if _, err := s.RawStream(t.Context(), provider.NodeID(), raw); err != nil {
+		t.Fatalf("RawStream: %v", err)
+	}
+	select {
+	case err := <-ended:
+		var refused *stationlink.StreamError
+		if !errors.As(err, &refused) || refused.Code != "enum_unknown" {
+			t.Errorf("the session ended with %v, want StreamError enum_unknown", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the session never ended")
+	}
+	select {
+	case <-provider.Done():
+		t.Errorf("the link ended: %v", provider.Err())
+	default:
+	}
+}

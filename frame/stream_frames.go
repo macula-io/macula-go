@@ -395,9 +395,9 @@ func providerFirst(frameType string, object cbor.Value, state StreamState, p pro
 	if err != nil {
 		return VerifiedStreamFrame{}, state, objectRefusal(err)
 	}
-	fields, ok := streamRead(frameType, verified.Fields, sealedProviderStream)
-	if !ok {
-		return VerifiedStreamFrame{}, state, ErrMalformedFrame
+	fields, err := streamRead(frameType, verified.Fields, sealedProviderStream)
+	if err != nil {
+		return VerifiedStreamFrame{}, state, err
 	}
 	frame := verifiedStreamFrame(frameType, fields, sealedProviderStream)
 	switch {
@@ -434,9 +434,9 @@ func providerLater(frameType string, object cbor.Value, state StreamState, p pro
 	case !bytes.Equal(verified.Key, held.key):
 		return VerifiedStreamFrame{}, state, ErrKeyIDMismatch
 	}
-	fields, ok := streamRead(frameType, verified.Fields, sealedProviderStream)
-	if !ok {
-		return VerifiedStreamFrame{}, state, ErrMalformedFrame
+	fields, err := streamRead(frameType, verified.Fields, sealedProviderStream)
+	if err != nil {
+		return VerifiedStreamFrame{}, state, err
 	}
 	frame := verifiedStreamFrame(frameType, fields, sealedProviderStream)
 	switch {
@@ -480,9 +480,9 @@ func VerifyCallerStream(v cbor.Value, state StreamState, p profile.Profile) (Ver
 	if err != nil {
 		return VerifiedStreamFrame{}, state, objectRefusal(err)
 	}
-	fields, ok := streamRead(frameType, verified.Fields, sealedCallerStream)
-	if !ok {
-		return VerifiedStreamFrame{}, state, ErrMalformedFrame
+	fields, err := streamRead(frameType, verified.Fields, sealedCallerStream)
+	if err != nil {
+		return VerifiedStreamFrame{}, state, err
 	}
 	frame := verifiedStreamFrame(frameType, fields, sealedCallerStream)
 	switch {
@@ -531,29 +531,38 @@ func streamTypeFieldNames(frameType string, sealed bool) ([]string, bool) {
 // streamRead reads a stream frame's signed fields through its type's table, as
 // macula_frame's stream_read does: frame_type, request_id, request_hash, signer
 // and seq, and exactly the fields of its type, clear or sealed in its side's
-// shape (context), a clear raw body a byte string.
-func streamRead(frameType string, tbs cbor.Value, context sealedContext) (map[string]cbor.Value, bool) {
+// shape (context), else ErrMalformedFrame; then an encoding or role this
+// library does not know, an *EnumUnknownError naming it (WIRE_1_0.md section
+// 3.4); then a clear raw body that is not a byte string, ErrMalformedFrame.
+func streamRead(frameType string, tbs cbor.Value, context sealedContext) (map[string]cbor.Value, error) {
 	fields, ok := readFields(tbs, streamTable(frameType, context))
 	if !ok || !hasFields(fields, "frame_type", "request_id", "request_hash", "signer", "seq") {
-		return nil, false
+		return nil, ErrMalformedFrame
 	}
 	_, sealed := fields["sealed"]
 	typeFields, ok := streamTypeFieldNames(frameType, sealed)
 	if !ok {
-		return nil, false
+		return nil, ErrMalformedFrame
 	}
 	carried := 5 + len(typeFields)
 	if _, hasAlg := fields["alg"]; hasAlg {
 		carried++
 	}
 	if !hasFields(fields, typeFields...) || len(fields) != carried {
-		return nil, false
+		return nil, ErrMalformedFrame
+	}
+	if err := tbsEnum(fields, "encoding", Raw.Name(), Msgpack.Name()); err != nil {
+		return nil, err
+	}
+	if err := tbsEnum(fields, "role", Send.Name(), Both.Name()); err != nil {
+		return nil, err
 	}
 	if frameType == frameTypeStreamData && !sealed && textOf(fields["encoding"]) == Raw.Name() {
-		_, isBytes := fields["body"].AsBytes()
-		return fields, isBytes
+		if _, isBytes := fields["body"].AsBytes(); !isBytes {
+			return nil, ErrMalformedFrame
+		}
 	}
-	return fields, true
+	return fields, nil
 }
 
 func streamTable(frameType string, context sealedContext) map[string]fieldRule {
@@ -564,9 +573,9 @@ func streamTable(frameType string, context sealedContext) map[string]fieldRule {
 		"request_hash": bytesOf(48),
 		"signer":       bytesOf(32),
 		"seq":          protocolUint,
-		"encoding":     textIn(Raw.Name(), Msgpack.Name()),
+		"encoding":     enumText,
 		"body":         anyValue,
-		"role":         textIn(Send.Name(), Both.Name()),
+		"role":         enumText,
 		"code":         textWithin(maxErrorCodeBytes),
 		"message":      textWithin(maxErrorTextBytes),
 		"payload":      anyValue,

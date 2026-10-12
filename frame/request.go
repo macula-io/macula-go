@@ -198,6 +198,9 @@ func VerifyRequest(v cbor.Value, p profile.Profile) (VerifiedRequest, error) {
 		!payloadOrSealed(fields) || hasMode != (frameType == frameTypeStreamOpen) {
 		return VerifiedRequest{}, ErrMalformedFrame
 	}
+	if err := tbsEnum(fields, "mode", ServerStream.Name(), ClientStream.Name(), Bidi.Name()); err != nil {
+		return VerifiedRequest{}, err
+	}
 	request := verifiedRequest(frameType, verified, fields)
 	if request.Caller != identity.NodeIDOf(verified.Key, p) {
 		return VerifiedRequest{}, ErrKeyIDMismatch
@@ -282,7 +285,7 @@ func requestTable(frameType string) map[string]fieldRule {
 		"deadline":   protocolUint,
 		"payload":    anyValue,
 		"sealed":     sealedRule(sealedRequest),
-		"mode":       textIn(ServerStream.Name(), ClientStream.Name(), Bidi.Name()),
+		"mode":       enumText,
 		"token":      anyBytes,
 		"proofs":     proofsWithinBound,
 	}

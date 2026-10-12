@@ -8,6 +8,7 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
 )
 
@@ -136,5 +137,40 @@ func TestLivenessProbesKeepOrEndTheLink(t *testing.T) {
 	answering <- false
 	if err := waitDone(t, link); !errors.Is(err, ErrLivenessLost) {
 		t.Errorf("the link ended with %v, want ErrLivenessLost", err)
+	}
+}
+
+// A relay error whose code this library does not know is refused by name,
+// enum_unknown, and counted so; it never ends the link (WIRE_1_0.md section
+// 3.4). The call stays pending and times out.
+func TestARelayErrorOfAnUnknownCodeIsCountedAsEnumUnknown(t *testing.T) {
+	link, s := linkWithStation(t, profile.PQPure)
+	s.answerCalls(func(r frame.VerifiedRequest) (cbor.Value, bool) {
+		reportedBy := s.key.KeyID()
+		object, err := identity.SignObject("MACULA-PQ-RELAY-ERROR-V1", []cbor.MapEntry{
+			{Key: cbor.Text("frame_type"), Val: cbor.Text("error")},
+			{Key: cbor.Text("request_id"), Val: cbor.Bytes(r.RequestID[:])},
+			{Key: cbor.Text("request_hash"), Val: cbor.Bytes(r.RequestHash[:])},
+			{Key: cbor.Text("reported_by"), Val: cbor.Bytes(reportedBy[:])},
+			{Key: cbor.Text("code"), Val: cbor.Text("route_withdrawn_v2")},
+		}, s.key)
+		if err != nil {
+			return cbor.Value{}, false
+		}
+		return cbor.Map([]cbor.MapEntry{
+			{Key: cbor.Text("version"), Val: cbor.Int(frame.ProtocolVersion)},
+			{Key: cbor.Text("frame_type"), Val: cbor.Text("error")},
+			{Key: cbor.Text("relay_error"), Val: object.Value()},
+		}), true
+	})
+	c := Call{Realm: [32]byte{3}, Procedure: "mcl-echo/echo", Target: [32]byte{7}, Payload: cbor.Map(nil), Timeout: 300 * time.Millisecond, Clear: true}
+	if _, err := callWithin(t, link, c); !errors.Is(err, ErrCallTimeout) {
+		t.Errorf("Call: %v, want ErrCallTimeout", err)
+	}
+	if got := link.Unrouted(); got["enum_unknown"] != 1 || got["unverified_reply"] != 0 {
+		t.Errorf("unrouted %v, want one enum_unknown and no unverified_reply", got)
+	}
+	if err := link.Err(); err != nil {
+		t.Errorf("the link ended: %v", err)
 	}
 }

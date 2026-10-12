@@ -181,8 +181,14 @@ func (l *Link) replied(v cbor.Value) {
 		l.count("unmatched_reply")
 		return
 	}
-	outcome, verified := l.verifiedOutcome(v, pending)
-	if !verified {
+	outcome, err := l.verifiedOutcome(v, pending)
+	switch {
+	case errors.Is(err, frame.ErrEnumUnknown):
+		// A reply or relay error carrying an enum value this library does
+		// not know is refused by name (WIRE_1_0.md section 3.4).
+		l.count("enum_unknown")
+		return
+	case err != nil:
 		l.count("unverified_reply")
 		return
 	}
@@ -192,31 +198,31 @@ func (l *Link) replied(v cbor.Value) {
 	}
 }
 
-func (l *Link) verifiedOutcome(v cbor.Value, pending *pendingCall) (callOutcome, bool) {
+func (l *Link) verifiedOutcome(v cbor.Value, pending *pendingCall) (callOutcome, error) {
 	request := pending.request
 	if _, isReply := v.Get("reply"); isReply {
 		reply, err := frame.VerifyReply(v, request, l.profile)
 		if err != nil {
-			return callOutcome{}, false
+			return callOutcome{}, err
 		}
 		if pending.seal != nil {
-			return pending.seal.sealedOutcome(reply, request.RequestHash), true
+			return pending.seal.sealedOutcome(reply, request.RequestHash), nil
 		}
 		if reply.Sealed != nil {
 			// This node sealed nothing, so a sealed reply answers no request
 			// it made as the provider sealed it.
-			return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: codeSealedRefused}}, true
+			return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: codeSealedRefused}}, nil
 		}
 		if reply.FrameType == "result" {
-			return callOutcome{payload: reply.Payload}, true
+			return callOutcome{payload: reply.Payload}, nil
 		}
-		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: reply.Code, Detail: reply.Detail}}, true
+		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: reply.Code, Detail: reply.Detail}}, nil
 	}
 	relayed, err := frame.VerifyRelayError(v, request, l.profile, l.station.NodeID)
 	if err != nil {
-		return callOutcome{}, false
+		return callOutcome{}, err
 	}
-	return callOutcome{err: &RelayError{ReportedBy: relayed.ReportedBy, Code: relayed.Code}}, true
+	return callOutcome{err: &RelayError{ReportedBy: relayed.ReportedBy, Code: relayed.Code}}, nil
 }
 
 // probe sends a liveness probe every livenessEvery and ends the link after two

@@ -372,7 +372,13 @@ func (s *Stream) received(payload []byte, state frame.StreamState) (frame.Stream
 	} else {
 		verified, state, err = frame.VerifyCallerStream(v, state, s.link.profile)
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, frame.ErrEnumUnknown):
+		// An enum value this library does not know refuses the frame by
+		// name (WIRE_1_0.md section 3.4).
+		s.fail("enum_unknown", err)
+		return state, true
+	case err != nil:
 		s.fail("malformed_frame", err)
 		return state, true
 	}

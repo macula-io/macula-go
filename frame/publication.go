@@ -149,7 +149,7 @@ const maxTopicBytes = 512
 // a GOSSIP's round.
 var publicationFrameFields = map[string]map[string]fieldRule{
 	frameTypePublish:        {},
-	frameTypeEvent:          {"delivered_via": textIn("plumtree", "direct")},
+	frameTypeEvent:          {"delivered_via": enumText},
 	frameTypePlumtreeGossip: {"round": protocolUint},
 }
 

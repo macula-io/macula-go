@@ -36,6 +36,7 @@ import (
 	"slices"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
 )
@@ -135,8 +136,13 @@ const (
 	// RefusalSessionProofRate refuses a v5 CONNECT past the station's session
 	// proof budget. Only a v5 HELLO carries it.
 	RefusalSessionProofRate RefusalCode = "session_proof_rate"
-	// RefusalNotAccepted refuses a CONNECT that failed any other check.
+	// RefusalNotAccepted refuses a CONNECT that failed any other check. A
+	// refusal code this library does not know reads as this one.
 	RefusalNotAccepted RefusalCode = "not_accepted"
+	// RefusalProfileUnsupported refuses an opener whose profiles share none
+	// with the station's, or a CONNECT naming a profile with no registered
+	// verifier (macula docs/design/WIRE_1_0.md section 4.4).
+	RefusalProfileUnsupported RefusalCode = "profile_unsupported"
 )
 
 // RefusedError is ErrRefused with the HELLO's refusal code.
@@ -628,7 +634,7 @@ func ReadHello(frame []byte, station Station) (uint64, error) {
 	proof, hasProof := f["session_proof"].AsBytes()
 	switch {
 	case accepted == 0 && hasCode:
-		return 0, &RefusedError{Code: RefusalCode(f.text("refusal_code"))}
+		return 0, &RefusedError{Code: refusalCode(f.text("refusal_code"))}
 	case accepted != 1 || hasCode:
 		return 0, ErrMalformedFrame
 	case f.int("version") == Version && station.version() == Version5:
@@ -783,15 +789,23 @@ func fieldTyped(key string, v cbor.Value) bool {
 		return isInt && (n == 0 || n == 1)
 	case "refusal_code":
 		code, isText := v.AsText()
-		return isText && knownRefusal(RefusalCode(code))
+		return isText && code != "" && len(code) <= maxRefusalCodeBytes
 	default:
 		return false
 	}
 }
 
-func knownRefusal(code RefusalCode) bool {
-	return code == RefusalUnsupportedVersion || code == RefusalPuzzleInvalid || code == RefusalSessionProofRate ||
-		code == RefusalNotAccepted
+// maxRefusalCodeBytes bounds a refusal_code on the wire, known or not.
+const maxRefusalCodeBytes = 64
+
+// refusalCodes are the HELLO refusal codes this library knows.
+var refusalCodes = []string{string(RefusalUnsupportedVersion), string(RefusalProfileUnsupported), string(RefusalPuzzleInvalid),
+	string(RefusalSessionProofRate), string(RefusalNotAccepted)}
+
+// refusalCode reads a HELLO's refusal_code, a per-hop enum: one this library
+// does not know reads as not_accepted, counted (WIRE_1_0.md section 3.4).
+func refusalCode(code string) RefusalCode {
+	return RefusalCode(frame.ReadPerHopEnum("refusal_code", code, string(RefusalNotAccepted), refusalCodes...))
 }
 
 func (f frameFields) bytes(key string) []byte {

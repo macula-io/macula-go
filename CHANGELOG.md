@@ -39,6 +39,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (by extension name) and `wire_enum_fallback` (by field) for the process.
 - A frame after HELLO is capped at 16,777,215 bytes, as macula caps it
   (`stationlink.MaxFrameBytes` was one byte over).
+- **An unknown enum value never closes a link** (WIRE_1_0.md section 3.4). In a
+  per-hop slot it reads as the field's fallback and is counted
+  (`wire_enum_fallback`): an EVENT's `delivered_via` reads as `direct`
+  (`frame.DeliveredVia`), a HELLO's `refusal_code` as `not_accepted`. Inside a
+  signed tbs it refuses that object with `frame.EnumUnknownError` naming the
+  field (`frame.ErrEnumUnknown`): STREAM_OPEN `mode`, STREAM_DATA `encoding`,
+  STREAM_END `role`, relay error `code`. A stream session ends with
+  `StreamError` `enum_unknown`; a reply refused so is counted as
+  `enum_unknown`. `frame.ReadPerHopEnum` reads any per-hop enum.
+- `handshake.RefusalProfileUnsupported` (`profile_unsupported`) is a refusal
+  code the client knows.
 
 ## [0.26.0] - 2026-10-09
 

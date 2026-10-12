@@ -183,7 +183,7 @@ func (l *Link) evented(v cbor.Value) {
 		l.count("event_unverified")
 		return
 	}
-	via, _ := fieldOf(v, "delivered_via").AsText()
+	via := frame.DeliveredVia(v)
 	event := Event{Publisher: publication.Publisher, Realm: publication.Realm, Topic: publication.Topic,
 		Seq: publication.Seq, PublishedAt: publication.PublishedAt, Payload: publication.Payload, DeliveredVia: via}
 	if !l.dedup.first(publication.PublicationHash, publication.ExpiresAt, now) {
