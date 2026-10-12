@@ -135,6 +135,38 @@ func abandon(qs *quic.Stream) {
 	qs.CancelRead(0)
 }
 
+// quicCodeUnknownFrameType is the QUIC application code that aborts a
+// dedicated stream on a frame of a type the receiver does not know,
+// QUIC_CODE_UNKNOWN_FRAME_TYPE (macula docs/design/WIRE_1_0.md section 3.3),
+// distinct from 3, a frame that did not decode.
+const quicCodeUnknownFrameType quic.StreamErrorCode = 5
+
+// streamFrameTypes are the frame types a dedicated stream carries; any other
+// is unknown to it.
+var streamFrameTypes = map[string]bool{
+	"stream_open": true, "stream_data": true, "stream_end": true,
+	"stream_reply": true, "stream_error": true, "error": true,
+}
+
+// unknownOnStream reports whether v is a frame whose envelope reads under the
+// wire 1.0 rules but whose type a dedicated stream does not know, and counts
+// it when so.
+func unknownOnStream(v cbor.Value) bool {
+	envelope, err := frame.ReadEnvelope(v)
+	if err != nil || streamFrameTypes[envelope.FrameType] {
+		return false
+	}
+	frame.CountUnknownFrameType()
+	return true
+}
+
+// abortUnknown aborts a stream no session holds on a frame of an unknown
+// type, with QUIC_CODE_UNKNOWN_FRAME_TYPE in both directions.
+func abortUnknown(qs *quic.Stream) {
+	qs.CancelWrite(quicCodeUnknownFrameType)
+	qs.CancelRead(quicCodeUnknownFrameType)
+}
+
 // holdStream keeps s among the link's streams, ended with the link; false once
 // the link has ended.
 func (l *Link) holdStream(s *Stream) bool {

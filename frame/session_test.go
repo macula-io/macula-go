@@ -50,7 +50,7 @@ func TestLivenessFramesCarryTheirNonceAndAreNeverNeighbourSigned(t *testing.T) {
 			t.Errorf("%s after the wire: (%q, %x, %t)", c.frameType, gotType, gotNonce, ok)
 		}
 	}
-	short := cbor.Map(append(base("liveness_ping", 0, freshFrameID(), currentMillis()), bytesEntry("nonce", []byte{1, 2})))
+	short := cbor.Map(append(base("liveness_ping", freshFrameID(), currentMillis()), bytesEntry("nonce", []byte{1, 2})))
 	if _, _, ok := LivenessNonce(short); ok {
 		t.Error("a liveness_ping with a 2-byte nonce was read")
 	}

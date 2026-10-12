@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/macula-io/macula-go/frame"
 )
 
-// The frame size caps of a control stream, as macula 12 holds them: a
-// handshake frame (OPENER, CHALLENGE, CONNECT, HELLO) is at most 64 KiB, and
-// every frame after HELLO at most 16 MiB. A length header over the cap is
-// refused as soon as it arrives, before its body is read.
+// The frame size caps of a control stream: a handshake frame (OPENER,
+// CHALLENGE, CONNECT, HELLO) is at most 64 KiB, and every frame after HELLO at
+// most 16,777,215 bytes, frame.MaxFrameBytes (macula's ?MAX_FRAME_BYTES,
+// WIRE_1_0.md section 3.1). A length header over the cap is refused as soon as
+// it arrives, before its body is read.
 const (
 	HandshakeFrameBytes = 64 * 1024
-	MaxFrameBytes       = 16 * 1024 * 1024
+	MaxFrameBytes       = frame.MaxFrameBytes
 )
 
 // ErrFrameTooLarge is a frame whose length header exceeds the cap in force.

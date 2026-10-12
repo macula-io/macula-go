@@ -19,6 +19,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#18).
   See `cabi/CONTRACT.md` "Version".
 
+### Changed (wire 1.0, #30: not yet interoperable with a station before it)
+
+- **Frames carry version 5 and the wire 1.0 envelope** (macula
+  `docs/design/WIRE_1_0.md` section 3, macula#99). Every frame a client builds,
+  STATUS included, carries `version` 5; the unsigned per-frame `capabilities`
+  header is gone, and `realm`, `call_id` and `source_route` are left out rather
+  than sent as null. `frame.ReadEnvelope` reads every received frame first:
+  `version` 5, a `frame_type` of 1 to 64 bytes, and an `ext` map of 1 to 16
+  extensions. An unknown critical extension is `frame.ErrExtensionUnsupported`
+  (on the control stream the frame is dropped, counted as
+  `extension_unsupported`, and the link stays up); an unknown non-critical one
+  is read past.
+- **An unknown frame type no longer costs a link or a session.** On the control
+  stream it is dropped and counted; on a dedicated stream that stream alone is
+  aborted with QUIC code 5, `QUIC_CODE_UNKNOWN_FRAME_TYPE`, and the session
+  ends with `StreamError` `unknown_frame_type`.
+- `frame.WireCounters()` reports `wire_unknown_frame_type`, `wire_ext_ignored`
+  (by extension name) and `wire_enum_fallback` (by field) for the process.
+- A frame after HELLO is capped at 16,777,215 bytes, as macula caps it
+  (`stationlink.MaxFrameBytes` was one byte over).
+
 ## [0.26.0] - 2026-10-09
 
 ### Security

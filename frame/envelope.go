@@ -19,8 +19,9 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 )
 
-// ProtocolVersion is the version field every frame carries.
-const ProtocolVersion = 2
+// ProtocolVersion is the version every frame carries: wire 1.0 binds the frame
+// version to the handshake version, 5 (macula docs/design/WIRE_1_0.md section 2).
+const ProtocolVersion = 5
 
 // MaxFrameBytes is the CBOR payload size cap — matches ?MAX_FRAME_BYTES
 // (16#FFFFFF) exactly: 16 MiB minus one byte.
@@ -41,37 +42,16 @@ func freshFrameID() []byte {
 	return b[:]
 }
 
-// base builds the envelope every frame carries, matching macula_frame's
-// base/2. Field order doesn't matter — canonical CBOR re-sorts by
-// encoded key bytes at encode time regardless (see package cbor).
-func base(frameType string, capabilities uint64, frameID []byte, sentAtMs int64) []cbor.MapEntry {
+// base builds the envelope every frame carries: version, frame_type, frame_id
+// and sent_at_ms. The other envelope keys (realm, call_id, source_route, ext)
+// are added only by a frame that has a value for them, never sent as null, so
+// one frame has one encoding. Field order doesn't matter: canonical CBOR
+// re-sorts by encoded key bytes at encode time (see package cbor).
+func base(frameType string, frameID []byte, sentAtMs int64) []cbor.MapEntry {
 	return []cbor.MapEntry{
 		{Key: cbor.Text("version"), Val: cbor.Int(ProtocolVersion)},
 		{Key: cbor.Text("frame_type"), Val: cbor.Text(frameType)},
 		{Key: cbor.Text("frame_id"), Val: cbor.Bytes(frameID)},
 		{Key: cbor.Text("sent_at_ms"), Val: cbor.Int(sentAtMs)},
-		{Key: cbor.Text("capabilities"), Val: cbor.Uint64(capabilities)},
-		{Key: cbor.Text("realm"), Val: cbor.Null()},
-		{Key: cbor.Text("call_id"), Val: cbor.Null()},
-		{Key: cbor.Text("source_route"), Val: cbor.Null()},
 	}
-}
-
-// withField replaces fields' existing entry for key (if any) or appends
-// a new one. MUST be used instead of a raw append whenever overriding a
-// base() sentinel field (realm, call_id, source_route) — cbor.Map is a
-// plain slice of pairs with none of a real map's key-uniqueness, so a
-// raw append on top of base()'s Null entry would silently produce a
-// wire frame with two entries under the same key instead of one
-// overridden value. Caught for real during the Rust port's own
-// differential-vector work; fixed here from the start rather than
-// rediscovered.
-func withField(fields []cbor.MapEntry, key string, val cbor.Value) []cbor.MapEntry {
-	for i := range fields {
-		if t, ok := fields[i].Key.AsText(); ok && t == key {
-			fields[i].Val = val
-			return fields
-		}
-	}
-	return append(fields, cbor.MapEntry{Key: cbor.Text(key), Val: val})
 }

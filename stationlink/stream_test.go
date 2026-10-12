@@ -2,6 +2,7 @@ package stationlink_test
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"runtime"
@@ -447,5 +448,94 @@ func TestAnEndedSessionStopsReading(t *testing.T) {
 	}
 	if !raw.KeepWriting(5 * time.Second) {
 		t.Error("the provider kept reading a session it had ended")
+	}
+}
+
+// A dedicated stream whose first frame is of a type the link does not know is
+// aborted with QUIC code 5, QUIC_CODE_UNKNOWN_FRAME_TYPE, distinct from a frame
+// that did not decode; the frame is counted and the link stays up
+// (macula docs/design/WIRE_1_0.md section 3.3).
+func TestAStreamOpenedWithAnUnknownFrameTypeIsAbortedWithCodeFive(t *testing.T) {
+	s := teststation.Start(t, profile.PQPure, "unknown stream frame")
+	link := dialAs(t, s, "unknown stream frame provider")
+	payload := cbor.Encode(cbor.Map([]cbor.MapEntry{
+		{Key: cbor.Text("version"), Val: cbor.Int(5)},
+		{Key: cbor.Text("frame_type"), Val: cbor.Text("stream_from_wire_1_1")},
+	}))
+	framed := binary.BigEndian.AppendUint32(nil, uint32(len(payload)))
+	before := frame.WireCounters().UnknownFrameType
+	stream, err := s.RawStream(t.Context(), link.NodeID(), append(framed, payload...))
+	if err != nil {
+		t.Fatalf("RawStream: %v", err)
+	}
+	select {
+	case <-stream.Released():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the link never released the stream")
+	}
+	if code, reset := stream.ResetCode(); !reset || code != 5 {
+		t.Errorf("the stream ended with (code %d, reset %t), want a reset with code 5", code, reset)
+	}
+	if got := frame.WireCounters().UnknownFrameType; got != before+1 {
+		t.Errorf("wire_unknown_frame_type = %d, want %d", got, before+1)
+	}
+	select {
+	case <-link.Done():
+		t.Errorf("the link ended: %v", link.Err())
+	default:
+	}
+}
+
+// A frame of an unknown type in the middle of a session aborts that stream
+// with code 5 and ends the session; the link stays up.
+func TestAnUnknownFrameTypeInASessionAbortsItsStreamWithCodeFive(t *testing.T) {
+	s := teststation.Start(t, profile.PQPure, "unknown mid-stream frame")
+	realm := teststation.NewRealm(t, profile.PQPure, "unknown mid-stream frame", "mcl-tube")
+	provider := dialAs(t, s, "mid-stream provider")
+	realm.Admit(t, s, provider.NodeID())
+	ended := make(chan error, 1)
+	if _, err := provider.Serve(t.Context(), stationlink.Offer{Realm: realm.ID, Procedure: streamProcedure, RealmKey: realm.RealmKey(),
+		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: func(ctx context.Context, stream *stationlink.Stream) error {
+			_, err := stream.Recv(ctx)
+			ended <- err
+			return err
+		}}}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	callerKey := teststation.Key(t, profile.PQPure, "mid-stream caller")
+	mode := frame.Bidi
+	open, err := frame.SignStreamOpen(frame.RequestSpec{RequestID: [16]byte{8}, Realm: realm.ID, Procedure: streamProcedure,
+		Target: provider.NodeID(), Deadline: uint64(time.Now().Add(time.Minute).UnixMilli()), Payload: cbor.Map(nil), Mode: &mode}, callerKey)
+	if err != nil {
+		t.Fatalf("SignStreamOpen: %v", err)
+	}
+	var raw []byte
+	for _, v := range []cbor.Value{open, cbor.Map([]cbor.MapEntry{
+		{Key: cbor.Text("version"), Val: cbor.Int(5)},
+		{Key: cbor.Text("frame_type"), Val: cbor.Text("stream_from_wire_1_1")},
+	})} {
+		encoded := cbor.Encode(v)
+		raw = append(binary.BigEndian.AppendUint32(raw, uint32(len(encoded))), encoded...)
+	}
+	stream, err := s.RawStream(t.Context(), provider.NodeID(), raw)
+	if err != nil {
+		t.Fatalf("RawStream: %v", err)
+	}
+	select {
+	case err := <-ended:
+		var refused *stationlink.StreamError
+		if !errors.As(err, &refused) || refused.Code != "unknown_frame_type" {
+			t.Errorf("the session ended with %v, want StreamError unknown_frame_type", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the session never ended")
+	}
+	if code, reset := stream.ResetCode(); !reset || code != 5 {
+		t.Errorf("the stream ended with (code %d, reset %t), want a reset with code 5", code, reset)
+	}
+	select {
+	case <-provider.Done():
+		t.Errorf("the link ended: %v", provider.Err())
+	default:
 	}
 }

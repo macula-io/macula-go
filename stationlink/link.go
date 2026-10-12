@@ -427,19 +427,31 @@ func (l *Link) read(reader frameReader) {
 	}
 }
 
-// received handles one frame from the station: a STATUS renews the station's
-// statement, every other frame is opened from its neighbour signature at the
-// next seq, and a GOODBYE ends the link.
+// received handles one frame from the station. Its envelope is read under the
+// wire 1.0 rules first (frame.ReadEnvelope): one that does not decode ends the
+// link as malformed_frame, and one carrying an unknown critical extension is
+// dropped and counted as extension_unsupported, with the link left up. Then a
+// STATUS renews the station's statement, every other frame is opened from its
+// neighbour signature at the next seq, a GOODBYE ends the link, and a frame of
+// a type the link does not handle is dropped and counted.
 func (l *Link) received(payload []byte) error {
 	v, err := cbor.Decode(payload)
 	if err != nil {
 		return fmt.Errorf("%w: %w", frame.ErrMalformedFrame, err)
 	}
-	frameType := frameTypeOf(v)
-	if frameType == "status" {
-		return l.statusRenewed(payload)
+	envelope, err := frame.ReadEnvelope(v)
+	switch {
+	case errors.Is(err, frame.ErrExtensionUnsupported):
+		l.count("extension_unsupported")
+		return nil
+	case err != nil:
+		return err
 	}
-	opened, err := l.opened(v, frameType)
+	frameType := envelope.FrameType
+	if frameType == "status" {
+		return l.statusRenewed(cbor.Encode(envelope.Frame))
+	}
+	opened, err := l.opened(envelope.Frame, frameType)
 	if err != nil {
 		return err
 	}
@@ -460,9 +472,8 @@ func (l *Link) received(payload []byte) error {
 		reason, _ := fieldOf(opened, "reason").AsText()
 		return &GoodbyeError{Reason: reason}
 	default:
-		l.mu.Lock()
-		l.unrouted[frameType]++
-		l.mu.Unlock()
+		frame.CountUnknownFrameType()
+		l.count(frameType)
 		return nil
 	}
 }

@@ -635,8 +635,33 @@ func TestStatusFramesRenewAPeersStatement(t *testing.T) {
 		if _, err := ReadStatus(frame, early); !errors.Is(err, identity.ErrStatusFutureDated) {
 			t.Errorf("a statement issued more than 5 minutes ahead of the peer: %v, want ErrStatusFutureDated", err)
 		}
-		if _, err := ReadStatus(Opener(), peer); !errors.Is(err, ErrUnexpectedFrame) {
+		if _, err := ReadStatus(encodeFrameVersion(Version5, "opener"), peer); !errors.Is(err, ErrUnexpectedFrame) {
 			t.Errorf("an opener in place of a status frame: %v, want ErrUnexpectedFrame", err)
+		}
+	})
+}
+
+// A status frame is sent after HELLO, so it carries the wire 1.0 frame version,
+// 5, and one of another version is refused (macula docs/design/WIRE_1_0.md
+// section 2).
+func TestAStatusFrameCarriesVersionFive(t *testing.T) {
+	forEachWorld(t, func(t *testing.T, w *world) {
+		statement, err := identity.StatusStatement(w.station, w.tlsBinding, now+15*minute, now+75*minute)
+		if err != nil {
+			t.Fatalf("StatusStatement: %v", err)
+		}
+		v, err := cbor.Decode(StatusFrame(statement))
+		if err != nil {
+			t.Fatal(err)
+		}
+		version, _ := v.Get("version")
+		if n, isInt := version.AsInt64(); !isInt || n != 5 {
+			t.Errorf("status frame version %+v, want 5", version)
+		}
+		peer := Peer{Profile: w.profile, IdentityKey: w.station.PublicKey(), Binding: w.tlsBinding, NowMs: now + 16*minute}
+		v4 := encodeFrameVersion(Version, "status", entry("statement", statement.Value()))
+		if _, err := ReadStatus(v4, peer); !errors.Is(err, ErrUnsupportedVersion) {
+			t.Errorf("a version 4 status frame: %v, want ErrUnsupportedVersion", err)
 		}
 	})
 }

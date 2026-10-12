@@ -118,6 +118,9 @@ type Stream struct {
 	err       error
 	done      chan struct{}
 	endOnce   sync.Once
+	// resetCode is the QUIC code an ungraceful end resets the stream with:
+	// 0, or QUIC_CODE_UNKNOWN_FRAME_TYPE after a frame of an unknown type.
+	resetCode quic.StreamErrorCode
 
 	// settled is whether a caller's seal report has settled (Report).
 	settled bool
@@ -347,6 +350,13 @@ func (s *Stream) received(payload []byte, state frame.StreamState) (frame.Stream
 		s.fail("malformed_frame", err)
 		return state, true
 	}
+	if unknownOnStream(v) {
+		s.mu.Lock()
+		s.resetCode = quicCodeUnknownFrameType
+		s.mu.Unlock()
+		s.end(&StreamError{Code: "unknown_frame_type"})
+		return state, true
+	}
 	if _, isRelay := v.Get("relay_error"); isRelay && s.caller {
 		relayed, err := frame.VerifyRelayError(v, s.open, s.link.profile, s.link.station.NodeID)
 		if err != nil {
@@ -465,8 +475,9 @@ func (s *Stream) end(err error) {
 		if s.err == nil {
 			s.err = err
 		}
-		graceful := s.sentEnd
+		graceful := s.sentEnd && s.resetCode == 0
 		s.sentEnd = true
+		resetCode := s.resetCode
 		qs := s.qs
 		held := s.held
 		s.held = 0
@@ -477,9 +488,9 @@ func (s *Stream) end(err error) {
 		if graceful {
 			_ = qs.Close()
 		} else {
-			qs.CancelWrite(0)
+			qs.CancelWrite(resetCode)
 		}
-		qs.CancelRead(0)
+		qs.CancelRead(resetCode)
 		if s.charge != nil && held > 0 {
 			s.charge(-held)
 		}

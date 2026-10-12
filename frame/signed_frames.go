@@ -184,14 +184,22 @@ func hasFields(fields map[string]cbor.Value, names ...string) bool {
 
 // receivedFrame reads a received frame that carries its fields in one signed
 // object, with the checks a received frame passes before its object is
-// verified: exactly version, frame_type, the object under objectName and the
-// routing fields routes names; the protocol's version; a frame type of types;
-// the object in a shape objectRule accepts; and each routing field of its rule.
-// It returns the frame type and the object.
+// verified: the wire 1.0 envelope (ReadEnvelope, which reads past an ignored
+// extension); exactly version, frame_type, the object under objectName, the
+// routing fields routes names and the optional frame_id and sent_at_ms; a
+// frame type of types; the object in a shape objectRule accepts; and each
+// routing field of its rule. It returns the frame type and the object.
 func receivedFrame(v cbor.Value, objectName string, objectRule fieldRule, routes map[string]fieldRule, types ...string) (string, cbor.Value, bool) {
-	table := map[string]fieldRule{"version": protocolVersion, "frame_type": textIn(types...), objectName: objectRule}
+	envelope, err := ReadEnvelope(v)
+	if err != nil {
+		return "", cbor.Value{}, false
+	}
+	table := map[string]fieldRule{
+		"version": protocolVersion, "frame_type": textIn(types...), objectName: objectRule,
+		"frame_id": envelopeRules["frame_id"], "sent_at_ms": envelopeRules["sent_at_ms"],
+	}
 	maps.Copy(table, routes)
-	fields, ok := readFields(v, table)
+	fields, ok := readFields(envelope.Frame, table)
 	if !ok || !hasFields(fields, "version", "frame_type", objectName) {
 		return "", cbor.Value{}, false
 	}

@@ -24,6 +24,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/binary"
+	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -45,7 +46,7 @@ import (
 // The frame caps of a control stream, as stationlink holds them.
 const (
 	handshakeFrameBytes = 64 * 1024
-	maxFrameBytes       = 16 * 1024 * 1024
+	maxFrameBytes       = frame.MaxFrameBytes
 )
 
 // T is what the station reports its failures to and registers its cleanup
@@ -848,7 +849,7 @@ func (s *Station) RawStream(ctx context.Context, nodeID [32]byte, raw []byte) (*
 	}
 	r := &Raw{stream: stream, released: make(chan struct{})}
 	go func() {
-		_, _ = io.Copy(io.Discard, stream)
+		_, r.readErr = io.Copy(io.Discard, stream)
 		close(r.released)
 	}()
 	return r, nil
@@ -858,10 +859,22 @@ func (s *Station) RawStream(ctx context.Context, nodeID [32]byte, raw []byte) (*
 type Raw struct {
 	stream   *quic.Stream
 	released chan struct{}
+	readErr  error
 }
 
 // Released is closed once the client has released the stream.
 func (r *Raw) Released() <-chan struct{} { return r.released }
+
+// ResetCode is the QUIC application code the client reset the stream with,
+// once Released is closed, and false if it ended the stream without a reset.
+func (r *Raw) ResetCode() (uint64, bool) {
+	<-r.released
+	var reset *quic.StreamError
+	if errors.As(r.readErr, &reset) && reset.Remote {
+		return uint64(reset.ErrorCode), true
+	}
+	return 0, false
+}
 
 // KeepWriting writes to the stream until a write fails, as it does once the
 // client stops reading it (STOP_SENDING), and reports whether that happened

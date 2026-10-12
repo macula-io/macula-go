@@ -39,7 +39,7 @@ func LivenessPongFrame(nonce [16]byte) cbor.Value {
 }
 
 func livenessFrame(frameType string, nonce [16]byte) cbor.Value {
-	return cbor.Map(append(base(frameType, 0, freshFrameID(), currentMillis()), bytesEntry("nonce", nonce[:])))
+	return cbor.Map(append(base(frameType, freshFrameID(), currentMillis()), bytesEntry("nonce", nonce[:])))
 }
 
 // LivenessNonce reads a liveness frame: its type (liveness_ping or

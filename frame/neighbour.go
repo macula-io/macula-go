@@ -224,14 +224,14 @@ func fieldOf(entries []cbor.MapEntry, name string) cbor.Value {
 // AdvertiseFrame is macula 12's ADVERTISE: the signed procedure_advertisement
 // record, as encoded bytes.
 func AdvertiseFrame(advertisement []byte) cbor.Value {
-	return cbor.Map(append(base("advertise", 0, freshFrameID(), currentMillis()),
+	return cbor.Map(append(base("advertise", freshFrameID(), currentMillis()),
 		bytesEntry("advertisement", advertisement)))
 }
 
 // UnadvertiseFrame is macula 12's UNADVERTISE: the signed withdrawal record, as
 // encoded bytes.
 func UnadvertiseFrame(withdrawal []byte) cbor.Value {
-	return cbor.Map(append(base("unadvertise", 0, freshFrameID(), currentMillis()),
+	return cbor.Map(append(base("unadvertise", freshFrameID(), currentMillis()),
 		bytesEntry("withdrawal", withdrawal)))
 }
 
@@ -261,7 +261,7 @@ func topicFrame(frameType string, topic []byte, realm, subscriber [32]byte) ([]c
 	if err := boundedText("topic", string(topic), maxTopicBytes); err != nil {
 		return nil, err
 	}
-	fields := withField(base(frameType, 0, freshFrameID(), currentMillis()), "realm", cbor.Bytes(realm[:]))
+	fields := append(base(frameType, freshFrameID(), currentMillis()), bytesEntry("realm", realm[:]))
 	return append(fields, bytesEntry("topic", topic), bytesEntry("subscriber", subscriber[:])), nil
 }
 
@@ -278,6 +278,6 @@ func GoodbyeFrame(reason string, detail []byte) (cbor.Value, error) {
 		}
 		detailValue = cbor.Bytes(detail)
 	}
-	return cbor.Map(append(base("goodbye", 0, freshFrameID(), currentMillis()),
+	return cbor.Map(append(base("goodbye", freshFrameID(), currentMillis()),
 		textEntry("reason", reason), valueEntry("detail", detailValue))), nil
 }

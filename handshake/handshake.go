@@ -649,9 +649,10 @@ func ReadHello(frame []byte, station Station) (uint64, error) {
 }
 
 // StatusFrame is a status frame carrying a fresh status statement, sent at
-// every reissue.
+// every reissue. It is sent after HELLO, so it carries the wire 1.0 frame
+// version, 5 (macula docs/design/WIRE_1_0.md section 2).
 func StatusFrame(statement identity.SignedTBS) []byte {
-	return encodeFrame("status", entry("statement", statement.Value()))
+	return encodeFrameVersion(Version5, "status", entry("statement", statement.Value()))
 }
 
 // Peer is what a connection checks a peer's status frames against: the
@@ -667,7 +668,7 @@ type Peer struct {
 // ReadStatus checks a peer's status frame and returns when its statement
 // expires.
 func ReadStatus(frame []byte, p Peer) (int64, error) {
-	f, err := decode(frame, "status", statusKeys)
+	f, err := decodeVersioned(frame, "status", map[int64][][]string{Version5: {statusKeys}})
 	if err != nil {
 		return 0, err
 	}
@@ -838,7 +839,8 @@ func encodeFrame(frameType string, entries ...cbor.MapEntry) []byte {
 }
 
 // encodeFrameVersion is encodeFrame in a given version: CONNECT and HELLO carry
-// the version the client chose; opener, challenge and status are always 4.
+// the version the client chose; opener and challenge are always 4, and status,
+// sent after HELLO, is 5.
 func encodeFrameVersion(version int, frameType string, entries ...cbor.MapEntry) []byte {
 	all := append([]cbor.MapEntry{
 		entry("version", cbor.Int(int64(version))),

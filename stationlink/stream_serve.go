@@ -48,6 +48,11 @@ func (l *Link) incoming(qs *quic.Stream) {
 		return
 	}
 	v, err := cbor.Decode(payload)
+	if err == nil && unknownOnStream(v) {
+		l.count("stream_unknown_frame_type")
+		abortUnknown(qs)
+		return
+	}
 	if err != nil || frameTypeOf(v) != "stream_open" {
 		l.count("stream_open_malformed")
 		abandon(qs)
