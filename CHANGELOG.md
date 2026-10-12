@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **The wire 1.0 conformance vectors run in CI** (macula#97): 
+- **The wire 1.0 conformance vectors run in CI** (macula#97):
   `scripts/interop/copy_wire_1_0_vectors.sh` copies macula's
   `test/vectors/wire_1_0` into `testdata/wire_1_0`, pinned by the macula commit
   in `MACULA_COMMIT`, and each package holds itself to the classes it reads
@@ -62,6 +62,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `enum_unknown`. `frame.ReadPerHopEnum` reads any per-hop enum.
 - `handshake.RefusalProfileUnsupported` (`profile_unsupported`) is a refusal
   code the client knows.
+- **Records are wire 1.0 records** (WIRE_1_0.md section 5, macula#100). Every
+  tbs carries `schema` (1) and `lifetime_class`, a row of the frozen table
+  (5 minutes, 30 minutes, 6 hours, 48 hours, 7 days, 30 days): a procedure
+  delegation now lives at most 30 minutes, and a tombstone stays within its
+  withdrawn type's row. `record.Verify` reads in section 5.2's order: alg
+  selects the verifier (`identity.VerifyObjectByAlg`,
+  `identity.ErrObjectAlgUnsupported`) before the signature is checked, then
+  the envelope keys, clock, lifetime row (`ErrLifetimeClassUnknown`), and
+  slot (`ErrSubjectMissing`); then, as a reader, `ErrTypeUnknown`,
+  `ErrSchemaUnsupported`, `ErrLifetimeClassMismatch`, an unknown critical
+  extension, the payload rules and `ErrMcidTagUnknown`. A record of the other
+  profile is `identity.ErrObjectAlgMismatch`. `record.CheckAsCustodian` runs
+  the checks a station stores by and returns the slot, placing a type with no
+  rule of its own at H(type | signer key id | subject).
 - A relay error may carry `overloaded` (macula#54), which a station signs when
   it sheds a call; it was refused as outside the closed set.
 - A liveness frame is read through its own table: a field it does not have is

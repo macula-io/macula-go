@@ -98,28 +98,30 @@ func ReadEnvelope(v cbor.Value) (Envelope, error) {
 	return Envelope{FrameType: frameType, Frame: cbor.Map(kept)}, nil
 }
 
-// readExt judges an ext map: 1 to 16 entries, each a name of 1 to 64 bytes of
-// [a-z0-9_.] mapped to exactly {critical 0 or 1, value}. Every unknown
-// extension is then refused if critical and counted if not; the shape is
-// judged whole before any is counted, so a malformed map counts nothing.
+// readExt judges an ext map (CheckExt) and acts on it (ActOnExt).
 func readExt(v cbor.Value) error {
-	entries, isMap := v.AsMap()
-	if !isMap || len(entries) == 0 || len(entries) > maxExtensions {
-		return fmt.Errorf("%w: ext", ErrMalformedFrame)
+	if err := CheckExt(v); err != nil {
+		return err
 	}
-	critical := make(map[string]bool, len(entries))
-	for _, e := range entries {
-		name, isText := e.Key.AsText()
-		_, seen := critical[name]
-		if !isText || seen || !extensionName(name) {
-			return fmt.Errorf("%w: an extension name", ErrMalformedFrame)
-		}
-		fields, ok := readFields(e.Val, map[string]fieldRule{"critical": zeroOrOne, "value": anyValue})
-		if !ok || !hasFields(fields, "critical", "value") {
-			return fmt.Errorf("%w: extension %s", ErrMalformedFrame, name)
-		}
-		flag, _ := fields["critical"].AsInt64()
-		critical[name] = flag == 1
+	return ActOnExt(v)
+}
+
+// CheckExt judges an ext map's shape alone (WIRE_1_0.md section 3.2): 1 to 16
+// entries, each a name of 1 to 64 bytes of [a-z0-9_.] mapped to exactly
+// {critical 0 or 1, value}, else ErrMalformedFrame. It acts on nothing, as a
+// custodian storing a record that carries ext does not.
+func CheckExt(v cbor.Value) error {
+	_, err := extEntries(v)
+	return err
+}
+
+// ActOnExt acts on a well-formed ext map as a receiver that knows no
+// extension: an unknown critical one is ErrExtensionUnsupported, and only when
+// none is, each unknown non-critical one is counted under its name.
+func ActOnExt(v cbor.Value) error {
+	critical, err := extEntries(v)
+	if err != nil {
+		return err
 	}
 	for name, isCritical := range critical {
 		if !knownExtensions[name] && isCritical {
@@ -132,6 +134,29 @@ func readExt(v cbor.Value) error {
 		}
 	}
 	return nil
+}
+
+// extEntries is a well-formed ext map's entries, name to critical.
+func extEntries(v cbor.Value) (map[string]bool, error) {
+	entries, isMap := v.AsMap()
+	if !isMap || len(entries) == 0 || len(entries) > maxExtensions {
+		return nil, fmt.Errorf("%w: ext", ErrMalformedFrame)
+	}
+	critical := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		name, isText := e.Key.AsText()
+		_, seen := critical[name]
+		if !isText || seen || !extensionName(name) {
+			return nil, fmt.Errorf("%w: an extension name", ErrMalformedFrame)
+		}
+		fields, ok := readFields(e.Val, map[string]fieldRule{"critical": zeroOrOne, "value": anyValue})
+		if !ok || !hasFields(fields, "critical", "value") {
+			return nil, fmt.Errorf("%w: extension %s", ErrMalformedFrame, name)
+		}
+		flag, _ := fields["critical"].AsInt64()
+		critical[name] = flag == 1
+	}
+	return critical, nil
 }
 
 func zeroOrOne(v cbor.Value) bool {

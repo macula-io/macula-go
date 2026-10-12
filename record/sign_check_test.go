@@ -19,7 +19,7 @@ func TestSignRefusesARecordAVerifierWouldRefuse(t *testing.T) {
 	withdrawing := func(withdrawn uint64, reason string, slot ...cbor.MapEntry) Record {
 		payload := append([]cbor.MapEntry{uintEntry("withdrawn_type", withdrawn), bytesEntry("withdrawn_version", make([]byte, 16)),
 			textEntry("reason", reason)}, slot...)
-		return must[Record](t)(unsigned(TypeTombstone, cbor.Map(payload), uint64(10*testMinute)))
+		return must[Record](t)(unsigned(TypeTombstone, cbor.Map(payload), uint64(5*testMinute)))
 	}
 	nodeWithSubject := must[Record](t)(NewNodeRecord(keys.node.KeyID(), nil, 0, NodeRecordOptions{}))
 	nodeWithSubject.Subject = []byte("s1")

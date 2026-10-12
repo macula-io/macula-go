@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
 )
@@ -70,23 +71,9 @@ const (
 	DomainTypeMin                Type = 0x20
 )
 
-// The longest a record of a type lives, created_at to expires_at (D28): a node
-// record and a content announcement 48 hours; a procedure advertisement and a
-// station endpoint 5 minutes; realm stations, an org directory and a procedure
-// delegation 6 hours; a realm member endorsement 30 days; a domain record 7
-// days; and any other type 30 days. A tombstone lives at most its withdrawn
-// type's maximum plus twice the clock tolerance. A builder given no ttl takes
-// 48 hours, or its type's maximum when that is shorter.
-const (
-	nodeRecordMaxLifetimeMs             = 48 * hourMs
-	contentAnnouncementMaxLifetimeMs    = 48 * hourMs
-	procedureAdvertisementMaxLifetimeMs = 5 * minuteMs
-	stationEndpointTTLMs                = 5 * minuteMs
-	realmAndOrgMaxLifetimeMs            = 6 * hourMs
-	domainRecordMaxLifetimeMs           = 7 * dayMs
-	defaultMaxLifetimeMs                = 30 * dayMs
-	defaultTTLMs                        = 48 * hourMs
-)
+// defaultTTLMs is the lifetime a builder given no ttl takes, 48 hours, or its
+// type's row's maximum when that is shorter.
+const defaultTTLMs = 48 * hourMs
 
 // The refusals of a record, named as macula_record names them. A signature that
 // does not verify is identity.ErrObjectSignatureInvalid, a signed object whose
@@ -120,6 +107,46 @@ var (
 	ErrNotADomainType = errors.New("record: not a domain type")
 	// ErrInvalidSubject is a domain record's subject that is empty.
 	ErrInvalidSubject = errors.New("record: an empty subject")
+	// ErrLifetimeClassUnknown is a record whose lifetime_class names no row of
+	// the frozen table (lifetime_class_unknown).
+	ErrLifetimeClassUnknown = errors.New("record: lifetime_class_unknown")
+	// ErrSubjectMissing is a record of a type with no slot rule of its own
+	// that carries no subject to place it by (subject_missing).
+	ErrSubjectMissing = errors.New("record: subject_missing")
+	// ErrTypeUnknown is a record a reader cannot act on: a type it does not
+	// know (type_unknown). A custodian stores it.
+	ErrTypeUnknown = errors.New("record: type_unknown")
+	// ErrSchemaUnsupported is a record whose schema its reader does not read
+	// (schema_unsupported).
+	ErrSchemaUnsupported = errors.New("record: schema_unsupported")
+	// ErrLifetimeClassMismatch is a record whose lifetime_class is not its
+	// type's row (lifetime_class_mismatch).
+	ErrLifetimeClassMismatch = errors.New("record: lifetime_class_mismatch")
+	// ErrMcidTagUnknown is a record naming a content id whose tag its reader
+	// does not know (mcid_tag_unknown).
+	ErrMcidTagUnknown = errors.New("record: mcid_tag_unknown")
+)
+
+// Schema is the schema version every built-in record type has in wire 1.0;
+// readers check it, custodians do not (macula docs/design/WIRE_1_0.md 5.1).
+const Schema = 1
+
+// maxSchema bounds a schema version.
+const maxSchema = 65535
+
+// lifetimeClassMaxMs is the frozen lifetime table (WIRE_1_0.md section 5.1):
+// a record's lifetime_class is a row, and its lifetime is at most that row's
+// maximum. Rows are only added, and a row's maximum never grows.
+var lifetimeClassMaxMs = []int64{5 * minuteMs, 30 * minuteMs, 6 * hourMs, 48 * hourMs, 7 * dayMs, 30 * dayMs}
+
+// The rows the types this library knows name.
+const (
+	lifetimeClass5Minutes uint8 = iota
+	lifetimeClass30Minutes
+	lifetimeClass6Hours
+	lifetimeClass48Hours
+	lifetimeClass7Days
+	lifetimeClass30Days
 )
 
 // Record is a record: unsigned as a builder returns it, or signed or verified,
@@ -133,6 +160,12 @@ type Record struct {
 	ExpiresAt uint64
 	Payload   cbor.Value
 	Subject   []byte
+	// Schema and LifetimeClass are the tbs's schema version and lifetime
+	// row: a builder sets the type's own, Schema and its row.
+	Schema        uint16
+	LifetimeClass uint8
+	// Ext is the tbs's ext map, cbor.Value{} for none.
+	Ext cbor.Value
 
 	Key       []byte
 	KeyID     [32]byte
@@ -152,7 +185,9 @@ func unsigned(t Type, payload cbor.Value, ttlMs uint64) (Record, error) {
 		ttlMs = uint64(defaultTTL(t))
 	}
 	now := uint64(time.Now().UnixMilli())
-	return Record{Type: t, Version: version, CreatedAt: now, ExpiresAt: now + ttlMs, Payload: payload}, nil
+	row, _ := typeLifetimeClass(int64(t), payload)
+	return Record{Type: t, Version: version, CreatedAt: now, ExpiresAt: now + ttlMs, Payload: payload,
+		Schema: Schema, LifetimeClass: row}, nil
 }
 
 // Envelope is an unsigned record of a domain type, from DomainTypeMin to 0xFF,
@@ -207,7 +242,7 @@ func Sign(r Record, key *identity.NodeKey) (Record, error) {
 	if err != nil {
 		return Record{}, fmt.Errorf("%w: a record of type %#02x whose tbs the decoding rule refuses: %w", ErrMalformed, uint8(r.Type), err)
 	}
-	if read, readable := readTBS(tbs); !readable || !payloadOK(read.Type, read.Payload) {
+	if read, readable := readEnvelopeTBS(tbs); !readable || readerChecks(read) != nil {
 		return Record{}, fmt.Errorf("%w: a record of type %#02x that a verifier would refuse", ErrMalformed, uint8(r.Type))
 	}
 	if size := len(cbor.Encode(cbor.Map(fields))) + len(carried) + identity.SignatureSize(p); size > MaxRecordBytes {
@@ -234,7 +269,7 @@ func Refresh(r Record, key *identity.NodeKey) (Record, error) {
 	now := time.Now().UnixMilli()
 	expires := max(now+int64(r.ExpiresAt)-int64(r.CreatedAt), 0)
 	fresh := Record{Type: r.Type, Version: version, CreatedAt: uint64(now), ExpiresAt: uint64(expires),
-		Payload: r.Payload, Subject: r.Subject}
+		Payload: r.Payload, Subject: r.Subject, Schema: r.Schema, LifetimeClass: r.LifetimeClass, Ext: r.Ext}
 	return Sign(fresh, key)
 }
 
@@ -248,54 +283,147 @@ func Encode(r Record) ([]byte, error) {
 	return cbor.Encode(identity.Object{Key: r.Key, TBS: r.TBS, Signature: r.Signature}.Value()), nil
 }
 
-// Verify reads a record's wire form under the verifier's profile p and clock
-// nowMs in Unix milliseconds, as macula_record's verify/3 does, in this order:
-// a wire form over 256 KiB (ErrRecordTooLarge), before anything is decoded; a
-// signed object that carries its key (ErrMalformed); its signature under
-// MACULA-PQ-RECORD-V1 and its alg (identity.ErrObjectSignatureInvalid,
-// identity.ErrObjectAlgMismatch, or ErrMalformed for a key or tbs of another
-// shape); a tbs of exactly type, alg, version, created_at, expires_at and
-// payload, with subject only on a domain type (ErrMalformed); created_at no
-// more than 5 minutes ahead of nowMs (ErrNotYetValid) and expires_at no more
-// than 5 minutes behind it (ErrExpired), both bounds included; a lifetime
-// within its type's maximum (ErrLifetimeReversed, ErrLifetimeTooLong); its
-// type's payload rules (ErrMalformed); and a payload that names its signer by
-// the key's id (ErrKeyIDMismatch). A binary without ML-DSA refuses with
-// identity.ErrPostQuantumUnavailable. Refusals are returned, never raised. It
-// returns the record as a Verified, which shares no memory with wire: the
-// decoder copies every byte string out of its input, and the key and tbs are
-// copies too.
+// Verify reads a record's wire form as a reader does (macula
+// docs/design/WIRE_1_0.md section 5.2), under the verifier's profile p and
+// clock nowMs in Unix milliseconds. It runs a custodian's checks first
+// (CheckAsCustodian): a wire form over 256 KiB (ErrRecordTooLarge); a signed
+// object of key, tbs and signature (ErrMalformed); a tbs under the decoding
+// rule holding alg as text (ErrMalformed); alg naming a registered verifier
+// (identity.ErrObjectAlgUnsupported) and key in its carried form
+// (ErrMalformed); the signature (identity.ErrObjectSignatureInvalid); a tbs of
+// exactly the envelope keys, each of its type (ErrMalformed); the clock
+// (ErrNotYetValid, ErrExpired, 5 minutes of tolerance); the lifetime
+// (ErrLifetimeReversed, ErrLifetimeClassUnknown, ErrLifetimeTooLong against
+// its row); and the slot (ErrSubjectMissing). Then a reader's own: alg of p's
+// profile (identity.ErrObjectAlgMismatch); a type it knows (ErrTypeUnknown),
+// a schema it reads (ErrSchemaUnsupported) and the type's lifetime row
+// (ErrLifetimeClassMismatch); an unknown critical extension
+// (frame.ErrExtensionUnsupported), unknown non-critical ones counted; the
+// type's payload rules (ErrMalformed), a content id tag it knows
+// (ErrMcidTagUnknown), and a payload that names its signer by the key's id
+// (ErrKeyIDMismatch). A binary without ML-DSA refuses with
+// identity.ErrPostQuantumUnavailable. It returns the record as a Verified,
+// which shares no memory with wire: the decoder copies every byte string out
+// of its input, and the key and tbs are copies too.
 func Verify(wire []byte, p profile.Profile, nowMs int64) (Verified, error) {
-	if len(wire) > MaxRecordBytes {
-		return Verified{}, ErrRecordTooLarge
-	}
-	object, err := identity.DecodeObject(wire)
+	r, signedUnder, err := custodianChecks(wire, nowMs)
 	if err != nil {
-		return Verified{}, fmt.Errorf("%w: %w", ErrMalformed, err)
-	}
-	verified, err := identity.VerifyObject(label, object.Value(), p)
-	if err != nil {
-		return Verified{}, objectRefusal(err)
-	}
-	r, ok := readTBS(verified.Fields)
-	if !ok {
-		return Verified{}, ErrMalformed
-	}
-	r.Key, r.TBS, r.Signature = verified.Key, verified.TBS, bytes.Clone(object.Signature)
-	if err := clock(r, nowMs); err != nil {
 		return Verified{}, err
 	}
-	if err := lifetime(r); err != nil {
+	if signedUnder != p {
+		return Verified{}, identity.ErrObjectAlgMismatch
+	}
+	if err := readerKnows(r); err != nil {
 		return Verified{}, err
 	}
-	if !payloadOK(r.Type, r.Payload) {
-		return Verified{}, ErrMalformed
+	if r.Ext.Kind() == cbor.KindMap {
+		if err := frame.ActOnExt(r.Ext); err != nil {
+			return Verified{}, err
+		}
 	}
-	r.KeyID = keyIDOf(signerKind(int64(r.Type), r.Payload), r.Key, p)
+	if err := payloadChecks(r); err != nil {
+		return Verified{}, err
+	}
 	if !namedSigner(r.Type, r.Payload, r.KeyID) {
 		return Verified{}, ErrKeyIDMismatch
 	}
 	return Verified{held: r}, nil
+}
+
+// CheckAsCustodian runs the checks a station stores a record by (WIRE_1_0.md
+// section 5.2, steps 1 to 9, in Verify's order): it never reads a payload
+// beyond its type's slot rule and never checks schema, and stores any type,
+// known or not. It returns the record's storage key: its type's own slot, or
+// for a type with none, H(type | signer key id | subject).
+func CheckAsCustodian(wire []byte, nowMs int64) ([32]byte, error) {
+	r, _, err := custodianChecks(wire, nowMs)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return custodianSlot(r)
+}
+
+// custodianChecks runs section 5.2's steps 1 to 9 and returns the record read,
+// with the profile its alg selected.
+func custodianChecks(wire []byte, nowMs int64) (Record, profile.Profile, error) {
+	if len(wire) > MaxRecordBytes {
+		return Record{}, "", ErrRecordTooLarge
+	}
+	object, err := identity.DecodeObject(wire)
+	if err != nil {
+		return Record{}, "", fmt.Errorf("%w: %w", ErrMalformed, err)
+	}
+	verified, p, err := identity.VerifyObjectByAlg(label, object.Value())
+	if err != nil {
+		return Record{}, "", objectRefusal(err)
+	}
+	r, ok := readEnvelopeTBS(verified.Fields)
+	if !ok {
+		return Record{}, "", ErrMalformed
+	}
+	r.Key, r.TBS, r.Signature = verified.Key, verified.TBS, bytes.Clone(object.Signature)
+	if err := clock(r, nowMs); err != nil {
+		return Record{}, "", err
+	}
+	if err := lifetime(r); err != nil {
+		return Record{}, "", err
+	}
+	r.KeyID = keyIDOf(signerKind(int64(r.Type), r.Payload), r.Key, p)
+	if _, err := custodianSlot(r); err != nil {
+		return Record{}, "", err
+	}
+	return r, p, nil
+}
+
+// custodianSlot is a record's slot as a custodian places it: a type with a
+// slot rule of its own by that rule, any other by H(type | signer key id |
+// subject), refusing one without a subject (ErrSubjectMissing).
+func custodianSlot(r Record) ([32]byte, error) {
+	if hasOwnSlot(int64(r.Type)) {
+		key, err := StorageKey(r)
+		if err != nil {
+			return [32]byte{}, fmt.Errorf("%w: %w", ErrMalformed, err)
+		}
+		return key, nil
+	}
+	if r.Subject == nil {
+		return [32]byte{}, fmt.Errorf("%w: type %#02x", ErrSubjectMissing, uint8(r.Type))
+	}
+	return derived(int64(r.Type), r.KeyID[:], lengthPrefixed(r.Subject)), nil
+}
+
+// readerChecks are section 5.2's reader steps 10 and 12 before the signer,
+// leaving out step 11, ext, which a builder never acts on.
+func readerChecks(r Record) error {
+	if err := readerKnows(r); err != nil {
+		return err
+	}
+	return payloadChecks(r)
+}
+
+// readerKnows is section 5.2's step 10: a type this library knows, a schema it
+// reads and the type's lifetime row.
+func readerKnows(r Record) error {
+	row, known := typeLifetimeClass(int64(r.Type), r.Payload)
+	switch {
+	case !known:
+		return fmt.Errorf("%w: %#02x", ErrTypeUnknown, uint8(r.Type))
+	case r.Schema != Schema:
+		return fmt.Errorf("%w: schema %d of type %#02x", ErrSchemaUnsupported, r.Schema, uint8(r.Type))
+	case r.LifetimeClass != row:
+		return fmt.Errorf("%w: class %d, type %#02x has %d", ErrLifetimeClassMismatch, r.LifetimeClass, uint8(r.Type), row)
+	}
+	return nil
+}
+
+// payloadChecks is section 5.2's step 12 before the signer: the type's payload
+// rules, with no subject on a built-in type that has none (ErrMalformed), and a
+// content id tag this library knows (ErrMcidTagUnknown).
+func payloadChecks(r Record) error {
+	if (r.Subject != nil && r.Type < DomainTypeMin) || !payloadOK(r.Type, r.Payload) {
+		return ErrMalformed
+	}
+	return contentIDTagKnown(r.Type, r.Payload)
 }
 
 // Verified is a record Verify returned. Only Verify makes one, and it holds
@@ -314,7 +442,7 @@ func (v Verified) Record() Record {
 func (r Record) clone() Record {
 	r.Key, r.TBS = bytes.Clone(r.Key), bytes.Clone(r.TBS)
 	r.Signature, r.Subject = bytes.Clone(r.Signature), bytes.Clone(r.Subject)
-	r.Payload = cloneValue(r.Payload)
+	r.Payload, r.Ext = cloneValue(r.Payload), cloneValue(r.Ext)
 	return r
 }
 
@@ -401,19 +529,25 @@ func tbsFields(r Record) []cbor.MapEntry {
 		uintEntry("expires_at", r.ExpiresAt),
 		valueEntry("payload", r.Payload),
 	}
+	fields = append(fields, uintEntry("schema", uint64(r.Schema)), uintEntry("lifetime_class", uint64(r.LifetimeClass)))
 	if r.Subject != nil {
 		fields = append(fields, bytesEntry("subject", r.Subject))
+	}
+	if r.Ext.Kind() == cbor.KindMap {
+		fields = append(fields, valueEntry("ext", r.Ext))
 	}
 	return fields
 }
 
-// readTBS reads a verified record's tbs, as macula_record's read_tbs does:
+// readEnvelopeTBS reads a verified record's tbs as section 5.2's step 6 does:
 // exactly type (1 to 255), alg (text), version (16 bytes), created_at and
-// expires_at (below 2^53), payload (a map), and subject (bytes, not empty) only
-// on a domain type. Each field must be present, since a missing one reads as
-// the zero cbor.Value, the integer 0. The tbs's size counts every key, text or
-// not, as map_size/1 counts it.
-func readTBS(tbs cbor.Value) (Record, bool) {
+// expires_at (below 2^53), schema (1 to 65535), lifetime_class (below 2^53),
+// payload (a map, not otherwise read), and, where present, subject (bytes, not
+// empty) and ext (a well-formed ext map, not acted on). Each required field
+// must be present, since a missing one reads as the zero cbor.Value, the
+// integer 0. Keys that are not text count towards the size, so they refuse
+// it.
+func readEnvelopeTBS(tbs cbor.Value) (Record, bool) {
 	entries, isMap := tbs.AsMap()
 	if !isMap {
 		return Record{}, false
@@ -424,32 +558,47 @@ func readTBS(tbs cbor.Value) (Record, bool) {
 			fields[name] = e.Val
 		}
 	}
-	for _, name := range []string{"type", "alg", "version", "created_at", "expires_at", "payload"} {
+	required := []string{"type", "alg", "version", "created_at", "expires_at", "schema", "lifetime_class", "payload"}
+	for _, name := range required {
 		if _, present := fields[name]; !present {
 			return Record{}, false
 		}
 	}
+	size := len(required)
 	t, isType := fields["type"].AsInt64()
 	alg, isAlg := fields["alg"].AsText()
 	version, isVersion := fields["version"].AsBytes()
 	created, isCreated := protocolUint(fields["created_at"])
 	expires, isExpires := protocolUint(fields["expires_at"])
+	schema, isSchema := fields["schema"].AsInt64()
+	class, isClass := protocolUint(fields["lifetime_class"])
 	_, isPayload := fields["payload"].AsMap()
-	if !isType || t < 1 || t > 0xFF || !isAlg || !isVersion || len(version) != 16 || !isCreated || !isExpires || !isPayload {
+	if !isType || t < 1 || t > 0xFF || !isAlg || !isVersion || len(version) != 16 || !isCreated || !isExpires ||
+		!isSchema || schema < 1 || schema > maxSchema || !isClass || !isPayload {
 		return Record{}, false
 	}
-	r := Record{Type: Type(t), CreatedAt: created, ExpiresAt: expires, Payload: fields["payload"], Alg: alg}
-	copy(r.Version[:], version)
-	subject, hasSubject := fields["subject"]
-	switch len(entries) {
-	case 6:
-		return r, !hasSubject
-	case 7:
-		b, isBytes := subject.AsBytes()
-		r.Subject = bytes.Clone(b)
-		return r, isBytes && len(b) > 0 && r.Type >= DomainTypeMin
+	r := Record{Type: Type(t), CreatedAt: created, ExpiresAt: expires, Payload: fields["payload"], Alg: alg,
+		Schema: uint16(schema), LifetimeClass: uint8(min(class, 0xFF))}
+	if class > 0xFF {
+		r.LifetimeClass = 0xFF
 	}
-	return Record{}, false
+	copy(r.Version[:], version)
+	if subject, has := fields["subject"]; has {
+		b, isBytes := subject.AsBytes()
+		if !isBytes || len(b) == 0 {
+			return Record{}, false
+		}
+		r.Subject = bytes.Clone(b)
+		size++
+	}
+	if ext, has := fields["ext"]; has {
+		if frame.CheckExt(ext) != nil {
+			return Record{}, false
+		}
+		r.Ext = ext
+		size++
+	}
+	return r, len(entries) == size
 }
 
 func protocolUint(v cbor.Value) (uint64, bool) {
@@ -470,58 +619,66 @@ func clock(r Record, nowMs int64) error {
 }
 
 // lifetime refuses a record whose lifetime, created_at to expires_at, does not
-// run forward or is longer than its type's maximum.
+// run forward, whose lifetime_class names no row of the frozen table, or that
+// lives longer than its row's maximum (section 5.1).
 func lifetime(r Record) error {
 	lived := int64(r.ExpiresAt) - int64(r.CreatedAt)
 	switch {
 	case lived <= 0:
 		return ErrLifetimeReversed
-	case lived > maxLifetime(int64(r.Type), r.Payload):
+	case int(r.LifetimeClass) >= len(lifetimeClassMaxMs):
+		return fmt.Errorf("%w: %d", ErrLifetimeClassUnknown, r.LifetimeClass)
+	case lived > lifetimeClassMaxMs[r.LifetimeClass]:
 		return ErrLifetimeTooLong
 	}
 	return nil
 }
 
-// maxLifetime is the longest a record of type t lives, as macula_record's
-// max_lifetime/2 has it. A tombstone's follows the type its payload withdraws,
-// plus twice the clock tolerance: the record it withdraws may be created up to
-// the tolerance ahead, and the tombstone outlives it by the tolerance. A
-// withdrawn_type that is not an integer is read as a type with no rule of its
-// own, as Erlang's term order has it, and the payload rules then refuse it.
-func maxLifetime(t int64, payload cbor.Value) int64 {
+// typeLifetimeClass is the row a record of type t names (section 5.1), and
+// whether this library knows the type: node record and content announcement
+// 48 hours; procedure advertisement and station endpoint 5 minutes; realm
+// stations and org directory 6 hours; procedure delegation 30 minutes; realm
+// member endorsement 30 days; a domain type 7 days; the other built-in types
+// it knows 30 days; and a tombstone the row of the type it withdraws.
+func typeLifetimeClass(t int64, payload cbor.Value) (uint8, bool) {
 	switch {
-	case t == int64(TypeNodeRecord):
-		return nodeRecordMaxLifetimeMs
-	case t == int64(TypeContentAnnouncement):
-		return contentAnnouncementMaxLifetimeMs
-	case t == int64(TypeProcedureAdvertisement):
-		return procedureAdvertisementMaxLifetimeMs
-	case t == int64(TypeStationEndpoint):
-		return stationEndpointTTLMs
-	case t == int64(TypeRealmStations), t == int64(TypeOrgDirectory), t == int64(TypeProcedureDelegation):
-		return realmAndOrgMaxLifetimeMs
-	case t == int64(TypeRealmMemberEndorsement):
-		return MaxEndorsementWindowMs
+	case t == int64(TypeNodeRecord), t == int64(TypeContentAnnouncement):
+		return lifetimeClass48Hours, true
+	case t == int64(TypeProcedureAdvertisement), t == int64(TypeStationEndpoint):
+		return lifetimeClass5Minutes, true
+	case t == int64(TypeRealmStations), t == int64(TypeOrgDirectory):
+		return lifetimeClass6Hours, true
+	case t == int64(TypeProcedureDelegation):
+		return lifetimeClass30Minutes, true
+	case t == int64(TypeRealmMemberEndorsement), t == int64(TypeRealmDirectory),
+		t >= int64(TypeFoundationSeedList) && t <= int64(TypeFoundationT3Attestation):
+		return lifetimeClass30Days, true
 	case t == int64(TypeTombstone):
-		withdrawnValue, has := payload.Get("withdrawn_type")
+		withdrawnValue, _ := payload.Get("withdrawn_type")
 		withdrawn, isInt := withdrawnValue.AsInt64()
-		switch {
-		case !has || (isInt && withdrawn == int64(TypeTombstone)):
-			return defaultMaxLifetimeMs
-		case !isInt:
-			return defaultMaxLifetimeMs + 2*ClockToleranceMs
+		if !isInt || withdrawn == int64(TypeTombstone) {
+			return lifetimeClass30Days, true
 		}
-		return maxLifetime(withdrawn, cbor.Map(nil)) + 2*ClockToleranceMs
-	case t >= int64(DomainTypeMin):
-		return domainRecordMaxLifetimeMs
+		row, _ := typeLifetimeClass(withdrawn, cbor.Map(nil))
+		return row, true
+	case t >= int64(DomainTypeMin) && t <= 0xFF:
+		return lifetimeClass7Days, true
 	}
-	return defaultMaxLifetimeMs
+	return lifetimeClass30Days, false
+}
+
+// hasOwnSlot reports whether a custodian places a record of type t by a slot
+// rule of its type's own (StorageKey): every type this library knows.
+func hasOwnSlot(t int64) bool {
+	_, known := typeLifetimeClass(t, cbor.Map(nil))
+	return known
 }
 
 // defaultTTL is the lifetime a builder given no ttl takes: 48 hours, or the
-// type's maximum when that is shorter.
+// type's row's maximum when that is shorter.
 func defaultTTL(t Type) int64 {
-	return min(defaultTTLMs, maxLifetime(int64(t), cbor.Map(nil)))
+	row, _ := typeLifetimeClass(int64(t), cbor.Map(nil))
+	return min(defaultTTLMs, lifetimeClassMaxMs[row])
 }
 
 // signerPurposes is the purposes of the keys that may sign a record of type t,

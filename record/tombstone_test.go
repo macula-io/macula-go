@@ -79,25 +79,30 @@ func TestATombstoneExpiresNoEarlierThanTheWithdrawnRecord(t *testing.T) {
 
 // A tombstone lives until the record it withdraws has expired plus the
 // five-minute clock tolerance, so no replica serves the record again after the
-// tombstone lapses. It signs within the withdrawn type's maximum plus twice that
-// tolerance, since the record it withdraws may be created up to the tolerance
-// ahead: here a tombstone for a procedure advertisement created four minutes
-// ahead at its five-minute maximum signs and verifies, and one a millisecond
-// past that bound is refused.
-func TestATombstoneOutlivesTheWithdrawnRecordByTheClockTolerance(t *testing.T) {
+// tombstone lapses, within its withdrawn type's lifetime row (WIRE_1_0.md
+// section 5.1). Here a tombstone for a procedure advertisement two minutes from
+// its end outlives it by the tolerance; one for an advertisement created four
+// minutes ahead stops at its row's five minutes; and a millisecond past the
+// row is refused.
+func TestATombstoneOutlivesTheWithdrawnRecordWithinItsRow(t *testing.T) {
 	keys := keysFor(t)
 	now := nowMs()
-	advertisement := must[Record](t)(NewProcedureAdvertisement(keys.node.KeyID(), fill(0x11), "acme/echo_v1", fill(0x77),
-		ProcedureAdvertisementOptions{}))
-	advertisement.CreatedAt, advertisement.ExpiresAt = uint64(now+4*testMinute), uint64(now+9*testMinute)
-	withdrawn := must[Record](t)(Sign(advertisement, keys.node))
-	if _, err := Verify(wireOf(t, withdrawn), profile.PQPure, nowMs()); err != nil {
-		t.Fatalf("verify the advertisement 4 minutes ahead: %v", err)
+	advertise := func(createdAt, expiresAt int64) Record {
+		advertisement := must[Record](t)(NewProcedureAdvertisement(keys.node.KeyID(), fill(0x11), "acme/echo_v1", fill(0x77),
+			ProcedureAdvertisementOptions{}))
+		advertisement.CreatedAt, advertisement.ExpiresAt = uint64(createdAt), uint64(expiresAt)
+		return must[Record](t)(Sign(advertisement, keys.node))
 	}
-	tombstone := must[Record](t)(NewTombstone(withdrawn, ReasonShutdown, TombstoneOptions{}))
-	if tombstone.ExpiresAt < withdrawn.ExpiresAt+uint64(5*testMinute) {
+	ending := advertise(now-3*testMinute, now-testMinute/2)
+	tombstone := must[Record](t)(NewTombstone(ending, ReasonShutdown, TombstoneOptions{}))
+	if tombstone.ExpiresAt < ending.ExpiresAt+uint64(5*testMinute) {
 		t.Errorf("the tombstone expires at %d, before the advertisement's expiry plus 5 minutes, %d",
-			tombstone.ExpiresAt, withdrawn.ExpiresAt+uint64(5*testMinute))
+			tombstone.ExpiresAt, ending.ExpiresAt+uint64(5*testMinute))
+	}
+	ahead := advertise(now+4*testMinute, now+9*testMinute)
+	tombstone = must[Record](t)(NewTombstone(ahead, ReasonShutdown, TombstoneOptions{}))
+	if tombstone.ExpiresAt != tombstone.CreatedAt+uint64(5*testMinute) {
+		t.Errorf("the tombstone lives %d ms, want its row's 5 minutes", tombstone.ExpiresAt-tombstone.CreatedAt)
 	}
 	signed := must[Record](t)(Sign(tombstone, keys.node))
 	if signed.ExpiresAt != tombstone.ExpiresAt {
@@ -106,9 +111,9 @@ func TestATombstoneOutlivesTheWithdrawnRecordByTheClockTolerance(t *testing.T) {
 	if _, err := Verify(wireOf(t, signed), profile.PQPure, nowMs()); err != nil {
 		t.Errorf("verify the tombstone: %v", err)
 	}
-	tombstone.ExpiresAt = tombstone.CreatedAt + uint64(15*testMinute) + 1
+	tombstone.ExpiresAt = tombstone.CreatedAt + uint64(5*testMinute) + 1
 	_, err := Sign(tombstone, keys.node)
-	wantRefusal(t, "sign the tombstone living 15 minutes and 1 ms", err, ErrLifetimeTooLong)
+	wantRefusal(t, "sign the tombstone living 5 minutes and 1 ms", err, ErrLifetimeTooLong)
 }
 
 // A realm member endorsement's tombstone names the realm and the member, takes
@@ -136,7 +141,8 @@ func TestTombstonesShareTheSlotAndKeyIDOfWhatTheyWithdraw(t *testing.T) {
 	keys := keysFor(t)
 	keyID := identity.KeyIDOf(keys.node.PublicKey(), profile.PQPure)
 	byHand := func(recordType Type, fields ...cbor.MapEntry) Record {
-		return verifiedByHand(t, recordType, cbor.Map(fields), testHour, keys.node)
+		row, _ := typeLifetimeClass(int64(recordType), cbor.Map(fields))
+		return verifiedByHand(t, recordType, cbor.Map(fields), lifetimeClassMaxMs[row], keys.node)
 	}
 	signed := func(r Record, err error) Record {
 		return must[Record](t)(Sign(must[Record](t)(r, err), keys.node))

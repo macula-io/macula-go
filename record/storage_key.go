@@ -141,8 +141,8 @@ func (s *slotReader) text(name string) []byte {
 // contentID is a content id from the payload.
 func (s *slotReader) contentID(name string) []byte {
 	value := payloadField(s.payload, name)
-	if !isContentID(value) {
-		s.fail(fmt.Errorf("%w: a storage key needs %s as a tag 2 content id", ErrNotAContentID, name))
+	if !isContentIDShaped(value) {
+		s.fail(fmt.Errorf("%w: a storage key needs %s as a content id", ErrNotAContentID, name))
 	}
 	b, _ := value.AsBytes()
 	return b

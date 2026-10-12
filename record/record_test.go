@@ -138,11 +138,14 @@ func contentAnnouncementPayload(announcer [32]byte) cbor.Value {
 func recordFields(t *testing.T, recordType Type, payload cbor.Value, createdAt, lifetimeMs int64) []cbor.MapEntry {
 	t.Helper()
 	version := must[uuid.UUID](t)(uuid.NewV7())
+	row, _ := typeLifetimeClass(int64(recordType), payload)
 	return []cbor.MapEntry{
 		uintEntry("type", uint64(recordType)),
 		bytesEntry("version", version[:]),
 		uintEntry("created_at", uint64(createdAt)),
 		uintEntry("expires_at", uint64(createdAt+lifetimeMs)),
+		uintEntry("schema", Schema),
+		uintEntry("lifetime_class", uint64(row)),
 		valueEntry("payload", payload),
 	}
 }
@@ -211,7 +214,7 @@ func TestASignedRecordCarriesKeyKeyIDAlgTBSAndSignature(t *testing.T) {
 func TestTheTBSHoldsExactlyTheRecordFields(t *testing.T) {
 	keys := keysFor(t)
 	fields := must[cbor.Value](t)(cbor.Decode(signedNodeRecord(t, keys.node).TBS))
-	if got, want := sortedKeys(fields), []string{"alg", "created_at", "expires_at", "payload", "type", "version"}; !slices.Equal(got, want) {
+	if got, want := sortedKeys(fields), []string{"alg", "created_at", "expires_at", "lifetime_class", "payload", "schema", "type", "version"}; !slices.Equal(got, want) {
 		t.Errorf("the tbs's fields: %v, want %v", got, want)
 	}
 }
@@ -293,13 +296,16 @@ func TestAHybridRecordVerifies(t *testing.T) {
 		t.Errorf("verify a pq_hybrid record under pq_hybrid: %v", err)
 	}
 	_, err := Verify(wire, profile.PQPure, nowMs())
-	wantRefusal(t, "a pq_hybrid record under pq_pure", err, ErrMalformed)
+	wantRefusal(t, "a pq_hybrid record under pq_pure", err, identity.ErrObjectAlgMismatch)
 }
 
-func TestARecordUnderAnotherProfileIsMalformed(t *testing.T) {
+// A record's alg selects its verifier (WIRE_1_0.md section 7), so a record of
+// the other profile verifies as a signed object, and a reader then refuses it
+// for naming another profile's algorithm than its own.
+func TestARecordUnderAnotherProfileIsRefusedForItsAlg(t *testing.T) {
 	keys := keysFor(t)
 	_, err := Verify(wireOf(t, signedNodeRecord(t, keys.node)), profile.PQHybrid, nowMs())
-	wantRefusal(t, "a pq_pure record under pq_hybrid", err, ErrMalformed)
+	wantRefusal(t, "a pq_pure record under pq_hybrid", err, identity.ErrObjectAlgMismatch)
 }
 
 func TestARecordSignedUnderAnotherLabelIsRefused(t *testing.T) {
@@ -372,7 +378,6 @@ func TestTBSFieldsTheDesignDoesNotAllowAreMalformed(t *testing.T) {
 		{"no version", withoutEntry(base, "version")},
 		{"a 15-byte version", withEntry(base, "version", cbor.Bytes(make([]byte, 15)))},
 		{"a subject on a node record", withEntry(base, "subject", cbor.Bytes([]byte{1, 2}))},
-		{"a type macula does not define", withEntry(base, "type", cbor.Uint64(0x07))},
 		{"a payload that is a list", withEntry(base, "payload", cbor.List([]cbor.Value{cbor.Uint64(1)}))},
 		{"a created_at as text", withEntry(base, "created_at", cbor.Text("now"))},
 		{"a type of 256", withEntry(base, "type", cbor.Uint64(256))},
@@ -383,6 +388,9 @@ func TestTBSFieldsTheDesignDoesNotAllowAreMalformed(t *testing.T) {
 	} {
 		wantRefusal(t, c.name, verify(c.fields), ErrMalformed)
 	}
+	// A type macula does not define has no slot rule of its own: without a
+	// subject a custodian cannot place it (WIRE_1_0.md section 5.2).
+	wantRefusal(t, "a type macula does not define", verify(withEntry(base, "type", cbor.Uint64(0x07))), ErrSubjectMissing)
 }
 
 // A tbs key that is not text counts toward the tbs's size, as map_size/1
@@ -472,23 +480,23 @@ func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 		{"a realm_id of 31 bytes", TypeProcedureAdvertisement, withEntry(advertisement, "realm_id", cbor.Bytes(make([]byte, 31))), 5 * testMinute, ErrMalformed},
 		{"a procedure as bytes", TypeProcedureAdvertisement, withEntry(advertisement, "procedure", cbor.Bytes([]byte("acme/x"))), 5 * testMinute, ErrMalformed},
 		{"a content announcement", TypeContentAnnouncement, announcement, testHour, nil},
-		{"a content id with tag 1", TypeContentAnnouncement, withEntry(announcement, "mcid", cbor.Bytes(contentID(1))), testHour, ErrMalformed},
+		{"a content id with tag 1", TypeContentAnnouncement, withEntry(announcement, "mcid", cbor.Bytes(contentID(1))), testHour, ErrMcidTagUnknown},
 		{"an announcement without realm_id", TypeContentAnnouncement, withoutEntry(announcement, "realm_id"), testHour, ErrMalformed},
 		{"an announcement without serving_station", TypeContentAnnouncement, withoutEntry(announcement, "serving_station"), testHour, ErrMalformed},
 		{"a serving_station of 31 bytes", TypeContentAnnouncement, withEntry(announcement, "serving_station", cbor.Bytes(make([]byte, 31))), testHour, ErrMalformed},
 		{"an announcement without procedure", TypeContentAnnouncement, withoutEntry(announcement, "procedure"), testHour, ErrMalformed},
 		{"an empty procedure", TypeContentAnnouncement, withEntry(announcement, "procedure", cbor.Text("")), testHour, ErrMalformed},
 		{"a procedure as bytes", TypeContentAnnouncement, withEntry(announcement, "procedure", cbor.Bytes([]byte("~x/content_v1"))), testHour, ErrMalformed},
-		{"a tombstone of an advertisement", TypeTombstone, advertisementTombstone, 10 * testMinute, nil},
-		{"a tombstone with a detail", TypeTombstone, withEntry(advertisementTombstone, "detail", cbor.Text("to beam01")), 10 * testMinute, nil},
-		{"a tombstone missing a slot field", TypeTombstone, withoutEntry(advertisementTombstone, "procedure"), 10 * testMinute, ErrMalformed},
+		{"a tombstone of an advertisement", TypeTombstone, advertisementTombstone, 5 * testMinute, nil},
+		{"a tombstone with a detail", TypeTombstone, withEntry(advertisementTombstone, "detail", cbor.Text("to beam01")), 5 * testMinute, nil},
+		{"a tombstone missing a slot field", TypeTombstone, withoutEntry(advertisementTombstone, "procedure"), 5 * testMinute, ErrMalformed},
 		{"a tombstone with an extra slot field", TypeTombstone,
-			withEntry(advertisementTombstone, "member_node", cbor.Bytes(idBytes(2))), 10 * testMinute, ErrMalformed},
-		{"a reason macula does not define", TypeTombstone, withEntry(advertisementTombstone, "reason", cbor.Text("retired")), 10 * testMinute, ErrMalformed},
-		{"a detail that is not text", TypeTombstone, withEntry(advertisementTombstone, "detail", cbor.Bytes([]byte("not text"))), 10 * testMinute, ErrMalformed},
+			withEntry(advertisementTombstone, "member_node", cbor.Bytes(idBytes(2))), 5 * testMinute, ErrMalformed},
+		{"a reason macula does not define", TypeTombstone, withEntry(advertisementTombstone, "reason", cbor.Text("retired")), 5 * testMinute, ErrMalformed},
+		{"a detail that is not text", TypeTombstone, withEntry(advertisementTombstone, "detail", cbor.Bytes([]byte("not text"))), 5 * testMinute, ErrMalformed},
 		{"a withdrawn_version of 15 bytes", TypeTombstone,
-			withEntry(advertisementTombstone, "withdrawn_version", cbor.Bytes(make([]byte, 15))), 10 * testMinute, ErrMalformed},
-		{"a tombstone without withdrawn_version", TypeTombstone, withoutEntry(advertisementTombstone, "withdrawn_version"), 10 * testMinute, ErrMalformed},
+			withEntry(advertisementTombstone, "withdrawn_version", cbor.Bytes(make([]byte, 15))), 5 * testMinute, ErrMalformed},
+		{"a tombstone without withdrawn_version", TypeTombstone, withoutEntry(advertisementTombstone, "withdrawn_version"), 5 * testMinute, ErrMalformed},
 		{"a tombstone withdrawing a tombstone", TypeTombstone, withdrawing(TypeTombstone), 10 * testMinute, ErrMalformed},
 		{"a tombstone withdrawing a type no key signs", TypeTombstone, withdrawing(0x07), 10 * testMinute, ErrMalformed},
 		{"a tombstone of a realm member endorsement", TypeTombstone, endorsementTombstone, testHour, nil},
@@ -595,9 +603,9 @@ func TestEachIdentityTypeSignsWithinItsMaximumLifetime(t *testing.T) {
 	}
 }
 
-// A verifier accepts every type at its maximum lifetime and refuses it a
+// A verifier accepts every type at its lifetime row's maximum and refuses it a
 // millisecond past as lifetime_too_long, with a tombstone living its withdrawn
-// type's maximum plus twice the clock tolerance.
+// type's row (WIRE_1_0.md section 5.1).
 func TestARecordLivingPastItsTypesMaximumIsRefused(t *testing.T) {
 	keys := keysFor(t)
 	nodeID := keys.node.KeyID()
@@ -616,13 +624,13 @@ func TestARecordLivingPastItsTypesMaximumIsRefused(t *testing.T) {
 		{"realm stations", TypeRealmStations, 6 * testHour, realm},
 		{"an org directory", TypeOrgDirectory, 6 * testHour, cbor.Map([]cbor.MapEntry{
 			bytesEntry("realm_id", idBytes(0x11)), textEntry("org_name", "acme"), bytesEntry("org_key", idBytes(4))})},
-		{"a procedure delegation", TypeProcedureDelegation, 6 * testHour, cbor.Map([]cbor.MapEntry{
+		{"a procedure delegation", TypeProcedureDelegation, 30 * testMinute, cbor.Map([]cbor.MapEntry{
 			bytesEntry("org_key", keyID[:]), bytesEntry("advertiser", idBytes(8))})},
 		{"a realm member endorsement", TypeRealmMemberEndorsement, 30 * testDay, cbor.Map([]cbor.MapEntry{
 			bytesEntry("realm_id", idBytes(0x11)), bytesEntry("member_node", nodeID[:])})},
 		{"a realm directory, which has no rule of its own", TypeRealmDirectory, 30 * testDay, realm},
 		{"a domain record", DomainTypeMin, 7 * testDay, cbor.Map(nil)},
-		{"a tombstone withdrawing a procedure advertisement", TypeTombstone, 15 * testMinute, cbor.Map([]cbor.MapEntry{
+		{"a tombstone withdrawing a procedure advertisement", TypeTombstone, 5 * testMinute, cbor.Map([]cbor.MapEntry{
 			uintEntry("withdrawn_type", uint64(TypeProcedureAdvertisement)), bytesEntry("withdrawn_version", make([]byte, 16)),
 			textEntry("reason", "shutdown"), bytesEntry("realm_id", idBytes(0x11)), textEntry("procedure", "acme/echo_v1")})},
 	} {
@@ -803,7 +811,7 @@ func TestANodeRecordCarriesItsPayloadAndReadsBack(t *testing.T) {
 func TestARecordVerifierSaysWhetherTheBinaryHasMLDSA(t *testing.T) {
 	object := identity.Object{
 		Key:       make([]byte, 2592),
-		TBS:       cbor.Encode(cbor.Map(nil)),
+		TBS:       cbor.Encode(cbor.Map([]cbor.MapEntry{textEntry("alg", "ML-DSA-87")})),
 		Signature: make([]byte, identity.SignatureSize(profile.PQPure)),
 	}
 	_, err := Verify(cbor.Encode(object.Value()), profile.PQPure, nowMs())

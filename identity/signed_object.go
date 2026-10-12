@@ -23,7 +23,62 @@ var (
 	// ErrObjectAlgMismatch is a signed object whose alg names another profile's
 	// algorithm than the verifier's.
 	ErrObjectAlgMismatch = errors.New("identity: the signed object names another profile's algorithm")
+	// ErrObjectAlgUnsupported is a signed object whose alg names no verifier
+	// this library registers (alg_unsupported, macula docs/design/WIRE_1_0.md
+	// section 7).
+	ErrObjectAlgUnsupported = errors.New("identity: alg_unsupported")
 )
+
+// algProfiles is the verifier registry wire 1.0 dispatches on: each signature
+// algorithm a signed object's alg may name, and the profile whose verifier
+// checks it. A new algorithm arrives under a new name (section 7).
+var algProfiles = map[string]profile.Profile{
+	sigAlg(profile.PQPure):   profile.PQPure,
+	sigAlg(profile.PQHybrid): profile.PQHybrid,
+}
+
+// ProfileOfAlg is the profile whose verifier a signed object naming alg is
+// checked with, and false for an alg no verifier is registered for.
+func ProfileOfAlg(alg string) (profile.Profile, bool) {
+	p, registered := algProfiles[alg]
+	return p, registered
+}
+
+// VerifyObjectByAlg verifies a signed object that carries its key, under
+// label, with the verifier its alg selects (WIRE_1_0.md sections 5.2 and 7), in
+// this order: exactly the keys key, tbs and signature, each a byte string; tbs
+// under the decoding rule, a map holding alg as text (ErrObjectMalformed, and
+// nothing else in tbs is acted on before the signature); alg naming a
+// registered verifier (ErrObjectAlgUnsupported); key in that verifier's
+// carried form (ErrObjectMalformed); the signature over tbs as received
+// (ErrObjectSignatureInvalid). It returns the object with the profile alg
+// selected.
+func VerifyObjectByAlg(label string, v cbor.Value) (VerifiedObject, profile.Profile, error) {
+	object, err := ParseObject(v)
+	if err != nil {
+		return VerifiedObject{}, "", err
+	}
+	fields, err := cbor.Decode(object.TBS)
+	if err != nil {
+		return VerifiedObject{}, "", fmt.Errorf("%w: %w", ErrObjectMalformed, err)
+	}
+	algValue, hasAlg := fields.Get("alg")
+	alg, isText := algValue.AsText()
+	if _, isMap := fields.AsMap(); !isMap || !hasAlg || !isText {
+		return VerifiedObject{}, "", ErrObjectMalformed
+	}
+	p, registered := ProfileOfAlg(alg)
+	if !registered {
+		return VerifiedObject{}, "", fmt.Errorf("%w: %q", ErrObjectAlgUnsupported, alg)
+	}
+	if !CarriedKeyWellFormed(object.Key, p) {
+		return VerifiedObject{}, "", ErrObjectMalformed
+	}
+	if err := verifySignature(objectSignedBytes(label, object.Key, object.TBS), object.Signature, object.Key, p, ErrObjectSignatureInvalid); err != nil {
+		return VerifiedObject{}, "", err
+	}
+	return VerifiedObject{Key: bytes.Clone(object.Key), TBS: bytes.Clone(object.TBS), Fields: fields}, p, nil
+}
 
 // Object is a signed object that carries its signer's key as carried: a
 // record, a request, a reply, a relay error, a publication, or a provider's

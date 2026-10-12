@@ -36,25 +36,35 @@ func NewRealm(t T, p profile.Profile, name, org string) Realm {
 // RealmKey is the realm key as carried, the key a member pins for the realm.
 func (r Realm) RealmKey() []byte { return r.Key.PublicKey() }
 
-// Admit puts the realm's org directory, and the org's delegation to each
-// advertiser, in station's DHT, living an hour.
+// Admit puts the realm's org directory, living an hour, and the org's
+// delegation to each advertiser, living its row's 30 minutes, in station's DHT
+// (macula docs/design/WIRE_1_0.md section 5.1).
 func (r Realm) Admit(t T, station *Station, advertisers ...[32]byte) {
 	t.Helper()
 	orgKeyID := identity.KeyIDOf(r.OrgKey.PublicKey(), r.profile)
-	station.Put(signed(t, 0x15, cbor.Map([]cbor.MapEntry{
+	station.Put(signed(t, 0x15, orgDirectoryClass, 3_600_000, cbor.Map([]cbor.MapEntry{
 		{Key: cbor.Text("realm_id"), Val: cbor.Bytes(r.ID[:])},
 		{Key: cbor.Text("org_name"), Val: cbor.Text(r.Org)},
 		{Key: cbor.Text("org_key"), Val: cbor.Bytes(orgKeyID[:])},
 	}), r.Key))
 	for _, advertiser := range advertisers {
-		station.Put(signed(t, 0x16, cbor.Map([]cbor.MapEntry{
+		station.Put(signed(t, 0x16, procedureDelegationClass, 1_800_000, cbor.Map([]cbor.MapEntry{
 			{Key: cbor.Text("org_key"), Val: cbor.Bytes(orgKeyID[:])},
 			{Key: cbor.Text("advertiser"), Val: cbor.Bytes(advertiser[:])},
 		}), r.OrgKey))
 	}
 }
 
-func signed(t T, recordType uint64, payload cbor.Value, key *identity.NodeKey) []byte {
+// The lifetime rows of an org directory, 6 hours, and of a procedure
+// delegation, 30 minutes.
+const (
+	orgDirectoryClass        = 2
+	procedureDelegationClass = 1
+)
+
+// signed is a wire 1.0 record of recordType in lifetime row class, living
+// lifetimeMs from now, signed by key.
+func signed(t T, recordType, class, lifetimeMs uint64, payload cbor.Value, key *identity.NodeKey) []byte {
 	t.Helper()
 	version, err := uuid.NewV7()
 	if err != nil {
@@ -65,7 +75,9 @@ func signed(t T, recordType uint64, payload cbor.Value, key *identity.NodeKey) [
 		{Key: cbor.Text("type"), Val: cbor.Uint64(recordType)},
 		{Key: cbor.Text("version"), Val: cbor.Bytes(version[:])},
 		{Key: cbor.Text("created_at"), Val: cbor.Uint64(now)},
-		{Key: cbor.Text("expires_at"), Val: cbor.Uint64(now + 3_600_000)},
+		{Key: cbor.Text("expires_at"), Val: cbor.Uint64(now + lifetimeMs)},
+		{Key: cbor.Text("schema"), Val: cbor.Uint64(1)},
+		{Key: cbor.Text("lifetime_class"), Val: cbor.Uint64(class)},
 		{Key: cbor.Text("payload"), Val: payload},
 	}, key)
 	if err != nil {

@@ -122,7 +122,7 @@ func TestAProcedureDelegationIsStoredUnderItsOrgKeyIDAndAdvertiser(t *testing.T)
 	keys := keysFor(t)
 	orgKeyID := identity.KeyIDOf(keys.node.PublicKey(), profile.PQPure)
 	payload := cbor.Map([]cbor.MapEntry{bytesEntry("org_key", orgKeyID[:]), bytesEntry("advertiser", idBytes(0x55))})
-	delegation := verifiedByHand(t, TypeProcedureDelegation, payload, testHour, keys.node)
+	delegation := verifiedByHand(t, TypeProcedureDelegation, payload, 30*testMinute, keys.node)
 	if got := must[[32]byte](t)(StorageKey(delegation)); got != ProcedureDelegationKey(orgKeyID, fill(0x55)) {
 		t.Errorf("a procedure delegation is stored under %x, want its org key id and advertiser's key", got)
 	}
@@ -187,7 +187,7 @@ func TestAStorageKeyNeedsTheFieldsItDerivesFrom(t *testing.T) {
 		{"an advertisement whose procedure is bytes",
 			unsignedRecord(t, TypeProcedureAdvertisement, bytesEntry("realm_id", idBytes(0x11)), bytesEntry("procedure", []byte("x"))), ErrMalformed},
 		{"a content announcement with a tag 1 content id",
-			unsignedRecord(t, TypeContentAnnouncement, bytesEntry("mcid", append([]byte{1, 0x55}, make([]byte, 48)...))), ErrNotAContentID},
+			unsignedRecord(t, TypeContentAnnouncement, bytesEntry("mcid", []byte{2, 0x55})), ErrNotAContentID},
 		{"an unsigned station endpoint", must[Record](t)(NewStationEndpoint(1, StationEndpointOptions{})), ErrUnsigned},
 		{"a type macula does not define", unsignedRecord(t, 0x07), ErrMalformed},
 		{"a tombstone naming 0x100", unsignedRecord(t, TypeTombstone, uintEntry("withdrawn_type", 0x100)), ErrMalformed},

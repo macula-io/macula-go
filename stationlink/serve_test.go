@@ -36,8 +36,17 @@ type realmFixture struct {
 	trust      record.Trust
 }
 
+// fixtureRows are the lifetime rows, and the lifetimes, of the records a
+// realm fixture signs (WIRE_1_0.md section 5.1): an org directory 6 hours, a
+// procedure delegation 30 minutes.
+var fixtureRows = map[record.Type]struct{ class, lifetimeMs int64 }{
+	record.TypeOrgDirectory:        {2, 6 * 3_600_000},
+	record.TypeProcedureDelegation: {1, 30 * 60_000},
+}
+
 // signedRecord is a record of type t with payload, signed as its issuer signs
-// it; the test holds the realm's and the org's keys as identity keys.
+// it, living its row's maximum; the test holds the realm's and the org's keys
+// as identity keys.
 func signedRecord(t *testing.T, recordType record.Type, payload cbor.Value, key *identity.NodeKey) []byte {
 	t.Helper()
 	version, err := uuid.NewV7()
@@ -49,7 +58,9 @@ func signedRecord(t *testing.T, recordType record.Type, payload cbor.Value, key 
 		{Key: cbor.Text("type"), Val: cbor.Uint64(uint64(recordType))},
 		{Key: cbor.Text("version"), Val: cbor.Bytes(version[:])},
 		{Key: cbor.Text("created_at"), Val: cbor.Uint64(uint64(now))},
-		{Key: cbor.Text("expires_at"), Val: cbor.Uint64(uint64(now + 6*3_600_000))},
+		{Key: cbor.Text("expires_at"), Val: cbor.Uint64(uint64(now + fixtureRows[recordType].lifetimeMs))},
+		{Key: cbor.Text("schema"), Val: cbor.Uint64(record.Schema)},
+		{Key: cbor.Text("lifetime_class"), Val: cbor.Uint64(uint64(fixtureRows[recordType].class))},
 		{Key: cbor.Text("payload"), Val: payload},
 	}
 	object, err := identity.SignObject(recordLabel, fields, key)

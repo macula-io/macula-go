@@ -89,7 +89,7 @@ func delegationBundleWire(t *testing.T, procedure string, o delegationOverrides)
 	}
 	delegationPayload := cbor.Map([]cbor.MapEntry{bytesEntry("org_key", signerKeyID[:]), bytesEntry("advertiser", advertiser[:])})
 	delegation := signedByHand(t, label, recordFields(t, TypeProcedureDelegation, delegationPayload, now,
-		cmp.Or(o.delegationTTLMs, 6*testHour)), delegationSigner)
+		cmp.Or(o.delegationTTLMs, 30*testMinute)), delegationSigner)
 	if o.swapDirectoryAndGrant {
 		directory, delegation = delegation, directory
 	}
@@ -275,14 +275,14 @@ func TestAProcedureDelegationNamesItsOrgKeyAndAdvertiser(t *testing.T) {
 	authorization := authorizationKeysFor(t)
 	orgKeyID := identity.KeyIDOf(authorization.org.PublicKey(), profile.PQPure)
 	delegation := verifiedByHand(t, TypeProcedureDelegation, cbor.Map([]cbor.MapEntry{bytesEntry("org_key", orgKeyID[:]),
-		bytesEntry("advertiser", idBytes(8))}), testHour, authorization.org)
+		bytesEntry("advertiser", idBytes(8))}), 30*testMinute, authorization.org)
 	if read := must[ProcedureDelegation](t)(ReadProcedureDelegation(delegation)); read != (ProcedureDelegation{OrgKey: orgKeyID, Advertiser: fill(8)}) {
 		t.Errorf("read %+v, want the org key id and advertiser 0x08", read)
 	}
 	_, err := ReadProcedureDelegation(Record{Type: TypeNodeRecord, Payload: cbor.Map(nil)})
 	wantRefusal(t, "read a node record as a procedure delegation", err, ErrMalformed)
 	fields := recordFields(t, TypeProcedureDelegation, cbor.Map([]cbor.MapEntry{bytesEntry("org_key", idBytes(3)),
-		bytesEntry("advertiser", idBytes(8))}), nowMs(), testHour)
+		bytesEntry("advertiser", idBytes(8))}), nowMs(), 30*testMinute)
 	_, err = Verify(signedByHand(t, label, fields, authorization.org), profile.PQPure, nowMs())
 	wantRefusal(t, "a delegation whose org key is not its signer", err, ErrKeyIDMismatch)
 }

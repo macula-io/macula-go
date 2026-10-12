@@ -214,10 +214,15 @@ func serveCheck(provider *stationlink.Link, providerKey *identity.NodeKey, targe
 	}
 }
 
-// putSigned signs a record of type t with key, living an hour (a realm or org record lives at most 6), and puts it. A
+// putSigned signs a wire 1.0 record of type t with key, living 30 minutes (a procedure delegation's row; an org
+// directory's is 6 hours), and puts it. A
 // Go key is an identity or CONNECT key only, so the test realm's and org's
 // records are signed as the signed objects they are, under the record label,
 // as a realm and an org sign them.
+// lifetimeRows are the lifetime rows of the records putSigned signs
+// (WIRE_1_0.md section 5.1).
+var lifetimeRows = map[record.Type]uint64{record.TypeOrgDirectory: 2, record.TypeProcedureDelegation: 1}
+
 func putSigned(ctx context.Context, link *stationlink.Link, t record.Type, payload cbor.Value, key *identity.NodeKey) error {
 	version, err := uuid.NewV7()
 	if err != nil {
@@ -228,7 +233,9 @@ func putSigned(ctx context.Context, link *stationlink.Link, t record.Type, paylo
 		{Key: cbor.Text("type"), Val: cbor.Uint64(uint64(t))},
 		{Key: cbor.Text("version"), Val: cbor.Bytes(version[:])},
 		{Key: cbor.Text("created_at"), Val: cbor.Uint64(now)},
-		{Key: cbor.Text("expires_at"), Val: cbor.Uint64(now + 3_600_000)},
+		{Key: cbor.Text("expires_at"), Val: cbor.Uint64(now + 30*60_000)},
+		{Key: cbor.Text("schema"), Val: cbor.Uint64(record.Schema)},
+		{Key: cbor.Text("lifetime_class"), Val: cbor.Uint64(lifetimeRows[t])},
 		{Key: cbor.Text("payload"), Val: payload},
 	}, key)
 	if err != nil {

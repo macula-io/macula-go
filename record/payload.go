@@ -2,6 +2,7 @@ package record
 
 import (
 	"bytes"
+	"fmt"
 	"slices"
 
 	"github.com/macula-io/macula-go/cbor"
@@ -42,7 +43,7 @@ func payloadOK(t Type, payload cbor.Value) bool {
 		return isID(field("station_id"))
 	case TypeContentAnnouncement:
 		procedure, _ := field("procedure").AsText()
-		return isID(field("announcer_node")) && isContentID(field("mcid")) &&
+		return isID(field("announcer_node")) && isContentIDShaped(field("mcid")) &&
 			isID(field("realm_id")) && isID(field("serving_station")) && procedure != ""
 	case TypeOrgDirectory:
 		return isID(field("realm_id")) && isText(field("org_name")) && isID(field("org_key"))
@@ -227,5 +228,31 @@ func isText(v cbor.Value) bool {
 // byte and the hash (D24).
 func isContentID(v cbor.Value) bool {
 	b, isBytes := v.AsBytes()
-	return isBytes && len(b) == 50 && b[0] == 2
+	return isBytes && len(b) == 50 && b[0] == contentIDTagSHA384
+}
+
+// contentIDTagSHA384 is the content id tag this library knows: SHA-384, a
+// 48-byte digest (WIRE_1_0.md section 5.4).
+const contentIDTagSHA384 = 2
+
+// isContentIDShaped reports whether v has a content id's shape,
+// <<Tag:8, Codec:8, Digest>>, whatever its tag: a tag this library knows with
+// its digest length, or any other tag, which custodians store and readers
+// refuse by name.
+func isContentIDShaped(v cbor.Value) bool {
+	b, isBytes := v.AsBytes()
+	return isBytes && len(b) > 2 && (b[0] != contentIDTagSHA384 || len(b) == 50)
+}
+
+// contentIDTagKnown refuses a record naming a content id whose tag a reader
+// does not know (ErrMcidTagUnknown).
+func contentIDTagKnown(t Type, payload cbor.Value) error {
+	if t != TypeContentAnnouncement {
+		return nil
+	}
+	mcid, _ := payload.Get("mcid")
+	if b, _ := mcid.AsBytes(); len(b) > 0 && b[0] != contentIDTagSHA384 {
+		return fmt.Errorf("%w: tag %d", ErrMcidTagUnknown, b[0])
+	}
+	return nil
 }
