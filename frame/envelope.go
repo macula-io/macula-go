@@ -19,6 +19,10 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 )
 
+// WireVersion is the wire this library speaks, major.minor: the frozen core of
+// macula docs/design/WIRE_1_0.md, which every wire 1.x peer shares.
+const WireVersion = "1.0"
+
 // ProtocolVersion is the version every frame carries: wire 1.0 binds the frame
 // version to the handshake version, 5 (macula docs/design/WIRE_1_0.md section 2).
 const ProtocolVersion = 5

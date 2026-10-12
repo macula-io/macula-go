@@ -21,6 +21,8 @@ import (
 	"runtime/cgo"
 	"sync"
 	"unsafe"
+
+	"github.com/macula-io/macula-go/frame"
 )
 
 // abiVersion is MACULA_ABI_VERSION in macula.h.
@@ -49,6 +51,23 @@ var (
 func macula_library_version() *C.char {
 	libraryVersionOnce.Do(func() { libraryVersionCText = C.CString(libraryVersion) })
 	return libraryVersionCText
+}
+
+// wireVersionString is the wire this library speaks, frame.WireVersion.
+func wireVersionString() string { return frame.WireVersion }
+
+var (
+	wireVersionOnce  sync.Once
+	wireVersionCText *C.char
+)
+
+// macula_wire_version returns the wire this library speaks, "1.0", as a C
+// string the library owns: made once, never freed (CONTRACT.md "Version").
+//
+//export macula_wire_version
+func macula_wire_version() *C.char {
+	wireVersionOnce.Do(func() { wireVersionCText = C.CString(wireVersionString()) })
+	return wireVersionCText
 }
 
 //export macula_free_string

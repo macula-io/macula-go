@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#18).
   See `cabi/CONTRACT.md` "Version".
 
+- `macula_wire_version()` returns the wire the C library speaks, `"1.0"`, and
+  `macula.h` defines `MACULA_WIRE_VERSION`; the libmacula load check refuses a
+  library whose wire differs from its header's, so every FFI SDK (ts, py,
+  dotnet, php) can prove which wire it links (#30). `frame.WireVersion` is the
+  same value in Go. See `cabi/CONTRACT.md` "Version".
+
 ### Changed (wire 1.0, #30: not yet interoperable with a station before it)
 
 - **Frames carry version 5 and the wire 1.0 envelope** (macula

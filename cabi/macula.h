@@ -23,6 +23,10 @@ extern "C" {
 
 #define MACULA_ABI_VERSION 1
 
+/* The wire this header was written for, major.minor (macula
+ * docs/design/WIRE_1_0.md). */
+#define MACULA_WIRE_VERSION "1.0"
+
 /* An opaque handle to a Go value: a key, pool, subscription, served
  * procedure, pending call, stream, or cancel token. 0 is never a handle. */
 typedef uintptr_t macula_handle;
@@ -42,6 +46,12 @@ int32_t macula_abi_version(void);
  * owns the string: never free it. A binding with a release floor compares it
  * at load. */
 const char *macula_library_version(void);
+
+/* Since macula-go v0.28.0. The wire the library speaks, major.minor, e.g.
+ * "1.0": every wire 1.x peer shares its frozen core. The library owns the
+ * string: never free it. A binding compares it with MACULA_WIRE_VERSION at
+ * load. */
+const char *macula_wire_version(void);
 
 /* Free a string or byte buffer the library returned. NULL is a no-op. */
 void macula_free_string(char *s);

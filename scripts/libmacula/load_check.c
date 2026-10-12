@@ -37,6 +37,11 @@ int main(int argc, char **argv) {
   }
   macula_cancel(token);
   macula_cancel_free(token);
-  printf("libmacula %s loads (ABI %d)\n", release, version);
+  const char *wire = macula_wire_version();
+  if (strcmp(wire, MACULA_WIRE_VERSION) != 0) {
+    fprintf(stderr, "libmacula speaks wire %s, macula.h is wire %s\n", wire, MACULA_WIRE_VERSION);
+    return 1;
+  }
+  printf("libmacula %s loads (ABI %d, wire %s)\n", release, version, wire);
   return 0;
 }
