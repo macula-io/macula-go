@@ -94,6 +94,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile is `identity.ErrObjectAlgMismatch`. `record.CheckAsCustodian` runs
   the checks a station stores by and returns the slot, placing a type with no
   rule of its own at H(type | signer key id | subject).
+- **Algorithm agility** (WIRE_1_0.md section 7, macula#101). A signed object
+  whose `alg` names no registered verifier is `identity.ErrObjectAlgUnsupported`
+  (`alg_unsupported`), in a frame as in a record; `identity.ProfileOfAlg` is the
+  registry. A sealed map of a scheme this library does not know is read
+  (`frame.Sealed.Scheme`, `KnownScheme`) and refused when opened: a provider
+  answers `sealed_refused` naming its current key, and a caller does not open
+  the reply. `handshake.CapStation`, `CapSwimIndirect` and `CapRelayOverloaded`
+  name the assigned capability bits (section 4.7).
 - A relay error may carry `overloaded` (macula#54), which a station signs when
   it sheds a call; it was refused as outside the closed set.
 - A liveness frame is read through its own table: a field it does not have is

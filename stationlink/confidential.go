@@ -112,7 +112,7 @@ func (l *Link) openRequest(request frame.VerifiedRequest) (cbor.Value, *callSeal
 	current := l.keyring.CurrentID()
 	refused := hex.EncodeToString(current[:])
 	key, held := l.keyring.Find(request.Sealed.KeyID)
-	if !held {
+	if !held || !request.Sealed.KnownScheme() {
 		return cbor.Value{}, nil, refused
 	}
 	ss, err := seal.RecipientSecret(key, request.Sealed.KemCt)
@@ -272,9 +272,9 @@ func (l *Link) sealRequest(spec *frame.RequestSpec, frameType string, sealTo []b
 // run to its deadline: neither takes it.
 func (s *callSeal) sealedOutcome(reply frame.VerifiedReply, requestHash [48]byte) callOutcome {
 	switch {
-	case reply.Sealed != nil && reply.Sealed.KeyID != s.keyID:
+	case reply.Sealed != nil && (reply.Sealed.KeyID != s.keyID || !reply.Sealed.KnownScheme()):
 		// As macula's open_reply/4: an answer naming another key than the
-		// request's is not opened.
+		// request's, or a scheme this node does not open, is not opened.
 		return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
 	case reply.Sealed != nil:
 		plain, err := seal.Open(s.kRep, [seal.NonceSize]byte(reply.Sealed.Nonce),

@@ -64,6 +64,23 @@ const (
 	sessionProofLabel = "MACULA-PQ-SESSION-PROOF-V1"
 )
 
+// The capability bits CONNECT and HELLO carry (WIRE_1_0.md section 4.7): an
+// unsigned integer below 2^53, bits 0 to MaxCapabilityBit reserved. Bits never
+// retire and are never reassigned; an unknown bit is ignored. Each one states
+// its behaviour towards a peer that lacks it and towards one that claims it
+// falsely: waste, never loss, both ways.
+const (
+	// CapStation is a station.
+	CapStation uint64 = 1 << 0
+	// CapSwimIndirect is a station that answers SWIM indirect probes.
+	CapSwimIndirect uint64 = 1 << 1
+	// CapRelayOverloaded is a peer that reads the relay code overloaded
+	// (macula#54), which a station sends only to a peer that declares it.
+	CapRelayOverloaded uint64 = 1 << 2
+	// MaxCapabilityBit is the highest bit of the reserved range.
+	MaxCapabilityBit = 52
+)
+
 // Exporter is a TLS 1.3 session's exporter: label, context and length to bytes.
 // Both ends of one session export the same bytes.
 type Exporter func(label string, context []byte, length int) ([]byte, error)

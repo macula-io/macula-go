@@ -210,10 +210,12 @@ func receivedFrame(v cbor.Value, objectName string, objectRule fieldRule, routes
 }
 
 // objectRefusal is the refusal of a frame whose signed object did not verify:
-// a signature that does not verify and a binary without ML-DSA as they are, and
-// any other refusal as ErrMalformedFrame.
+// a signature that does not verify, an alg no verifier is registered for
+// (alg_unsupported) and a binary without ML-DSA as they are, and any other
+// refusal as ErrMalformedFrame.
 func objectRefusal(err error) error {
-	if errors.Is(err, identity.ErrObjectSignatureInvalid) || errors.Is(err, identity.ErrPostQuantumUnavailable) {
+	if errors.Is(err, identity.ErrObjectSignatureInvalid) || errors.Is(err, identity.ErrPostQuantumUnavailable) ||
+		errors.Is(err, identity.ErrObjectAlgUnsupported) {
 		return err
 	}
 	return fmt.Errorf("%w: %w", ErrMalformedFrame, err)

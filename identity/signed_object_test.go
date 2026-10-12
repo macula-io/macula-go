@@ -214,6 +214,8 @@ func TestAnObjectTBSIsVerifiedAsReceivedThenDecodedStrictly(t *testing.T) {
 			{"a tbs with trailing bytes", append(append([]byte{0xa1}, alg...), 0x00), ErrObjectMalformed},
 			{"a tbs without alg", append([]byte{0xa1, 0x64}, append([]byte("type"), 0x01)...), ErrObjectMalformed},
 			{"alg naming the other profile", append([]byte{0xa1}, other...), ErrObjectAlgMismatch},
+			// An alg no verifier is registered for is alg_unsupported (WIRE_1_0.md section 7).
+			{"alg naming no registered verifier", append([]byte{0xa1}, append([]byte{0x63}, append([]byte("alg"), objectCBORText("ML-DSA-65")...)...)...), ErrObjectAlgUnsupported},
 		}
 		for _, c := range cases {
 			_, err := VerifyObject(objectLabel, rawObject(t, keys.identity, c.tbs), p)

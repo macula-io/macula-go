@@ -270,6 +270,9 @@ func verifiedObject(label string, key, tbs, signature []byte, p profile.Profile)
 	if _, isMap := fields.AsMap(); !isMap || !hasAlg || !isText {
 		return VerifiedObject{}, ErrObjectMalformed
 	}
+	if _, registered := ProfileOfAlg(name); !registered {
+		return VerifiedObject{}, fmt.Errorf("%w: %q", ErrObjectAlgUnsupported, name)
+	}
 	if name != sigAlg(p) {
 		return VerifiedObject{}, ErrObjectAlgMismatch
 	}

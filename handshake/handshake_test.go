@@ -959,3 +959,14 @@ func isRefusal(err error, code RefusalCode) bool {
 	var refused *RefusedError
 	return errors.As(err, &refused) && refused.Code == code
 }
+
+// The capability bits wire 1.0 assigns (WIRE_1_0.md section 4.7): they never
+// retire and are never reassigned, and the range is bits 0 to 52.
+func TestTheAssignedCapabilityBits(t *testing.T) {
+	if CapStation != 1<<0 || CapSwimIndirect != 1<<1 || CapRelayOverloaded != 1<<2 {
+		t.Errorf("bits %d %d %d, want station 0, swim_indirect 1, relay_overloaded 2", CapStation, CapSwimIndirect, CapRelayOverloaded)
+	}
+	if MaxCapabilityBit != 52 {
+		t.Errorf("MaxCapabilityBit = %d, want 52", MaxCapabilityBit)
+	}
+}

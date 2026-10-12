@@ -46,6 +46,13 @@ type sealedCallKeys struct {
 func (s *servingStation) sealedCall(t *testing.T, target [32]byte, procedure string, payload cbor.Value, deadline time.Time,
 	pub *seal.PublicKey, keyID [seal.KeyIDSize]byte) (frame.VerifiedRequest, sealedCallKeys) {
 	t.Helper()
+	return s.sealedCallScheme(t, target, procedure, payload, deadline, pub, keyID, frame.SealedScheme)
+}
+
+// sealedCallScheme is sealedCall naming scheme in the sealed map.
+func (s *servingStation) sealedCallScheme(t *testing.T, target [32]byte, procedure string, payload cbor.Value, deadline time.Time,
+	pub *seal.PublicKey, keyID [seal.KeyIDSize]byte, scheme uint64) (frame.VerifiedRequest, sealedCallKeys) {
+	t.Helper()
 	if keyID == ([seal.KeyIDSize]byte{}) {
 		keyID = seal.KeyID(pub.Carried())
 	}
@@ -61,7 +68,7 @@ func (s *servingStation) sealedCall(t *testing.T, target [32]byte, procedure str
 		RequestID: id, Deadline: uint64(deadline.UnixMilli())}
 	ct := seal.Seal(kReq, [seal.NonceSize]byte{}, seal.RequestAAD(request), cbor.Encode(payload))
 	signed, err := frame.SignCall(frame.RequestSpec{RequestID: id, Realm: servedRealm, Procedure: procedure, Target: target,
-		Deadline: request.Deadline, Sealed: &frame.Sealed{KeyID: keyID, KemCt: kemCt, Ct: ct}}, s.caller)
+		Deadline: request.Deadline, Sealed: &frame.Sealed{Scheme: scheme, KeyID: keyID, KemCt: kemCt, Ct: ct}}, s.caller)
 	if err != nil {
 		t.Fatalf("SignCall: %v", err)
 	}
@@ -258,6 +265,15 @@ func TestWhatDoesNotOpenIsRefusedInTheClear(t *testing.T) {
 	reply, err := frame.VerifyReply(ps.nextOther(t), request, profile.PQPure)
 	if err != nil || reply.Code != codeSealedRefused || reply.Detail == nil || *reply.Detail != "this node opens no sealed payload" {
 		t.Errorf("a node without a keyring: %+v, %v", reply, err)
+	}
+
+	// A scheme this node does not know is refused in the clear as
+	// sealed_refused, naming its current key, never as a malformed frame
+	// (WIRE_1_0.md section 7).
+	scheme2, _ := s.sealedCallScheme(t, link.NodeID(), servedProcedure, cbor.Text("x"), deadline, ring.Current().PublicKey(), [8]byte{}, 2)
+	reply, err = frame.VerifyReply(s.nextOther(t), scheme2, profile.PQPure)
+	if err != nil || reply.Sealed != nil || reply.Code != codeSealedRefused || reply.Detail == nil || *reply.Detail != current {
+		t.Errorf("a sealed CALL of scheme 2: %+v, %v, want sealed_refused naming the current key", reply, err)
 	}
 
 	late, _ := s.sealedCall(t, link.NodeID(), servedProcedure, cbor.Text("x"), time.Now().Add(-6*time.Minute),

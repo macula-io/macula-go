@@ -15,14 +15,24 @@ import (
 // seq, so it carries neither. A frame carries Sealed in place of its clear
 // field, never beside it. This package opens nothing: package seal does.
 type Sealed struct {
-	KeyID [8]byte
-	KemCt []byte
-	Nonce []byte
-	Ct    []byte
+	// Scheme is the seal scheme the map names: SealedScheme when zero on a
+	// build, and as read on a received frame, where another one is read but
+	// never opened (WIRE_1_0.md section 7).
+	Scheme uint64
+	KeyID  [8]byte
+	KemCt  []byte
+	Nonce  []byte
+	Ct     []byte
 }
 
-// SealedScheme is the only scheme a sealed map may name.
+// SealedScheme is the seal scheme this library seals and opens, scheme 1.
 const SealedScheme = 1
+
+// KnownScheme reports whether s names the scheme this library opens: scheme 1,
+// or none set, as on a build.
+func (s Sealed) KnownScheme() bool {
+	return s.Scheme == 0 || s.Scheme == SealedScheme
+}
 
 // ErrSealedShape is a sealed payload built with another shape than its frame's:
 // a request's without a kem_ct of a profile's size or with a nonce, a reply's
@@ -51,8 +61,12 @@ const (
 
 // value is the sealed map as it travels.
 func (s Sealed) value() cbor.Value {
+	scheme := s.Scheme
+	if scheme == 0 {
+		scheme = SealedScheme
+	}
 	entries := []cbor.MapEntry{
-		uintEntry("scheme", SealedScheme),
+		uintEntry("scheme", scheme),
 		bytesEntry("key_id", s.KeyID[:]),
 		bytesEntry("ct", s.Ct),
 	}
@@ -93,18 +107,18 @@ var sealedTable = map[string]fieldRule{
 	"ct":     anyBytes,
 }
 
-// readSealed reads a sealed map as a verifier reads it, opening nothing:
-// scheme 1, a key id and a ciphertext, and the shape its frame's context
-// requires. Any other map, or a key the table cannot name, is not one.
+// readSealed reads a sealed map as a verifier reads it, opening nothing: a
+// scheme, a key id and a ciphertext, and for scheme 1 the shape its frame's
+// context requires. Another scheme is read with its layout unjudged, to be
+// refused when opened (sealed_refused, WIRE_1_0.md section 7). Any other map,
+// or a key the table cannot name, is not one.
 func readSealed(v cbor.Value, context sealedContext) (Sealed, bool) {
 	fields, ok := readFields(v, sealedTable)
 	if !ok || !hasFields(fields, "scheme", "key_id", "ct") {
 		return Sealed{}, false
 	}
-	if scheme, _ := fields["scheme"].AsInt64(); scheme != SealedScheme {
-		return Sealed{}, false
-	}
-	var s Sealed
+	scheme, _ := fields["scheme"].AsInt64()
+	s := Sealed{Scheme: uint64(scheme)}
 	fixedBytes(s.KeyID[:], fields["key_id"])
 	ct, _ := fields["ct"].AsBytes()
 	s.Ct = bytes.Clone(ct)
@@ -116,7 +130,7 @@ func readSealed(v cbor.Value, context sealedContext) (Sealed, bool) {
 		b, _ := nonce.AsBytes()
 		s.Nonce = bytes.Clone(b)
 	}
-	return s, s.shaped(context)
+	return s, !s.KnownScheme() || s.shaped(context)
 }
 
 // sealedRule is a field rule for a sealed map in context.

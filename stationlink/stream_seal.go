@@ -117,9 +117,9 @@ func (ss *streamSeal) sealed(fields frame.StreamFields, seq uint64) (frame.Strea
 // code and message opened; one that does not open, or opens to nothing its
 // type holds, is an error.
 func (ss *streamSeal) opened(v frame.VerifiedStreamFrame) (frame.VerifiedStreamFrame, error) {
-	if v.Sealed.KeyID != ss.keyID {
+	if v.Sealed.KeyID != ss.keyID || !v.Sealed.KnownScheme() {
 		// As macula_stream's opened/5: a frame naming another key than the
-		// stream's is not opened.
+		// stream's, or a scheme this node does not open, is not opened.
 		return v, errNotOpened
 	}
 	var nonce [seal.NonceSize]byte

@@ -45,8 +45,6 @@ func TestASealedMapIsShapedForItsFrame(t *testing.T) {
 		{"a provider stream frame's without a nonce", with(), sealedProviderStream, false},
 		{"a caller stream frame's", with(), sealedCallerStream, true},
 		{"a caller stream frame's with a nonce", with(bytesEntry("nonce", nonce)), sealedCallerStream, false},
-		{"scheme 2", sealedMap(uintEntry("scheme", 2), bytesEntry("key_id", make([]byte, 8)), bytesEntry("ct", []byte("c")),
-			bytesEntry("nonce", nonce)), sealedReply, false},
 		{"a key id of 7 bytes", sealedMap(uintEntry("scheme", 1), bytesEntry("key_id", make([]byte, 7)), bytesEntry("ct", []byte("c")),
 			bytesEntry("nonce", nonce)), sealedReply, false},
 		{"no ct", sealedMap(uintEntry("scheme", 1), bytesEntry("key_id", make([]byte, 8)), bytesEntry("nonce", nonce)), sealedReply, false},
@@ -55,6 +53,15 @@ func TestASealedMapIsShapedForItsFrame(t *testing.T) {
 	} {
 		if _, ok := readSealed(c.v, c.context); ok != c.ok {
 			t.Errorf("%s: read %v, want %v", c.name, ok, c.ok)
+		}
+	}
+	// A scheme this library does not know is read, its layout unjudged, so a
+	// recipient refuses it as sealed_refused rather than the frame as
+	// malformed (WIRE_1_0.md section 7).
+	for _, context := range []sealedContext{sealedRequest, sealedReply, sealedCallerStream} {
+		s, ok := readSealed(sealedMap(uintEntry("scheme", 2), bytesEntry("key_id", make([]byte, 8)), bytesEntry("ct", []byte("c"))), context)
+		if !ok || s.Scheme != 2 {
+			t.Errorf("scheme 2 in context %d: (%+v, %v), want it read as scheme 2", context, s, ok)
 		}
 	}
 }
