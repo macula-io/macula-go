@@ -110,36 +110,6 @@ func TestAReplyFromAnotherKeyIsIgnored(t *testing.T) {
 	}
 }
 
-// With a station that answers its _macula.ping probes the link stays up; when
-// the station stops answering, two missed probes end it.
-func TestLivenessProbesKeepOrEndTheLink(t *testing.T) {
-	restoreEvery, restoreWait := livenessEvery, livenessTimeout
-	livenessEvery, livenessTimeout = 100*time.Millisecond, 100*time.Millisecond
-	t.Cleanup(func() { livenessEvery, livenessTimeout = restoreEvery, restoreWait })
-	link, s := linkWithStation(t, profile.PQPure)
-	answering := make(chan bool, 1)
-	answering <- true
-	s.answerCalls(func(r frame.VerifiedRequest) (cbor.Value, bool) {
-		on := <-answering
-		answering <- on
-		if !on || r.Procedure != "_macula.ping" || r.Realm != ([32]byte{}) {
-			return cbor.Value{}, false
-		}
-		reply, err := frame.SignResult(r, cbor.Text("pong"), nil, s.key)
-		return reply, err == nil
-	})
-	select {
-	case <-link.Done():
-		t.Fatalf("the link ended while the station answered: %v", link.Err())
-	case <-time.After(600 * time.Millisecond):
-	}
-	<-answering
-	answering <- false
-	if err := waitDone(t, link); !errors.Is(err, ErrLivenessLost) {
-		t.Errorf("the link ended with %v, want ErrLivenessLost", err)
-	}
-}
-
 // A relay error whose code this library does not know is refused by name,
 // enum_unknown, and counted so; it never ends the link (WIRE_1_0.md section
 // 3.4). The call stays pending and times out.

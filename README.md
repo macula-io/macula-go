@@ -53,17 +53,21 @@ On the wire:
   RSA-PSS-4096 (`pq_hybrid`, the fleet's profile; LAMPS
   `id-MLDSA87-RSA4096-PSS-SHA512`), whose node_id solves the admission
   puzzle.
+- **Wire 1.0:** macula-go speaks wire 1.0 (macula `docs/design/WIRE_1_0.md`,
+  `frame.WireVersion`, and `macula_wire_version()` in the C library), and runs
+  macula's wire 1.0 conformance vectors in every `go test`. A station before
+  wire 1.0 does not accept it.
 - **Frames:** requests, replies, publications and records are signed
-  objects. On a handshake v5 link (macula 13.2.0) the connection is
-  authenticated once, by hybrid proofs bound to its TLS session, and no control
-  frame carries a neighbour signature; on a v4 link, to a station before 13.2.0,
-  every control frame in `pq_hybrid` is neighbour-signed.
+  objects. The connection is authenticated once, by hybrid proofs bound to its
+  TLS session (handshake version 5, proof V3), and no control frame carries a
+  signature of its own. An unknown frame type, extension or enum value never
+  costs a link.
 
 ## Features
 
 | Primitive | Caller | Provider | Notes |
 |---|---|---|---|
-| Handshake v5, and v4 (OPENER, CHALLENGE, CONNECT, HELLO, STATUS) | ✅ | — | `stationlink.Dial`, the station pinned by node_id: v5 bound to the TLS exporter, v4 once after a station refuses v5; a station seen on v5 that answers v4 is refused (`ErrV5DowngradeRefused`, `ForgetV5Peer`); `HandshakeCounters`. Checked live against macula 13.2.0's station in `pq_pure` and `pq_hybrid` |
+| Handshake, wire 1.0 (OPENER, CHALLENGE, CONNECT, HELLO, STATUS) | ✅ | — | `stationlink.Dial`, the station pinned by node_id: version 5 alone, negotiated ranges, bound to the TLS exporter; a downgrade or a version below this process's floor for the station is refused; `HandshakeCounters`. Held to macula's wire 1.0 transcripts |
 | Deterministic CBOR codec and decoding rule | ✅ | ✅ | Hand-rolled, see [Codec](#the-cbor-codec-is-hand-rolled-on-purpose) |
 | Unary RPC (signed CALL, RESULT, ERROR) | ✅ | ✅ | `pool.Call` by direct dial; `pool.Serve` answers with `handler_error`, `temporary_relay_failure` or `unknown_next_peer` |
 | Request admission | — | ✅ | Deadline window, each request run once, a copy answered from the stored reply, bounded as macula bounds it |
@@ -273,7 +277,7 @@ DHT. It is public, so the SDKs built on macula-go (such as @macula-io/ts)
 test against the same station.
 
 Checks against a compiled macula, in both directions (key bindings, the LAMPS
-composite, the handshake, neighbour signatures), and against a live station
+composite, the live handshake), and against a live station
 (`golivelink`), live in [`scripts/interop/`](scripts/interop) (see its README).
 They need macula built with its NIFs and OTP 28, or a running station, so they
 are not part of `go test ./...` or CI.

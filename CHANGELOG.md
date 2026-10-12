@@ -62,6 +62,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `enum_unknown`. `frame.ReadPerHopEnum` reads any per-hop enum.
 - `handshake.RefusalProfileUnsupported` (`profile_unsupported`) is a refusal
   code the client knows.
+- **The handshake is wire 1.0's: version 5 alone** (WIRE_1_0.md section 4,
+  macula#98). Version 4, proof V1/V2, the v4 fallback and neighbour-signed
+  control frames are gone (`ErrV5DowngradeRefused`, `ForgetV5Peer`,
+  `handshake.Version5`, `frame.SignNeighbour`/`VerifyNeighbour`,
+  `frame.VerifySessionFrame` removed). The opener carries the client's
+  `versions` and `profiles`; `handshake.ReadOpener` negotiates and refuses at
+  once with a HELLO naming the station's ranges; the challenge repeats them and
+  CONNECT repeats the client's, with the chosen `profile`. The client proof is
+  V3, over SHA-384 of the CONNECT tbs, so every CONNECT field (capabilities,
+  ranges, `member_endorsement`) is covered. New refusals:
+  `ErrDowngradeDetected`, `ErrNegotiationMismatch`, `ErrVersionBelowFloor`,
+  `ErrProfileUnsupported`. `handshake.ReadChallenge` checks a challenge without
+  signing. stationlink keeps a floor per station for the run and never
+  completes below it; `HandshakeCounters` reports `connections`,
+  `downgrade_detected` and `version_below_floor` beside the session proof
+  refusals. Control frames read through their tables (`frame.ReadControl`). The
+  handshake is held to macula's wire 1.0 transcripts in every `go test`, which
+  replace `handshake/erlang_interop_test.go` and the neighbour fixtures.
 - **Records are wire 1.0 records** (WIRE_1_0.md section 5, macula#100). Every
   tbs carries `schema` (1) and `lifetime_class`, a row of the frozen table
   (5 minutes, 30 minutes, 6 hours, 48 hours, 7 days, 30 days): a procedure

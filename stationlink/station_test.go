@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/mldsa"
 	"crypto/rand"
-	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -27,11 +26,9 @@ import (
 
 // testStation is an in-process macula station for one client connection: a
 // QUIC listener with a self-signed ML-DSA-87 leaf on macula-pqc's groups,
-// macula-go's station side of the handshake, and after HELLO the control stream
-// the test drives by hand. startTestStation's is a pre-v5 station: it answers a
-// v5 CONNECT with unsupported_version, as a station before macula 13.2.0 does,
-// and keeps accepting until one handshake completes, so a client's v4 fallback
-// reaches it. startTestStationV5's also answers v5.
+// macula-go's station side of the wire 1.0 handshake, and after HELLO the
+// control stream the test drives by hand. It keeps accepting until one
+// handshake completes.
 type testStation struct {
 	t       *testing.T
 	profile profile.Profile
@@ -44,18 +41,15 @@ type testStation struct {
 
 	// refuse makes the HELLO a refusal with this code.
 	refuse handshake.RefusalCode
-	// v5 answers handshake v5 too, with the connection's exporter and the
-	// station's identity key.
-	v5 bool
 
-	mu         sync.Mutex
-	client     handshake.Client
-	refused    int // handshakes refused before one completed
-	connection [48]byte
-	stream     *quic.Stream
-	writer     *frameWriter
-	received   chan []byte
-	accepted   chan struct{}
+	mu       sync.Mutex
+	floor    handshake.Floor // the station's handshake floor per client, nil for none
+	client   handshake.Client
+	refused  int // handshakes refused before one completed
+	stream   *quic.Stream
+	writer   *frameWriter
+	received chan []byte
+	accepted chan struct{}
 }
 
 var stationKeys sync.Map // profile -> *identity.NodeKey, shared: an RSA-4096 half takes seconds
@@ -75,17 +69,17 @@ func sharedIdentityKey(t *testing.T, p profile.Profile, name string) *identity.N
 
 func startTestStation(t *testing.T, p profile.Profile, refuse handshake.RefusalCode) *testStation {
 	t.Helper()
-	return startStation(t, p, "station", false, refuse)
+	return startStation(t, p, "station", refuse)
 }
 
-// startTestStationV5 is a station that answers v5, with an identity of its own
-// under keyName: a client that completed v5 with a node_id refuses it on v4.
-func startTestStationV5(t *testing.T, p profile.Profile, keyName string) *testStation {
+// startTestStationAs is a station with an identity of its own under keyName,
+// so this process's handshake floor for it is its own too.
+func startTestStationAs(t *testing.T, p profile.Profile, keyName string) *testStation {
 	t.Helper()
-	return startStation(t, p, keyName, true, "")
+	return startStation(t, p, keyName, "")
 }
 
-func startStation(t *testing.T, p profile.Profile, keyName string, v5 bool, refuse handshake.RefusalCode) *testStation {
+func startStation(t *testing.T, p profile.Profile, keyName string, refuse handshake.RefusalCode) *testStation {
 	t.Helper()
 	key := sharedIdentityKey(t, p, keyName)
 	tlsKey, err := mldsa.GenerateKey(mldsa.MLDSA87())
@@ -125,7 +119,7 @@ func startStation(t *testing.T, p profile.Profile, keyName string, v5 bool, refu
 	host, portText, _ := net.SplitHostPort(listener.Addr().String())
 	port, _ := strconv.Atoi(portText)
 	s := &testStation{t: t, profile: p, key: key, nodeID: nodeID, leaf: leaf, binding: binding,
-		host: host, port: uint16(port), refuse: refuse, v5: v5,
+		host: host, port: uint16(port), refuse: refuse,
 		received: make(chan []byte, 64), accepted: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
@@ -166,7 +160,15 @@ func (s *testStation) handshaken(ctx context.Context, conn *quic.Conn) bool {
 	}
 	reader, writer := frameReader{r: stream}, &frameWriter{w: stream}
 	opener, err := reader.read(HandshakeFrameBytes)
-	if err != nil || handshake.ReadOpener(opener) != nil {
+	if err != nil {
+		return false
+	}
+	ranges := handshake.Supported(s.profile)
+	negotiated, refusal, err := handshake.ReadOpener(opener, ranges)
+	if err != nil {
+		if refusal != nil {
+			_ = writer.write(refusal, HandshakeFrameBytes)
+		}
 		return false
 	}
 	now := time.Now().UnixMilli()
@@ -176,7 +178,7 @@ func (s *testStation) handshaken(ctx context.Context, conn *quic.Conn) bool {
 		return false
 	}
 	challenge, err := handshake.Challenge(handshake.StationMaterial{
-		Profile: s.profile, IdentityKey: s.key.PublicKey(), TLSBinding: s.binding, TLSStatus: status})
+		Profile: s.profile, IdentityKey: s.key.PublicKey(), TLSBinding: s.binding, TLSStatus: status}, negotiated, ranges)
 	if err != nil {
 		s.t.Errorf("station: challenge: %v", err)
 		return false
@@ -188,14 +190,15 @@ func (s *testStation) handshaken(ctx context.Context, conn *quic.Conn) bool {
 	if err != nil {
 		return false
 	}
+	state := conn.ConnectionState().TLS
+	s.mu.Lock()
+	floor := s.floor
+	s.mu.Unlock()
 	session := handshake.StationSession{
-		Profile: s.profile, Challenge: challenge, Leaf: s.leaf, PuzzleDifficulty: identity.PuzzleDifficulty,
-		PuzzleMode: handshake.PuzzleModeEnforce, Capabilities: 1, NowMs: time.Now().UnixMilli()}
-	if s.v5 {
-		state := conn.ConnectionState().TLS
-		session.Export = state.ExportKeyingMaterial
-		session.SignSessionProof = func(_ [32]byte, message []byte) ([]byte, error) { return s.key.Sign(message) }
-	}
+		Profile: s.profile, Negotiated: negotiated, Challenge: challenge, Leaf: s.leaf,
+		PuzzleDifficulty: identity.PuzzleDifficulty, PuzzleMode: handshake.PuzzleModeEnforce, Capabilities: 1,
+		NowMs: time.Now().UnixMilli(), Export: state.ExportKeyingMaterial, Floor: floor,
+		SignSessionProof: func(_ [32]byte, message []byte) ([]byte, error) { return s.key.Sign(message) }}
 	client, hello, err := handshake.AcceptConnect(connect, session)
 	if s.refuse != "" {
 		hello = refusedHello(s.refuse)
@@ -207,7 +210,7 @@ func (s *testStation) handshaken(ctx context.Context, conn *quic.Conn) bool {
 		return false
 	}
 	s.mu.Lock()
-	s.client, s.connection, s.stream, s.writer = client, sha512.Sum384(challenge), stream, writer
+	s.client, s.stream, s.writer = client, stream, writer
 	s.mu.Unlock()
 	close(s.accepted)
 	for {
@@ -227,7 +230,7 @@ func refusedHello(code handshake.RefusalCode) []byte {
 		{Key: cbor.Text("frame_type"), Val: cbor.Text("hello")},
 		{Key: cbor.Text("accepted"), Val: cbor.Int(0)},
 		{Key: cbor.Text("refusal_code"), Val: cbor.Text(string(code))},
-		{Key: cbor.Text("capabilities"), Val: cbor.Uint64(1)},
+		{Key: cbor.Text("capabilities"), Val: cbor.Uint64(0)},
 	}))
 }
 

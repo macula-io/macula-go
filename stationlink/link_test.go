@@ -173,8 +173,7 @@ func TestALapsedStationStatusEndsTheLink(t *testing.T) {
 	}
 }
 
-// Close sends a GOODBYE, neighbour-signed at seq 0 in pq_hybrid and plain in
-// pq_pure, and ends the link.
+// Close sends a GOODBYE, which reads through its table, and ends the link.
 func TestCloseSendsAGoodbye(t *testing.T) {
 	for _, p := range profiles {
 		t.Run(string(p), func(t *testing.T) {
@@ -188,8 +187,7 @@ func TestCloseSendsAGoodbye(t *testing.T) {
 			if err := link.Close("client_stop"); err != nil {
 				t.Fatalf("Close: %v", err)
 			}
-			opened, err := frame.VerifyNeighbour(decodeFrame(t, s.next()), frame.NeighbourPeer{
-				Profile: p, PeerKey: s.client.IdentityKey, Connection: s.connection, Seq: 0})
+			opened, err := frame.ReadControl(decodeFrame(t, s.next()))
 			if err != nil {
 				t.Fatalf("the GOODBYE: %v", err)
 			}
@@ -201,10 +199,16 @@ func TestCloseSendsAGoodbye(t *testing.T) {
 	}
 }
 
-// A station's GOODBYE, neighbour-signed at seq 0, ends the link with its
-// reason; one at the wrong seq ends it as malformed.
+// A station's GOODBYE ends the link with its reason; one carrying a field its
+// table does not have, a neighbour signature among them, ends it as malformed.
 func TestAStationGoodbyeEndsTheLink(t *testing.T) {
-	for _, seq := range []uint64{0, 1} {
+	goodbye, err := frame.GoodbyeFrame("normal", nil)
+	if err != nil {
+		t.Fatalf("GoodbyeFrame: %v", err)
+	}
+	entries, _ := goodbye.AsMap()
+	signed := cbor.Map(append(entries, cbor.MapEntry{Key: cbor.Text("neighbour"), Val: cbor.Map(nil)}))
+	for name, v := range map[string]cbor.Value{"plain": goodbye, "neighbour-signed": signed} {
 		s := startTestStation(t, profile.PQHybrid, "")
 		c := newClient(t, profile.PQHybrid)
 		link, err := dial(t, s, c)
@@ -212,25 +216,17 @@ func TestAStationGoodbyeEndsTheLink(t *testing.T) {
 			t.Fatalf("Dial: %v", err)
 		}
 		s.waitAccepted()
-		goodbye, err := frame.GoodbyeFrame("normal", nil)
-		if err != nil {
-			t.Fatalf("GoodbyeFrame: %v", err)
-		}
-		signed, err := frame.SignNeighbour(goodbye, s.key, frame.NeighbourLink{Connection: s.connection, Seq: seq})
-		if err != nil {
-			t.Fatalf("SignNeighbour: %v", err)
-		}
-		s.send(cbor.Encode(signed))
+		s.send(cbor.Encode(v))
 		err = waitDone(t, link)
 		var bye *GoodbyeError
-		switch seq {
-		case 0:
+		switch name {
+		case "plain":
 			if !errors.As(err, &bye) || bye.Reason != "normal" {
-				t.Errorf("seq 0: the link ended with %v, want the station's goodbye", err)
+				t.Errorf("%s: the link ended with %v, want the station's goodbye", name, err)
 			}
 		default:
 			if !errors.Is(err, frame.ErrMalformedFrame) {
-				t.Errorf("seq %d: the link ended with %v, want ErrMalformedFrame", seq, err)
+				t.Errorf("%s: the link ended with %v, want ErrMalformedFrame", name, err)
 			}
 		}
 	}

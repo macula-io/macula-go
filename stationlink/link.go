@@ -1,17 +1,14 @@
 // Package stationlink is a client's link to one macula station, as macula's
 // macula_station_link is: a QUIC connection dialed to the station its target
-// names, one bidirectional control stream, the connection handshake on it (v5,
-// or v4 once after a station refuses v5), then status statements both ways and
-// every frame of the session.
+// names, one bidirectional control stream, the wire 1.0 connection handshake on
+// it (version 5, macula docs/design/WIRE_1_0.md section 4), then status
+// statements both ways and every frame of the session.
 //
 // After HELLO the link sends its own status statement at every reissue of the
 // client's statement issuer, and ends when the station's statement is
 // statusGrace past its expiry or the station's TLS binding reaches its
-// not_after. On a v5 link no frame carries a neighbour signature: the session
-// proofs authenticated the station once, and a neighbour-signed frame ends the
-// link. On a v4 link, in pq_hybrid, every control frame is neighbour-signed
-// with a sequence number per direction, from 0 after HELLO; a frame out of
-// sequence ends the link.
+// not_after. No frame carries a neighbour signature: the session proofs
+// authenticated the station once, and QUIC's AEAD authenticates every frame.
 package stationlink
 
 import (
@@ -60,9 +57,6 @@ var (
 	// ErrInvalidConfig is a Config Dial cannot use: no identity key, no
 	// issuer, or a key of another profile than the target's.
 	ErrInvalidConfig = errors.New("stationlink: the link configuration is not usable")
-	// ErrV5DowngradeRefused is a station this process completed handshake v5
-	// with that now answers v4: refused, not retried, until ForgetV5Peer.
-	ErrV5DowngradeRefused = errors.New("stationlink: a station seen on handshake v5 answered v4")
 )
 
 // GoodbyeError is a station that ended the link with a GOODBYE.
@@ -115,13 +109,9 @@ type Link struct {
 	key        *identity.NodeKey
 	station    handshake.Station
 	stationCap uint64
-	connection [48]byte
-	version    int
-	pongs      chan [16]byte // v5 liveness answers, for probe
+	pongs      chan [16]byte // liveness answers, for probe
 
-	sendMu  sync.Mutex // orders a neighbour signature's seq with its write
-	sendSeq uint64
-	recvSeq uint64
+	sendMu sync.Mutex // orders the link's own control frames
 
 	mu           sync.Mutex
 	statusTimer  *time.Timer
@@ -145,13 +135,10 @@ type Link struct {
 	endOnce      sync.Once
 }
 
-// Dial dials cfg.Target, runs the handshake as a client, and returns the link
-// once the station's HELLO accepts it. It dials with version 5 unless the
-// station refused v5 in the last 10 minutes; a station never seen on v5 that
-// refuses v5 with unsupported_version is dialled once more, on a new
-// connection, with v4. A station seen on v5 that answers v4 is
-// ErrV5DowngradeRefused. Each handshake is bounded by HandshakeTimeout within
-// ctx.
+// Dial dials cfg.Target, runs the wire 1.0 handshake as a client, and returns
+// the link once the station's HELLO accepts it. The handshake is version 5
+// alone, never completes below the version this process last completed with
+// the station (its floor), and is bounded by HandshakeTimeout within ctx.
 func Dial(ctx context.Context, cfg Config) (*Link, error) {
 	if cfg.IdentityKey == nil || cfg.Issuer == nil || cfg.IdentityKey.Profile() != cfg.Target.Profile ||
 		(cfg.Keyring != nil && cfg.Keyring.Profile() != cfg.Target.Profile) || (cfg.KEMAdvertise && cfg.Keyring == nil) {
@@ -162,28 +149,13 @@ func Dial(ctx context.Context, cfg Config) (*Link, error) {
 			return nil, errors.Join(ErrInvalidConfig, err)
 		}
 	}
-	nodeID := cfg.Target.ExpectedNodeID
-	version := versions.dialVersion(nodeID, time.Now())
-	link, err := dialOnce(ctx, cfg, version)
-	var refused *handshake.RefusedError
-	if version != handshake.Version5 || !errors.As(err, &refused) || refused.Code != handshake.RefusalUnsupportedVersion {
-		return link, err
-	}
-	if !versions.unsupportedVersion(nodeID, time.Now()) {
-		return nil, ErrV5DowngradeRefused
-	}
-	return dialOnce(ctx, cfg, handshake.Version)
-}
-
-// dialOnce is one QUIC connection and one handshake in version.
-func dialOnce(ctx context.Context, cfg Config, version int) (*Link, error) {
 	ctx, cancel := context.WithTimeout(ctx, HandshakeTimeout)
 	defer cancel()
 	dialed, err := transport.DialTarget(ctx, cfg.Target)
 	if err != nil {
 		return nil, err
 	}
-	link, err := handshaken(ctx, dialed, cfg, version)
+	link, err := handshaken(ctx, dialed, cfg)
 	if err != nil {
 		countRefusal(err)
 		_ = dialed.Conn.CloseWithError(0, "handshake failed")
@@ -195,18 +167,18 @@ func dialOnce(ctx context.Context, cfg Config, version int) (*Link, error) {
 // countRefusal counts the handshake refusals HandshakeCounters reports.
 func countRefusal(err error) {
 	for name, known := range map[string]error{
-		"v4_hello_to_v5_connect": handshake.ErrV4HelloToV5Connect, "session_proof_invalid": handshake.ErrSessionProofInvalid,
-		"session_proof_missing": handshake.ErrSessionProofMissing, "exporter_unavailable": handshake.ErrExporterUnavailable,
+		"downgrade_detected": handshake.ErrDowngradeDetected, "version_below_floor": handshake.ErrVersionBelowFloor,
+		"session_proof_invalid": handshake.ErrSessionProofInvalid, "session_proof_missing": handshake.ErrSessionProofMissing,
+		"exporter_unavailable": handshake.ErrExporterUnavailable,
 	} {
 		if errors.Is(err, known) {
-			versions.count(name)
+			floors.count(name)
 		}
 	}
 }
 
-// handshaken runs the client's side of the handshake, in version, on a new
-// control stream.
-func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config, version int) (*Link, error) {
+// handshaken runs the client's side of the handshake on a new control stream.
+func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link, error) {
 	stream, err := dialed.Conn.OpenStreamSync(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("stationlink: open the control stream: %w", err)
@@ -215,7 +187,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config, versio
 		_ = stream.SetReadDeadline(deadline)
 	}
 	reader, writer := frameReader{r: stream}, &frameWriter{w: stream}
-	if err := writer.write(handshake.Opener(), HandshakeFrameBytes); err != nil {
+	if err := writer.write(handshake.Opener(handshake.Supported(cfg.Target.Profile)), HandshakeFrameBytes); err != nil {
 		return nil, fmt.Errorf("stationlink: send OPENER: %w", err)
 	}
 	challenge, err := reader.read(HandshakeFrameBytes)
@@ -230,7 +202,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config, versio
 		Profile: cfg.Target.Profile, ExpectedNodeID: cfg.Target.ExpectedNodeID, Leaf: dialed.Leaf,
 		IdentityKey: cfg.IdentityKey.PublicKey(), ConnectKey: material.Key, ConnectBinding: material.Binding,
 		ConnectStatus: material.Status, NowMs: time.Now().UnixMilli(), MemberEndorsement: cfg.MemberEndorsement,
-		Version: version, Export: exporterOf(dialed.Conn),
+		Floor: floors.of, Export: exporterOf(dialed.Conn),
 	})
 	if err != nil {
 		return nil, err
@@ -273,25 +245,19 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config, versio
 	}
 	link := &Link{
 		conn: dialed.Conn, stream: stream, writer: writer, profile: cfg.Target.Profile, key: cfg.IdentityKey,
-		station: station, stationCap: capabilities, connection: sha512.Sum384(challenge),
-		version: station.Version, pongs: make(chan [16]byte, 1),
+		station: station, stationCap: capabilities,
+		pongs:       make(chan [16]byte, 1),
 		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, pending: map[[16]byte]*pendingCall{},
 		subs: map[topicKey][]*Subscription{}, dedup: dedup, self: self, seq: seq,
 		served: map[servedKey]*Served{}, streams: map[*Stream]struct{}{}, openWait: streamOpenWait, admission: admission, share: share,
 		keyring: cfg.Keyring, kemAdvertise: cfg.KEMAdvertise,
 		done: make(chan struct{}),
 	}
-	if err := versions.completed(station.NodeID, link); err != nil {
-		unsubscribe()
-		return nil, err
-	}
-	// Under the link's lock, and only for a link a v5 completion has not already
-	// ended since it was registered: end reads the timers under the same lock.
+	floors.completed(station.NodeID, station.Version)
+	// Under the link's lock: end reads the timers under the same lock.
 	link.mu.Lock()
-	if link.err == nil {
-		link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })
-		link.bindingTimer = time.AfterFunc(untilMs(station.BindingNotAfter, 0), func() { link.end(ErrBindingExpired) })
-	}
+	link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })
+	link.bindingTimer = time.AfterFunc(untilMs(station.BindingNotAfter, 0), func() { link.end(ErrBindingExpired) })
 	link.mu.Unlock()
 	go link.sendStatements(statements)
 	go link.read(reader)
@@ -310,8 +276,9 @@ func exporterOf(conn *quic.Conn) handshake.Exporter {
 	return state.ExportKeyingMaterial
 }
 
-// HandshakeVersion is the handshake version the link completed: 4 or 5.
-func (l *Link) HandshakeVersion() int { return l.version }
+// HandshakeVersion is the handshake version the link completed: 5, wire
+// 1.0's only one.
+func (l *Link) HandshakeVersion() int64 { return l.station.Version }
 
 // untilMs is the time from now until atMs plus grace, never negative.
 func untilMs(atMs int64, grace time.Duration) time.Duration {
@@ -375,26 +342,17 @@ func (l *Link) Close(reason string) error {
 	return sendErr
 }
 
-// sendControl sends a version-2 frame on the control stream: on v5 as it is,
-// on v4 neighbour-signed with the next seq when the profile signs its type.
+// sendControl sends a frame on the control stream, as it is: the session
+// proofs authenticated the station once, and QUIC's AEAD authenticates every
+// frame after HELLO.
 func (l *Link) sendControl(v cbor.Value) error {
 	l.sendMu.Lock()
 	defer l.sendMu.Unlock()
-	if l.version == handshake.Version5 {
-		return l.writer.write(cbor.Encode(v), MaxFrameBytes)
-	}
-	signed, err := frame.SignNeighbour(v, l.key, frame.NeighbourLink{Connection: l.connection, Seq: l.sendSeq})
-	if err != nil {
-		return err
-	}
-	if frame.NeighbourSigned(l.profile, frameTypeOf(v)) {
-		l.sendSeq++
-	}
-	return l.writer.write(cbor.Encode(signed), MaxFrameBytes)
+	return l.writer.write(cbor.Encode(v), MaxFrameBytes)
 }
 
 // sendStatements sends each statement the issuer reissues as a STATUS, until
-// the link ends. A STATUS carries no neighbour signature and takes no seq.
+// the link ends.
 func (l *Link) sendStatements(statements <-chan identity.SignedTBS) {
 	for {
 		select {
@@ -464,9 +422,8 @@ func readControl(payload []byte) (frame.Envelope, bool, error) {
 // does not read ends the link as malformed_frame, one carrying an unknown
 // critical extension is dropped and counted as extension_unsupported, and one
 // of a type the link does not act on is dropped and counted, each with the
-// link left up. Then a STATUS renews the station's statement, every other
-// frame is opened from its neighbour signature at the next seq, and a GOODBYE
-// ends the link.
+// link left up. Then a STATUS renews the station's statement, a liveness frame
+// is answered or handed to the probe, and a GOODBYE ends the link.
 func (l *Link) received(payload []byte) error {
 	envelope, known, err := readControl(payload)
 	switch {
@@ -483,10 +440,7 @@ func (l *Link) received(payload []byte) error {
 	if frameType == "status" {
 		return l.statusRenewed(cbor.Encode(envelope.Frame))
 	}
-	opened, err := l.opened(envelope.Frame, frameType)
-	if err != nil {
-		return err
-	}
+	opened := envelope.Frame
 	if livenessType, nonce, isLiveness := frame.LivenessNonce(opened); isLiveness {
 		return l.liveness(livenessType, nonce)
 	}
@@ -498,37 +452,20 @@ func (l *Link) received(payload []byte) error {
 	case "call":
 		l.called(opened)
 	case "goodbye":
-		reason, _ := fieldOf(opened, "reason").AsText()
+		goodbye, err := frame.ReadControl(opened)
+		if err != nil {
+			return err
+		}
+		reason, _ := fieldOf(goodbye, "reason").AsText()
 		return &GoodbyeError{Reason: reason}
 	}
 	return nil
 }
 
-// opened is a received frame as the link reads it: on v5 with no neighbour
-// signature, on v4 opened from its neighbour signature at the next seq.
-func (l *Link) opened(v cbor.Value, frameType string) (cbor.Value, error) {
-	if l.version == handshake.Version5 {
-		return frame.VerifySessionFrame(v)
-	}
-	opened, err := frame.VerifyNeighbour(v, frame.NeighbourPeer{
-		Profile: l.profile, PeerKey: l.station.IdentityKey, Connection: l.connection, Seq: l.recvSeq})
-	if err != nil {
-		return cbor.Value{}, err
-	}
-	if frame.NeighbourSigned(l.profile, frameType) {
-		l.recvSeq++
-	}
-	return opened, nil
-}
-
 // liveness answers the station's liveness_ping with a liveness_pong of the same
-// nonce, and hands a liveness_pong to the probe. Neither goes further, and on a
-// v4 link neither exists.
+// nonce, and hands a liveness_pong to the probe. Neither goes further.
 func (l *Link) liveness(frameType string, nonce [16]byte) error {
-	switch {
-	case l.version != handshake.Version5:
-		return frame.ErrMalformedFrame
-	case frameType == "liveness_ping":
+	if frameType == "liveness_ping" {
 		return l.sendControl(frame.LivenessPongFrame(nonce))
 	}
 	select {
@@ -570,9 +507,6 @@ func (l *Link) end(err error) {
 		l.endServed(err)
 		l.endStreams(err)
 		_ = l.conn.CloseWithError(0, "link ended")
-		if l.version == handshake.Version {
-			versions.v4Ended(l.station.NodeID, l)
-		}
 		close(l.done)
 	})
 }

@@ -33,7 +33,7 @@ func stillUp(t *testing.T, s *testStation) {
 }
 
 func TestAFrameOfAnUnknownTypeIsCountedAndTheLinkStaysUp(t *testing.T) {
-	s := startTestStationV5(t, profile.PQPure, "unknown frame type station")
+	s := startTestStationAs(t, profile.PQPure, "unknown frame type station")
 	link, err := dial(t, s, newClient(t, profile.PQPure))
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
@@ -51,7 +51,7 @@ func TestAFrameOfAnUnknownTypeIsCountedAndTheLinkStaysUp(t *testing.T) {
 }
 
 func TestAFrameWithAnUnknownCriticalExtensionIsDroppedAndTheLinkStaysUp(t *testing.T) {
-	s := startTestStationV5(t, profile.PQPure, "critical extension station")
+	s := startTestStationAs(t, profile.PQPure, "critical extension station")
 	link, err := dial(t, s, newClient(t, profile.PQPure))
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
@@ -71,7 +71,7 @@ func TestAFrameWithAnUnknownCriticalExtensionIsDroppedAndTheLinkStaysUp(t *testi
 }
 
 func TestAFrameOfAnotherVersionEndsTheLink(t *testing.T) {
-	s := startTestStationV5(t, profile.PQPure, "version 2 frame station")
+	s := startTestStationAs(t, profile.PQPure, "version 2 frame station")
 	link, err := dial(t, s, newClient(t, profile.PQPure))
 	if err != nil {
 		t.Fatalf("Dial: %v", err)

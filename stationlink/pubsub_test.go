@@ -33,7 +33,6 @@ func eventOf(publish cbor.Value) cbor.Value {
 func (s *testStation) relay(t *testing.T, controls chan<- cbor.Value, deliver func(cbor.Value) []cbor.Value) {
 	s.waitAccepted()
 	go func() {
-		seq := uint64(0)
 		for raw := range s.received {
 			v, err := cbor.Decode(raw)
 			if err != nil {
@@ -46,13 +45,10 @@ func (s *testStation) relay(t *testing.T, controls chan<- cbor.Value, deliver fu
 				}
 				continue
 			}
-			opened, err := frame.VerifyNeighbour(v, frame.NeighbourPeer{Profile: s.profile, PeerKey: s.client.IdentityKey, Connection: s.connection, Seq: seq})
+			opened, err := frame.ReadControl(v)
 			if err != nil {
-				t.Errorf("station: a control frame that does not open: %v", err)
+				t.Errorf("station: a control frame that does not read: %v", err)
 				continue
-			}
-			if frame.NeighbourSigned(s.profile, frameType) {
-				seq++
 			}
 			controls <- opened
 		}

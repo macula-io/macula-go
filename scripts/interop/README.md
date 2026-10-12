@@ -10,20 +10,11 @@ These scripts check macula-go's post-quantum identity against a compiled macula,
 - macula writes bindings and statements of its own, and `identity/binding_interop_test.go` verifies them, including
   altered copies.
 
-- macula's `macula_handshake` accepts the CONNECT macula-go sends to a macula CHALLENGE, is handed its empty
-  `member_endorsement`, and answers a CHALLENGE macula-go made (`erlang_handshake.escript` around
-  `gohandshake`). The frames macula made go to `handshake/testdata/erlang_handshake.json`, which
-  `handshake/erlang_interop_test.go` checks in every `go test`. The same runs in handshake version 5 (macula 13.2.0):
-  macula accepts macula-go's v5 CONNECT and answers macula-go's CHALLENGE in version 5, and macula-go accepts
-  macula's v5 CONNECT and verifies the session proof in macula's v5 HELLO. A file cannot carry a TLS exporter, so both
-  stacks use one stand-in (HMAC-SHA256 keyed by the session's name over the label and the context): a proof message,
-  exporter context order or capability encoding that differs between the stacks fails there. The station's throwaway
-  key stays in the run's work file, never in the fixture.
-
-- macula's `macula_frame` verifies the control frames a client link sends (ADVERTISE, UNADVERTISE, SUBSCRIBE,
-  UNSUBSCRIBE, GOODBYE) as macula-go neighbour-signs them in `pq_hybrid` and sends them in `pq_pure`, and refuses one
-  read at the wrong seq (`goneighbour` into `erlang_neighbour.escript verify`). macula's own frames go to
-  `frame/testdata/erlang_neighbour.json` for `frame/neighbour_test.go`.
+- The handshake is held to macula's wire 1.0 transcripts: `copy_wire_1_0_vectors.sh` copies
+  `test/vectors/wire_1_0/` (macula#97), which macula generates from its own `macula_handshake`, to `testdata/wire_1_0`,
+  and `handshake/wire_1_0_handshake_vectors_test.go` replays every opener-to-HELLO transcript in every `go test`,
+  checking each verdict and the proof V3 and session proof messages byte for byte. `v5.sh` checks the same handshake
+  live, on real TLS sessions.
 
 `emit_erlang_composite.escript` writes a `pq_hybrid` composite that macula's `macula_node_keys` signed into
 `identity/testdata/lamps_mldsa87_rsa4096_pss_sha512/` (`otp_message.bin`, `otp_pk.bin`, `otp_sig.bin`), for

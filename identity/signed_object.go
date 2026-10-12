@@ -90,8 +90,8 @@ type Object struct {
 }
 
 // HeldObject is a signed object whose verifier already holds the signer's key:
-// a provider's later frames on a stream, a caller's stream frames, and a
-// neighbour signature. Its signature still covers the key's hash.
+// a provider's later frames on a stream, and a caller's stream frames. Its
+// signature still covers the key's hash.
 type HeldObject struct {
 	TBS       []byte
 	Signature []byte

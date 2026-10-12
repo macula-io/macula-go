@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/mldsa"
 	"crypto/rand"
-	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -102,14 +101,11 @@ type slot struct {
 }
 
 type conn struct {
-	nodeID     [32]byte
-	qconn      *quic.Conn
-	writer     *writer
-	client     handshake.Client
-	connection [48]byte
-	recvSeq    uint64
-	version    int
-	topics     map[routeKey]bool
+	nodeID [32]byte
+	qconn  *quic.Conn
+	writer *writer
+	client handshake.Client
+	topics map[routeKey]bool
 }
 
 var keys sync.Map // name+profile -> *identity.NodeKey: puzzle-solved keys take a while
@@ -347,7 +343,15 @@ func (s *Station) serve(ctx context.Context, qconn *quic.Conn) {
 	}
 	r, w := &reader{r: stream}, &writer{w: stream}
 	opener, err := r.read(handshakeFrameBytes)
-	if err != nil || handshake.ReadOpener(opener) != nil {
+	if err != nil {
+		return
+	}
+	ranges := handshake.Supported(s.Profile)
+	negotiated, refusal, err := handshake.ReadOpener(opener, ranges)
+	if err != nil {
+		if refusal != nil {
+			_ = w.write(refusal, handshakeFrameBytes)
+		}
 		return
 	}
 	now := time.Now().UnixMilli()
@@ -356,7 +360,7 @@ func (s *Station) serve(ctx context.Context, qconn *quic.Conn) {
 		return
 	}
 	challenge, err := handshake.Challenge(handshake.StationMaterial{
-		Profile: s.Profile, IdentityKey: s.Key.PublicKey(), TLSBinding: s.binding, TLSStatus: status})
+		Profile: s.Profile, IdentityKey: s.Key.PublicKey(), TLSBinding: s.binding, TLSStatus: status}, negotiated, ranges)
 	if err != nil || w.write(challenge, handshakeFrameBytes) != nil {
 		return
 	}
@@ -364,19 +368,18 @@ func (s *Station) serve(ctx context.Context, qconn *quic.Conn) {
 	if err != nil {
 		return
 	}
-	// A station of macula 13.2.0: it answers handshake v5, binding its session
-	// proof to this connection's TLS exporter, and v4.
+	// A wire 1.0 station: version 5 alone, its session proof bound to this
+	// connection's TLS exporter.
 	state := qconn.ConnectionState().TLS
 	client, hello, err := handshake.AcceptConnect(connect, handshake.StationSession{
-		Profile: s.Profile, Challenge: challenge, Leaf: s.leaf, PuzzleDifficulty: identity.PuzzleDifficulty,
+		Profile: s.Profile, Negotiated: negotiated, Challenge: challenge, Leaf: s.leaf, PuzzleDifficulty: identity.PuzzleDifficulty,
 		PuzzleMode: handshake.PuzzleModeEnforce, Capabilities: 1, NowMs: time.Now().UnixMilli(),
 		Export:           state.ExportKeyingMaterial,
 		SignSessionProof: func(_ [32]byte, message []byte) ([]byte, error) { return s.Key.Sign(message) }})
 	if w.write(hello, handshakeFrameBytes) != nil || err != nil {
 		return
 	}
-	c := &conn{nodeID: client.NodeID, qconn: qconn, writer: w, client: client, connection: sha512.Sum384(challenge),
-		version: client.Version, topics: map[routeKey]bool{}}
+	c := &conn{nodeID: client.NodeID, qconn: qconn, writer: w, client: client, topics: map[routeKey]bool{}}
 	s.mu.Lock()
 	if s.stopped {
 		s.mu.Unlock()
@@ -425,13 +428,20 @@ func (s *Station) received(c *conn, payload []byte) {
 	if frameType == "status" {
 		return
 	}
-	if livenessType, nonce, isLiveness := frame.LivenessNonce(v); isLiveness && c.version == handshake.Version5 {
+	if livenessType, nonce, isLiveness := frame.LivenessNonce(v); isLiveness {
 		if livenessType == "liveness_ping" {
 			_ = c.writer.write(cbor.Encode(frame.LivenessPongFrame(nonce)), maxFrameBytes)
 		}
 		return
 	}
-	opened, err := s.opened(c, v, frameType)
+	envelope, err := frame.ReadEnvelope(v)
+	opened := envelope.Frame
+	switch frameType {
+	case "advertise", "unadvertise", "subscribe", "unsubscribe", "goodbye":
+		if err == nil {
+			_, err = frame.ReadControl(opened)
+		}
+	}
 	if err != nil {
 		s.t.Errorf("teststation: a frame from %x that does not open: %v", c.nodeID[:4], err)
 		_ = c.qconn.CloseWithError(1, "malformed")
@@ -453,20 +463,6 @@ func (s *Station) received(c *conn, payload []byte) {
 	case "goodbye":
 		_ = c.qconn.CloseWithError(0, "goodbye")
 	}
-}
-
-// opened is a frame as the station reads it: on v5 with no neighbour signature,
-// on v4 opened from its neighbour signature at the next seq.
-func (s *Station) opened(c *conn, v cbor.Value, frameType string) (cbor.Value, error) {
-	if c.version == handshake.Version5 {
-		return frame.VerifySessionFrame(v)
-	}
-	opened, err := frame.VerifyNeighbour(v, frame.NeighbourPeer{Profile: s.Profile, PeerKey: c.client.IdentityKey,
-		Connection: c.connection, Seq: c.recvSeq})
-	if err == nil && frame.NeighbourSigned(s.Profile, frameType) {
-		c.recvSeq++
-	}
-	return opened, err
 }
 
 // called answers a station procedure itself, and routes any other CALL to the

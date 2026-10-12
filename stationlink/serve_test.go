@@ -133,17 +133,12 @@ func (s *servingStation) nextOther(t *testing.T) cbor.Value {
 	}
 }
 
-// nextControl opens the next control frame from the client at its seq.
+// nextControl reads the next control frame from the client through its table.
 func (s *servingStation) nextControl(t *testing.T) cbor.Value {
 	t.Helper()
-	v := s.nextOther(t)
-	opened, err := frame.VerifyNeighbour(v, frame.NeighbourPeer{Profile: s.profile, PeerKey: s.client.IdentityKey, Connection: s.connection, Seq: s.seq})
+	opened, err := frame.ReadControl(s.nextOther(t))
 	if err != nil {
-		t.Fatalf("a control frame that does not open: %v", err)
-	}
-	name, _ := fieldOfTest(v, "frame_type").AsText()
-	if frame.NeighbourSigned(s.profile, name) {
-		s.seq++
+		t.Fatalf("a control frame that does not read: %v", err)
 	}
 	return opened
 }
