@@ -517,33 +517,56 @@ func (s *Station) relayError(c *conn, request frame.VerifiedRequest, code string
 	_ = c.writer.write(cbor.Encode(reply), maxFrameBytes)
 }
 
-// answer serves the station's own procedures.
+// answer serves the station's own procedures. The _dht.* procedures take and
+// give the wire 1.0 forms (macula docs/design/WIRE_1_0.md section 6): exactly
+// {v 1, field} in, else malformed_args before any DHT work; {v 1, result, ...}
+// out.
 func (s *Station) answer(c *conn, request frame.VerifiedRequest) {
 	var result cbor.Value
 	switch request.Procedure {
 	case "_dht.put_record":
-		wire, _ := request.Payload.AsBytes()
-		if err := s.store(wire); err != nil {
-			s.relayError(c, request, "bad_signature")
+		value, ok := dhtArgs(request.Payload, "record")
+		wire, isBytes := value.AsBytes()
+		if !ok || !isBytes {
+			s.malformedArgs(c, request)
 			return
 		}
-		result = cbor.Text("ok")
-	case "_dht.find_record":
-		found := s.find(func(sl slot, _ []byte) bool { return sl.key == keyOf(request.Payload) })
-		if len(found) == 0 {
-			result = cbor.Text("not_found")
+		if err := s.store(wire); err != nil {
+			result = dhtRefused("signature_invalid")
 		} else {
-			result = cbor.Bytes(found[0])
+			result = dhtResult("ok")
+		}
+	case "_dht.find_record":
+		key, ok := dhtKey(request.Payload)
+		if !ok {
+			s.malformedArgs(c, request)
+			return
+		}
+		found := s.find(func(sl slot, _ []byte) bool { return sl.key == key })
+		if len(found) == 0 {
+			result = dhtResult("not_found")
+		} else {
+			result = dhtResult("record", cbor.MapEntry{Key: cbor.Text("record"), Val: cbor.Bytes(found[0])})
 		}
 	case "_dht.find_records":
-		result = list(s.find(func(sl slot, _ []byte) bool { return sl.key == keyOf(request.Payload) }))
+		key, ok := dhtKey(request.Payload)
+		if !ok {
+			s.malformedArgs(c, request)
+			return
+		}
+		result = dhtResult("records", cbor.MapEntry{Key: cbor.Text("records"),
+			Val: list(s.find(func(sl slot, _ []byte) bool { return sl.key == key }))})
 	case "_dht.find_records_by_type":
-		typeValue, _ := request.Payload.Get("type")
-		n, _ := typeValue.AsInt64()
-		result = list(s.find(func(_ slot, wire []byte) bool {
+		typeValue, ok := dhtArgs(request.Payload, "type")
+		n, isInt := typeValue.AsInt64()
+		if !ok || !isInt || n < 0 || n > 255 {
+			s.malformedArgs(c, request)
+			return
+		}
+		result = dhtResult("records", cbor.MapEntry{Key: cbor.Text("records"), Val: list(s.find(func(_ slot, wire []byte) bool {
 			verified, err := record.Verify(wire, s.Profile, time.Now().UnixMilli())
 			return err == nil && int64(verified.Record().Type) == n
-		}))
+		}))})
 	default:
 		s.relayError(c, request, "unknown_next_peer")
 		return
@@ -554,6 +577,50 @@ func (s *Station) answer(c *conn, request frame.VerifiedRequest) {
 		return
 	}
 	_ = c.writer.write(cbor.Encode(reply), maxFrameBytes)
+}
+
+// malformedArgs refuses a _dht.* call whose arguments are not its one form,
+// as a provider error malformed_args, before any DHT work.
+func (s *Station) malformedArgs(c *conn, request frame.VerifiedRequest) {
+	reply, err := frame.SignProviderError(request, "malformed_args", nil, nil, s.Key)
+	if err != nil {
+		s.t.Errorf("teststation: malformed_args: %v", err)
+		return
+	}
+	_ = c.writer.write(cbor.Encode(reply), maxFrameBytes)
+}
+
+// dhtArgs is the one field of a _dht.* argument map besides v, and whether the
+// map is exactly {v 1, field}.
+func dhtArgs(payload cbor.Value, name string) (cbor.Value, bool) {
+	entries, isMap := payload.AsMap()
+	v, _ := payload.Get("v")
+	n, isInt := v.AsInt64()
+	value, has := payload.Get(name)
+	return value, isMap && len(entries) == 2 && isInt && n == 1 && has
+}
+
+// dhtKey is a _dht.* argument map's 32-byte key.
+func dhtKey(payload cbor.Value) ([32]byte, bool) {
+	var key [32]byte
+	value, ok := dhtArgs(payload, "key")
+	b, isBytes := value.AsBytes()
+	if !ok || !isBytes || len(b) != len(key) {
+		return key, false
+	}
+	copy(key[:], b)
+	return key, true
+}
+
+func dhtResult(result string, fields ...cbor.MapEntry) cbor.Value {
+	return cbor.Map(append([]cbor.MapEntry{
+		{Key: cbor.Text("v"), Val: cbor.Int(1)},
+		{Key: cbor.Text("result"), Val: cbor.Text(result)},
+	}, fields...))
+}
+
+func dhtRefused(reason string) cbor.Value {
+	return dhtResult("refused", cbor.MapEntry{Key: cbor.Text("reason"), Val: cbor.Text(reason)})
 }
 
 func (s *Station) find(match func(slot, []byte) bool) [][]byte {

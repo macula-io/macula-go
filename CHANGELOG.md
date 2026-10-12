@@ -50,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `enum_unknown`. `frame.ReadPerHopEnum` reads any per-hop enum.
 - `handshake.RefusalProfileUnsupported` (`profile_unsupported`) is a refusal
   code the client knows.
+- **The `_dht.*` procedures take and give the wire 1.0 forms** (WIRE_1_0.md
+  section 6, macula#102): arguments `{v 1, record}`, `{v 1, key}` or
+  `{v 1, type}`; replies `{v 1, result, ...}`. A refused put is a
+  `*stationlink.RecordRefusedError` naming the custodian's reason
+  (`stationlink.ErrRecordRefused`). A reply of another `v` is
+  `stationlink.ErrReplyVersionUnsupported`, and one without exactly its
+  result's keys `stationlink.ErrMalformedReply`, which replaces
+  `ErrUnexpectedReply`. `teststation` answers in these forms and refuses other
+  arguments as `malformed_args`.
 
 ## [0.26.0] - 2026-10-09
 
