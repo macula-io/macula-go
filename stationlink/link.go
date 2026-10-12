@@ -427,25 +427,57 @@ func (l *Link) read(reader frameReader) {
 	}
 }
 
-// received handles one frame from the station. Its envelope is read under the
-// wire 1.0 rules first (frame.ReadEnvelope): one that does not decode ends the
-// link as malformed_frame, and one carrying an unknown critical extension is
-// dropped and counted as extension_unsupported, with the link left up. Then a
-// STATUS renews the station's statement, every other frame is opened from its
-// neighbour signature at the next seq, a GOODBYE ends the link, and a frame of
-// a type the link does not handle is dropped and counted.
-func (l *Link) received(payload []byte) error {
+// controlFrameTypes are the frame types a link acts on after HELLO; any
+// other is unknown to it.
+var controlFrameTypes = map[string]bool{
+	"status": true, "event": true, "result": true, "error": true, "call": true, "goodbye": true,
+	"liveness_ping": true, "liveness_pong": true,
+}
+
+// readControl reads one control frame under the wire 1.0 rules: its envelope
+// (frame.ReadEnvelope), and a liveness frame's own table. It reports whether
+// the link acts on its type; one it does not is counted as
+// wire_unknown_frame_type, its body unread. A frame refused here is
+// frame.ErrExtensionUnsupported or frame.ErrMalformedFrame.
+func readControl(payload []byte) (frame.Envelope, bool, error) {
 	v, err := cbor.Decode(payload)
 	if err != nil {
-		return fmt.Errorf("%w: %w", frame.ErrMalformedFrame, err)
+		return frame.Envelope{}, false, fmt.Errorf("%w: %w", frame.ErrMalformedFrame, err)
 	}
 	envelope, err := frame.ReadEnvelope(v)
+	if err != nil {
+		return frame.Envelope{}, false, err
+	}
+	if !controlFrameTypes[envelope.FrameType] {
+		frame.CountUnknownFrameType()
+		return envelope, false, nil
+	}
+	if envelope.FrameType == "liveness_ping" || envelope.FrameType == "liveness_pong" {
+		if _, _, isLiveness := frame.LivenessNonce(envelope.Frame); !isLiveness {
+			return frame.Envelope{}, false, fmt.Errorf("%w: %s", frame.ErrMalformedFrame, envelope.FrameType)
+		}
+	}
+	return envelope, true, nil
+}
+
+// received handles one frame from the station, read by readControl: one that
+// does not read ends the link as malformed_frame, one carrying an unknown
+// critical extension is dropped and counted as extension_unsupported, and one
+// of a type the link does not act on is dropped and counted, each with the
+// link left up. Then a STATUS renews the station's statement, every other
+// frame is opened from its neighbour signature at the next seq, and a GOODBYE
+// ends the link.
+func (l *Link) received(payload []byte) error {
+	envelope, known, err := readControl(payload)
 	switch {
 	case errors.Is(err, frame.ErrExtensionUnsupported):
 		l.count("extension_unsupported")
 		return nil
 	case err != nil:
 		return err
+	case !known:
+		l.count(envelope.FrameType)
+		return nil
 	}
 	frameType := envelope.FrameType
 	if frameType == "status" {
@@ -461,21 +493,15 @@ func (l *Link) received(payload []byte) error {
 	switch frameType {
 	case "event":
 		l.evented(opened)
-		return nil
 	case "result", "error":
 		l.replied(opened)
-		return nil
 	case "call":
 		l.called(opened)
-		return nil
 	case "goodbye":
 		reason, _ := fieldOf(opened, "reason").AsText()
 		return &GoodbyeError{Reason: reason}
-	default:
-		frame.CountUnknownFrameType()
-		l.count(frameType)
-		return nil
 	}
+	return nil
 }
 
 // opened is a received frame as the link reads it: on v5 with no neighbour

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The wire 1.0 conformance vectors run in CI** (macula#97): 
+  `scripts/interop/copy_wire_1_0_vectors.sh` copies macula's
+  `test/vectors/wire_1_0` into `testdata/wire_1_0`, pinned by the macula commit
+  in `MACULA_COMMIT`, and each package holds itself to the classes it reads
+  (envelope, enums, `_dht.*`).
+
 - `macula_library_version()` returns the macula-go release the C library was
   built from (`"v0.27.0"`), stamped from the tag by the libmacula build
   (`scripts/libmacula/build.sh`), or `"devel"` for a build that is not a
@@ -56,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `enum_unknown`. `frame.ReadPerHopEnum` reads any per-hop enum.
 - `handshake.RefusalProfileUnsupported` (`profile_unsupported`) is a refusal
   code the client knows.
+- A relay error may carry `overloaded` (macula#54), which a station signs when
+  it sheds a call; it was refused as outside the closed set.
+- A liveness frame is read through its own table: a field it does not have is
+  `malformed_frame`, as for every frame type the link acts on.
 - **The `_dht.*` procedures take and give the wire 1.0 forms** (WIRE_1_0.md
   section 6, macula#102): arguments `{v 1, record}`, `{v 1, key}` or
   `{v 1, type}`; replies `{v 1, result, ...}`. A refused put is a

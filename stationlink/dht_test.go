@@ -25,15 +25,48 @@ type dhtStation struct {
 	refuse string   // a put_record refusal reason, when set
 }
 
-// dhtArgs is a wire 1.0 _dht.* argument map's one field besides v, checked.
-func dhtArgs(t *testing.T, procedure string, payload cbor.Value, field string) cbor.Value {
-	t.Helper()
+// dhtArgFields are each _dht.* procedure's one argument besides v, with its
+// rule, as a wire 1.0 station reads them (WIRE_1_0.md section 6).
+var dhtArgFields = map[string]struct {
+	name string
+	rule func(cbor.Value) bool
+}{
+	"_dht.put_record":           {"record", isBytes},
+	"_dht.find_record":          {"key", func(v cbor.Value) bool { b, ok := v.AsBytes(); return ok && len(b) == 32 }},
+	"_dht.find_records":         {"key", func(v cbor.Value) bool { b, ok := v.AsBytes(); return ok && len(b) == 32 }},
+	"_dht.find_records_by_type": {"type", func(v cbor.Value) bool { n, ok := v.AsInt64(); return ok && n >= 0 && n <= 255 }},
+}
+
+// stationReadsArgs reads a _dht.* argument map as a wire 1.0 station does:
+// exactly {v 1, field} with text keys and the field of its rule, else false
+// (malformed_args).
+func stationReadsArgs(procedure string, payload cbor.Value) (cbor.Value, bool) {
+	want := dhtArgFields[procedure]
 	entries, isMap := payload.AsMap()
+	if !isMap || len(entries) != 2 {
+		return cbor.Value{}, false
+	}
+	for _, e := range entries {
+		if _, isText := e.Key.AsText(); !isText {
+			return cbor.Value{}, false
+		}
+	}
 	v, _ := payload.Get("v")
 	n, isInt := v.AsInt64()
-	value, has := payload.Get(field)
-	if !isMap || len(entries) != 2 || !isInt || n != 1 || !has {
-		t.Errorf("station: %s arguments %+v, want exactly {v 1, %s}", procedure, payload, field)
+	value, has := payload.Get(want.name)
+	if !isInt || n != 1 || !has || !want.rule(value) {
+		return cbor.Value{}, false
+	}
+	return value, true
+}
+
+// stationArgs is stationReadsArgs failing the test on malformed arguments: the
+// client must only send the one form.
+func stationArgs(t *testing.T, procedure string, payload cbor.Value) cbor.Value {
+	t.Helper()
+	value, ok := stationReadsArgs(procedure, payload)
+	if !ok {
+		t.Errorf("station: %s arguments %+v, want exactly its one form", procedure, payload)
 	}
 	return value
 }
@@ -53,7 +86,7 @@ func (d *dhtStation) answer(t *testing.T, s *testStation) func(frame.VerifiedReq
 		var result cbor.Value
 		switch r.Procedure {
 		case "_dht.put_record":
-			wire, _ := dhtArgs(t, r.Procedure, r.Payload, "record").AsBytes()
+			wire, _ := stationArgs(t, r.Procedure, r.Payload).AsBytes()
 			if d.refuse != "" {
 				result = dhtReply(dhtEntry("result", cbor.Text("refused")), dhtEntry("reason", cbor.Text(d.refuse)))
 				break
@@ -68,17 +101,17 @@ func (d *dhtStation) answer(t *testing.T, s *testStation) func(frame.VerifiedReq
 			d.byType[verified.Record().Type] = append(d.byType[verified.Record().Type], wire)
 			result = dhtReply(dhtEntry("result", cbor.Text("ok")))
 		case "_dht.find_record":
-			key := keyOf(dhtArgs(t, r.Procedure, r.Payload, "key"))
+			key := keyOf(stationArgs(t, r.Procedure, r.Payload))
 			if found := d.byKey[key]; len(found) > 0 {
 				result = dhtReply(dhtEntry("result", cbor.Text("record")), dhtEntry("record", cbor.Bytes(found[0])))
 			} else {
 				result = dhtReply(dhtEntry("result", cbor.Text("not_found")))
 			}
 		case "_dht.find_records":
-			key := keyOf(dhtArgs(t, r.Procedure, r.Payload, "key"))
+			key := keyOf(stationArgs(t, r.Procedure, r.Payload))
 			result = dhtReply(dhtEntry("result", cbor.Text("records")), dhtEntry("records", bytesList(append(d.byKey[key], d.extra...))))
 		case "_dht.find_records_by_type":
-			n, _ := dhtArgs(t, r.Procedure, r.Payload, "type").AsInt64()
+			n, _ := stationArgs(t, r.Procedure, r.Payload).AsInt64()
 			result = dhtReply(dhtEntry("result", cbor.Text("records")), dhtEntry("records", bytesList(append(d.byType[record.Type(n)], d.extra...))))
 		default:
 			return cbor.Value{}, false

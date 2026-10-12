@@ -87,8 +87,10 @@ var (
 )
 
 // relayCodes is the closed set of relay error codes, disjoint from every
-// provider code (D25).
-var relayCodes = []string{"unknown_next_peer"}
+// provider code (D25): unknown_next_peer, and overloaded, which a station
+// signs when it sheds a call (macula#54, sent to a peer that declares the
+// relay_overloaded capability).
+var relayCodes = []string{"unknown_next_peer", "overloaded"}
 
 // fieldRule reports whether a field's value is one its table accepts.
 type fieldRule func(cbor.Value) bool

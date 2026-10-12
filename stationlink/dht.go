@@ -123,13 +123,17 @@ func readDHTReply(procedure string, reply cbor.Value) (dhtReplyFields, error) {
 	return dhtReplyFields{result: result, fields: fields}, nil
 }
 
-// dhtCall calls a _dht.* procedure with {v 1, field value} and reads its reply.
-func (l *Link) dhtCall(ctx context.Context, procedure, field string, value cbor.Value) (dhtReplyFields, error) {
-	args := cbor.Map([]cbor.MapEntry{
+// dhtArgs is a _dht.* procedure's one argument form, {v 1, field value}.
+func dhtArgs(field string, value cbor.Value) cbor.Value {
+	return cbor.Map([]cbor.MapEntry{
 		{Key: cbor.Text("v"), Val: cbor.Int(dhtArgsVersion)},
 		{Key: cbor.Text(field), Val: value},
 	})
-	reply, err := l.Call(ctx, Call{Procedure: procedure, Payload: args})
+}
+
+// dhtCall calls a _dht.* procedure with {v 1, field value} and reads its reply.
+func (l *Link) dhtCall(ctx context.Context, procedure, field string, value cbor.Value) (dhtReplyFields, error) {
+	reply, err := l.Call(ctx, Call{Procedure: procedure, Payload: dhtArgs(field, value)})
 	if err != nil {
 		return dhtReplyFields{}, err
 	}
