@@ -36,15 +36,16 @@ type Envelope struct {
 }
 
 // envelopeRules are the envelope keys every frame type shares, other than
-// version, frame_type and ext, which ReadEnvelope reads itself. source_route
-// is judged by each frame type's own table: the signed frames carry it as
-// bytes (macula_frame), where WIRE_1_0.md section 3.1 says array (raised on
-// macula#97).
+// version, frame_type and ext, which ReadEnvelope reads itself. source_route is
+// bytes, as macula_frame carries it (WIRE_1_0.md section 3.1); its reply and
+// relay error forms, source_route_reverse and source_route_partial, are those
+// frames' own fields.
 var envelopeRules = map[string]fieldRule{
-	"frame_id":   bytesOf(16),
-	"sent_at_ms": protocolUint,
-	"realm":      bytesOf(32),
-	"call_id":    bytesOf(16),
+	"frame_id":     bytesOf(16),
+	"sent_at_ms":   protocolUint,
+	"realm":        bytesOf(32),
+	"call_id":      bytesOf(16),
+	"source_route": anyBytes,
 }
 
 // ReadEnvelope reads a received frame's envelope: version 5, a frame_type of 1
