@@ -180,7 +180,8 @@ func TestContentKeyRefusesAContentIDWithAnotherTag(t *testing.T) {
 
 // A storage key needs the fields its type's key derives from, and a tombstone's
 // needs a withdrawn type from 1 to 255. macula's slot/4 raises on these, and Go
-// refuses them.
+// refuses them. A tag a 1.0 custodian does not know is placed by its subject
+// (WIRE_1_0.md 5.3), so one without a subject is ErrSubjectMissing.
 func TestAStorageKeyNeedsTheFieldsItDerivesFrom(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -193,7 +194,7 @@ func TestAStorageKeyNeedsTheFieldsItDerivesFrom(t *testing.T) {
 		{"a content announcement with a tag 1 content id",
 			unsignedRecord(t, TypeContentAnnouncement, bytesEntry("mcid", []byte{2, 0x55})), ErrNotAContentID},
 		{"an unsigned station endpoint", must[Record](t)(NewStationEndpoint(1, StationEndpointOptions{})), ErrUnsigned},
-		{"a type macula does not define", unsignedRecord(t, 0x07), ErrMalformed},
+		{"a tag a 1.0 custodian does not know, without a subject", unsignedRecord(t, 0x07), ErrSubjectMissing},
 		{"a tombstone naming 0x100", unsignedRecord(t, TypeTombstone, uintEntry("withdrawn_type", 0x100)), ErrMalformed},
 		{"a tombstone naming no type", unsignedRecord(t, TypeTombstone), ErrMalformed},
 	} {

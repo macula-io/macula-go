@@ -100,6 +100,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile, nowMs)` runs the checks a station stores by, under the same
   allowlist, and returns the slot, placing a type with no
   rule of its own at H(type | signer key id | subject).
+- **A tombstone of a tag a 1.0 custodian does not know** (WIRE_1_0.md 5.1 and
+  5.3, with #98) is stored content-blind: bounded by the row it names plus 10
+  minutes (no row-mismatch check), placed at H(withdrawn type | signer key id |
+  subject) from its payload's `subject` (`ErrSubjectMissing` without one), and
+  refused by a reader as `ErrTypeUnknown`. `StorageKey` places a record of such
+  a tag by its subject too.
 - **STATUS is an envelope frame after HELLO** (WIRE_1_0.md 3.1, with #98):
   `handshake.ReadStatus` reads one carrying `frame_id` and `sent_at_ms` (and
   `ext`, which the envelope reads first) and refuses `realm`, `call_id` and

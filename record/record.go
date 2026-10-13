@@ -384,7 +384,10 @@ func custodianChecks(wire []byte, p profile.Profile, nowMs int64) (Record, error
 func custodianSlot(r Record) ([32]byte, error) {
 	if hasOwnSlot(int64(r.Type)) {
 		key, err := StorageKey(r)
-		if err != nil {
+		switch {
+		case errors.Is(err, ErrSubjectMissing):
+			return [32]byte{}, err
+		case err != nil:
 			return [32]byte{}, fmt.Errorf("%w: %w", ErrMalformed, err)
 		}
 		return key, nil
@@ -661,7 +664,7 @@ func tombstoneMarginMs(t Type) int64 {
 // stations and org directory 6 hours; procedure delegation, app record and
 // station authorization 30 minutes; realm member endorsement 30 days; a domain type 7 days; the other
 // built-in types it knows 30 days; and a tombstone the row of the type it
-// withdraws.
+// withdraws, unknown when that type is.
 func typeLifetimeClass(t int64, payload cbor.Value) (uint8, bool) {
 	switch {
 	case t == int64(TypeNodeRecord), t == int64(TypeContentAnnouncement):
@@ -676,13 +679,15 @@ func typeLifetimeClass(t int64, payload cbor.Value) (uint8, bool) {
 		t >= int64(TypeFoundationSeedList) && t <= int64(TypeFoundationT3Attestation):
 		return lifetimeClass30Days, true
 	case t == int64(TypeTombstone):
-		withdrawnValue, _ := payload.Get("withdrawn_type")
+		withdrawnValue, has := payload.Get("withdrawn_type")
 		withdrawn, isInt := withdrawnValue.AsInt64()
-		if !isInt || withdrawn == int64(TypeTombstone) {
+		if !has || !isInt || withdrawn == int64(TypeTombstone) {
 			return lifetimeClass30Days, true
 		}
-		row, _ := typeLifetimeClass(withdrawn, cbor.Map(nil))
-		return row, true
+		// A tombstone of a tag this library does not know (a post-1.0 tag) is
+		// of an unknown type too: a custodian bounds it by the row it names
+		// and a reader refuses it.
+		return typeLifetimeClass(withdrawn, cbor.Map(nil))
 	case t >= int64(DomainTypeMin) && t <= 0xFF:
 		return lifetimeClass7Days, true
 	}

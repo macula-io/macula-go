@@ -106,6 +106,13 @@ func slotKey(t int64, payload cbor.Value, subject []byte, hasSubject bool, r Rec
 		key = derived(t, fields.signer(), lengthPrefixed(subject))
 	case t >= int64(DomainTypeMin) && t <= 0xFF:
 		key = derived(t, fields.signer())
+	case t >= 1 && t < int64(DomainTypeMin) && !hasOwnSlot(t) && hasSubject:
+		// A tag this library does not know, as a tombstone names it
+		// (WIRE_1_0.md 5.3): the record it withdraws is at H(type | signer key
+		// id | subject).
+		key = derived(t, fields.signer(), lengthPrefixed(subject))
+	case t >= 1 && t < int64(DomainTypeMin) && !hasOwnSlot(t):
+		return [32]byte{}, fmt.Errorf("%w: type %#02x", ErrSubjectMissing, t)
 	default:
 		return [32]byte{}, fmt.Errorf("%w: no storage key for type %#02x", ErrMalformed, t)
 	}
