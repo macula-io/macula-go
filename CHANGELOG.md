@@ -104,6 +104,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detail omits the key instead of carrying null, and a control frame whose
   `detail` or SUBSCRIBE `options` is null is `frame.ErrMalformedFrame`
   (`detail` is bytes of at most 256, `options` a map).
+- **REGISTER_ACK** (WIRE_1_0.md 3.5, macula#12): `frame.ReadRegisterAck`
+  reads the station's answer to an ADVERTISE, UNADVERTISE, SUBSCRIBE or
+  UNSUBSCRIBE; an unknown `kind` is ignored and an unknown `reason` reads as
+  `refused`, each counted as `wire_enum_fallback`. A link reads them (no longer
+  counting them as an unknown frame type) and counts refusals by reason,
+  `Link.RegisterRefusals`.
 - **An advertisement names 1 to 8 serving stations** (WIRE_1_0.md 5.3, K > 1,
   macula-station#55). **Breaking:** `record.NewProcedureAdvertisement` takes
   `servingStations [][32]byte`, sorts them ascending and refuses none, more

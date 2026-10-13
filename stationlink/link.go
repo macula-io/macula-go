@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"strconv"
 	"sync"
@@ -118,6 +119,7 @@ type Link struct {
 	bindingTimer *time.Timer
 	unsubscribe  func()
 	unrouted     map[string]uint64
+	refusals     map[string]uint64
 	pending      map[[16]byte]*pendingCall
 	subs         map[topicKey][]*Subscription
 	dedup        *EventDedup
@@ -250,7 +252,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		conn: dialed.Conn, stream: stream, writer: writer, profile: cfg.Target.Profile, key: cfg.IdentityKey,
 		station: station, stationCap: capabilities,
 		pongs:       make(chan [16]byte, 1),
-		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, pending: map[[16]byte]*pendingCall{},
+		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, refusals: map[string]uint64{}, pending: map[[16]byte]*pendingCall{},
 		subs: map[topicKey][]*Subscription{}, dedup: dedup, self: self, seq: seq,
 		served: map[servedKey]*Served{}, streams: map[*Stream]struct{}{}, openWait: streamOpenWait, admission: admission, share: share,
 		keyring: cfg.Keyring, kemAdvertise: cfg.KEMAdvertise,
@@ -391,7 +393,7 @@ func (l *Link) read(reader frameReader) {
 // other is unknown to it.
 var controlFrameTypes = map[string]bool{
 	"status": true, "event": true, "result": true, "error": true, "call": true, "goodbye": true,
-	"liveness_ping": true, "liveness_pong": true,
+	"liveness_ping": true, "liveness_pong": true, "register_ack": true,
 }
 
 // readControl reads one control frame under the wire 1.0 rules: its envelope
@@ -425,7 +427,8 @@ func readControl(payload []byte) (frame.Envelope, bool, error) {
 // critical extension is dropped and counted as extension_unsupported, and one
 // of a type the link does not act on is dropped and counted, each with the
 // link left up. Then a STATUS renews the station's statement, a liveness frame
-// is answered or handed to the probe, and a GOODBYE ends the link.
+// is answered or handed to the probe, a REGISTER_ACK's refusal is counted, and
+// a GOODBYE ends the link.
 func (l *Link) received(payload []byte) error {
 	envelope, known, err := readControl(payload)
 	switch {
@@ -453,6 +456,8 @@ func (l *Link) received(payload []byte) error {
 		l.replied(opened)
 	case "call":
 		l.called(opened)
+	case "register_ack":
+		return l.registerAcked(opened)
 	case "goodbye":
 		goodbye, err := frame.ReadControl(opened)
 		if err != nil {
@@ -462,6 +467,29 @@ func (l *Link) received(payload []byte) error {
 		return &GoodbyeError{Reason: reason}
 	}
 	return nil
+}
+
+// registerAcked reads the station's REGISTER_ACK: a refusal is counted by its
+// reason, an ack of a kind this library does not know is ignored, and a
+// malformed one ends the link.
+func (l *Link) registerAcked(v cbor.Value) error {
+	ack, known, err := frame.ReadRegisterAck(v)
+	if err != nil || !known || ack.Accepted {
+		return err
+	}
+	l.mu.Lock()
+	l.refusals[ack.Reason]++
+	l.mu.Unlock()
+	return nil
+}
+
+// RegisterRefusals counts the station's refusals of this link's ADVERTISE,
+// UNADVERTISE, SUBSCRIBE and UNSUBSCRIBE (REGISTER_ACK, WIRE_1_0.md section
+// 3.5), by reason: a reason this library does not know counts as refused.
+func (l *Link) RegisterRefusals() map[string]uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return maps.Clone(l.refusals)
 }
 
 // liveness answers the station's liveness_ping with a liveness_pong of the same

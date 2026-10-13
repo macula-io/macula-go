@@ -2,6 +2,7 @@ package stationlink
 
 import (
 	"errors"
+	"maps"
 	"testing"
 
 	"github.com/macula-io/macula-go/cbor"
@@ -82,5 +83,37 @@ func TestAFrameOfAnotherVersionEndsTheLink(t *testing.T) {
 	})))
 	if err := waitDone(t, link); !errors.Is(err, frame.ErrMalformedFrame) {
 		t.Errorf("a version 2 frame ended the link with %v, want ErrMalformedFrame", err)
+	}
+}
+
+// A REGISTER_ACK (WIRE_1_0.md section 3.5) is a frame the link reads: a
+// refusal is counted by its reason, an unknown reason as refused, an ack of an
+// unknown kind ignored, and the link stays up through each.
+func TestARefusingRegisterAckIsCountedByReasonAndTheLinkStaysUp(t *testing.T) {
+	s := startTestStationAs(t, profile.PQPure, "register ack station")
+	link, err := dial(t, s, newClient(t, profile.PQPure))
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	s.waitAccepted()
+	ack := func(kind, reason string) []byte {
+		return controlFrame("register_ack",
+			cbor.MapEntry{Key: cbor.Text("kind"), Val: cbor.Text(kind)},
+			cbor.MapEntry{Key: cbor.Text("realm"), Val: cbor.Bytes(make([]byte, 32))},
+			cbor.MapEntry{Key: cbor.Text("name"), Val: cbor.Text("acme/echo_v1")},
+			cbor.MapEntry{Key: cbor.Text("record_version"), Val: cbor.Bytes(make([]byte, 16))},
+			cbor.MapEntry{Key: cbor.Text("accepted"), Val: cbor.Int(0)},
+			cbor.MapEntry{Key: cbor.Text("reason"), Val: cbor.Text(reason)})
+	}
+	s.send(ack("advertise", "too_many_providers"))
+	s.send(ack("advertise", "a_reason_from_wire_1_1"))
+	s.send(ack("a_kind_from_wire_1_1", "too_many_providers"))
+	stillUp(t, s)
+	want := map[string]uint64{"too_many_providers": 1, "refused": 1}
+	if got := link.RegisterRefusals(); !maps.Equal(got, want) {
+		t.Errorf("register refusals %v, want %v", got, want)
+	}
+	if err := link.Err(); err != nil {
+		t.Errorf("the link ended: %v", err)
 	}
 }

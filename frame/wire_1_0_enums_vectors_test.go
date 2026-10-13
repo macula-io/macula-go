@@ -99,11 +99,22 @@ func TestTheWireOneEnumVectors(t *testing.T) {
 					t.Fatalf("OpenStream: %v", serr)
 				}
 				_, _, err = VerifyCallerStream(v, state, p)
+			case "kind", "reason":
+				var ack RegisterAck
+				var known bool
+				ack, known, err = ReadRegisterAck(v)
+				switch {
+				case err != nil:
+				case c.Outcome() == "ignore" && known:
+					t.Errorf("an ack of kind %q was acted on, want it ignored", ack.Kind)
+				case c.Outcome() != "ignore" && ack.Reason != c.ExpectText("value"):
+					t.Errorf("reason = %q, want %q", ack.Reason, c.ExpectText("value"))
+				}
 			default:
 				t.Fatalf("no reader for field %q", field)
 			}
 			switch c.Outcome() {
-			case "accept", "fallback":
+			case "accept", "fallback", "ignore":
 				if err != nil {
 					t.Fatalf("%v, want it read", err)
 				}
