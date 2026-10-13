@@ -103,7 +103,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Absent is omitted** (WIRE_1_0.md section 3.1): a GOODBYE without a
   detail omits the key instead of carrying null, and a control frame whose
   `detail` or SUBSCRIBE `options` is null is `frame.ErrMalformedFrame`
-  (`detail` is bytes of at most 256, `options` a map).
+  (`detail` is bytes of at most 256, `options` a map). Null at any depth in a
+  protocol field is refused the same way; only a frame's `payload` (and an ext
+  entry's `value`) is application data and may hold null.
 - **Every wire 1.0 vector class runs**: `tbs.json` (this library's canonical
   encoding and signing inputs, byte for byte, and the signatures over them) and
   `frames.json` (one frame per type through the envelope rules and, where this

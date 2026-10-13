@@ -178,12 +178,27 @@ func readFields(v cbor.Value, table map[string]fieldRule) (map[string]cbor.Value
 		name, isText := e.Key.AsText()
 		rule, known := table[name]
 		_, seen := fields[name]
-		if !isText || !known || seen || !rule(e.Val) {
+		if !isText || !known || seen || !rule(e.Val) || (name != "payload" && holdsNull(e.Val)) {
 			return nil, false
 		}
 		fields[name] = e.Val
 	}
 	return fields, true
+}
+
+// holdsNull reports whether v is CBOR null or holds one at any depth. Absent
+// is omitted (WIRE_1_0.md section 3.1): null is no value of a protocol field,
+// so only a frame's payload, application data, may hold it (and an ext
+// entry's value, which ReadEnvelope reads before any table).
+func holdsNull(v cbor.Value) bool {
+	if v.Kind() == cbor.KindNull {
+		return true
+	}
+	if items, isList := v.AsList(); isList {
+		return slices.ContainsFunc(items, holdsNull)
+	}
+	entries, _ := v.AsMap()
+	return slices.ContainsFunc(entries, func(e cbor.MapEntry) bool { return holdsNull(e.Key) || holdsNull(e.Val) })
 }
 
 // hasFields reports whether fields holds every one of names.

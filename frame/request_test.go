@@ -829,3 +829,20 @@ func TestABuildItsReceiverWouldRefuseReturnsAnError(t *testing.T) {
 	_, err = SignRelayError(resultRelay, keys.station)
 	wantRefusal(t, "a relay error of frame type result", err, ErrOutOfRange)
 }
+
+// A payload is application data (WIRE_1_0.md section 3.1): null, top-level or
+// nested, is a value it may hold, though no protocol field may.
+func TestAPayloadMayHoldNullAtAnyDepth(t *testing.T) {
+	keys := requestKeysFor(t)
+	for name, payload := range map[string]cbor.Value{
+		"a null payload": cbor.Null(),
+		"a null inside the payload": cbor.Map([]cbor.MapEntry{
+			{Key: cbor.Text("city"), Val: cbor.List([]cbor.Value{cbor.Null()})}}),
+	} {
+		spec := callSpec(keys)
+		spec.Payload = payload
+		if _, err := VerifyRequest(onWire(t, must[cbor.Value](t)(SignCall(spec, keys.caller))), profile.PQPure); err != nil {
+			t.Errorf("%s: %v, want it verified", name, err)
+		}
+	}
+}

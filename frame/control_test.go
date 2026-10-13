@@ -55,6 +55,8 @@ func TestControlFramesReadBackThroughTheirTables(t *testing.T) {
 		"a null detail":             cbor.Map(append(entries, valueEntry("detail", cbor.Null()))),
 		"a 257-byte detail":         cbor.Map(append(entries, valueEntry("detail", cbor.Bytes(make([]byte, 257))))),
 		"a null options":            frameWith(subscribe, "options", cbor.Null()),
+		"a null inside options": frameWith(subscribe, "options", cbor.Map([]cbor.MapEntry{
+			{Key: cbor.Text("depth"), Val: cbor.List([]cbor.Value{cbor.Null()})}})),
 	} {
 		if _, err := ReadControl(v); !errors.Is(err, ErrMalformedFrame) {
 			t.Errorf("%s: %v, want ErrMalformedFrame", name, err)
