@@ -104,6 +104,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detail omits the key instead of carrying null, and a control frame whose
   `detail` or SUBSCRIBE `options` is null is `frame.ErrMalformedFrame`
   (`detail` is bytes of at most 256, `options` a map).
+- **Every wire 1.0 vector class runs**: `tbs.json` (this library's canonical
+  encoding and signing inputs, byte for byte, and the signatures over them) and
+  `frames.json` (one frame per type through the envelope rules and, where this
+  library reads the type, its own reader) join the verify, custodian,
+  check_order, handshake, enums, envelope and `_dht.*` runners. Pinned at macula
+  main ef1cfe68.
 - **`wire_ext_refused`** (WIRE_1_0.md 3.2 and 8): a control frame dropped for
   an unknown critical extension counts each such name once
   (`frame.WireCounts.ExtRefused`, `frame.CountExtRefused`); the refusal is a
