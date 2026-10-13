@@ -11,7 +11,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 )
 
-// The wire 1.0 enum vectors (macula test/vectors/wire_1_0/enums.json,
+// The wire 1.0 enum vectors (macula priv/vectors/wire_1_0/enums.json,
 // macula#99) for the frames a client reads: an EVENT's delivered_via per hop,
 // and STREAM_OPEN mode, relay error code, STREAM_DATA encoding and STREAM_END
 // role inside a signed tbs. HELLO refusal_code runs in package handshake.

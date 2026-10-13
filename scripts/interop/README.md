@@ -11,7 +11,7 @@ These scripts check macula-go's post-quantum identity against a compiled macula,
   altered copies.
 
 - The handshake is held to macula's wire 1.0 transcripts: `copy_wire_1_0_vectors.sh` copies
-  `test/vectors/wire_1_0/` (macula#97), which macula generates from its own `macula_handshake`, to `testdata/wire_1_0`,
+  `priv/vectors/wire_1_0/` (macula#97), which macula generates from its own `macula_handshake`, to `testdata/wire_1_0`,
   and `handshake/wire_1_0_handshake_vectors_test.go` replays every opener-to-HELLO transcript in every `go test`,
   checking each verdict and the proof V3 and session proof messages byte for byte. `v5.sh` checks the same handshake
   live, on real TLS sessions.

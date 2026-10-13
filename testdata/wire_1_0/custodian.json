@@ -11,7 +11,10 @@
         "object_of": "record.node_record.ok.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -25,7 +28,10 @@
         "object_of": "record.station_endpoint.ok.reader.pq_pure",
         "signer": "station_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -40,7 +46,10 @@
         "object_of": "record.domain_type.with_subject.ok.reader.pq_pure",
         "signer": "org"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -55,7 +64,10 @@
         "object_of": "record.unknown_builtin_tag.with_subject.stored.reader.pq_pure",
         "signer": "org"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -73,7 +85,10 @@
         "object_of": "record.unknown_builtin_tag.no_subject.refused.reader.pq_pure",
         "signer": "org"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -87,7 +102,10 @@
         "object_of": "record.reserved_successor_tag.stored.reader.pq_pure",
         "signer": "org"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -104,7 +122,10 @@
         "object_of": "record.schema_missing.refused.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -121,7 +142,10 @@
         "object_of": "record.schema_zero.refused.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -135,7 +159,10 @@
         "object_of": "record.schema_unknown.stored.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -152,7 +179,10 @@
         "object_of": "record.lifetime_class_missing.refused.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -169,7 +199,10 @@
         "object_of": "record.lifetime_class_unknown.refused.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -183,7 +216,10 @@
         "object_of": "record.lifetime_class_wrong_row.stored.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -200,7 +236,10 @@
         "object_of": "record.lifetime_too_long.refused.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -214,7 +253,10 @@
         "object_of": "record.lifetime_at_class_bound.ok.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -231,7 +273,10 @@
         "object_of": "record.lifetime_reversed.refused.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -248,7 +293,10 @@
         "object_of": "record.not_yet_valid.refused.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -265,7 +313,10 @@
         "object_of": "record.expired.refused.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -282,7 +333,10 @@
         "object_of": "record.extra_tbs_key.refused.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -296,7 +350,10 @@
         "object_of": "record.ext_noncritical_unknown.ignored.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -310,7 +367,10 @@
         "object_of": "record.ext_critical_unknown.refused_by_reader.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -327,7 +387,10 @@
         "object_of": "record.signature_invalid.refused.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -344,7 +407,10 @@
         "object_of": "record.alg_unregistered.refused.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -358,7 +424,520 @@
         "object_of": "record.content_id_tag_unknown.stored.reader.pq_pure",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.node_record.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.node_record.ok.reader.pq_pure",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.node_record.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.node_record.other_row.stored.reader.pq_pure",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_directory.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_directory.ok.reader.pq_pure",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_directory.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_directory.other_row.stored.reader.pq_pure",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_stations.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_stations.ok.reader.pq_pure",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_stations.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_stations.other_row.stored.reader.pq_pure",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_member_endorsement.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_member_endorsement.ok.reader.pq_pure",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_member_endorsement.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_member_endorsement.other_row.stored.reader.pq_pure",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.procedure_advertisement.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.procedure_advertisement.ok.reader.pq_pure",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.procedure_advertisement.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.procedure_advertisement.other_row.stored.reader.pq_pure",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.tombstone.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.tombstone.ok.reader.pq_pure",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.tombstone.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.tombstone.other_row.stored.reader.pq_pure",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_seed_list.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_seed_list.ok.reader.pq_pure",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_seed_list.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_seed_list.other_row.stored.reader.pq_pure",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_parameter.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_parameter.ok.reader.pq_pure",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_parameter.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_parameter.other_row.stored.reader.pq_pure",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_realm_trust_list.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_realm_trust_list.ok.reader.pq_pure",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_realm_trust_list.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_realm_trust_list.other_row.stored.reader.pq_pure",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_t3_attestation.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_t3_attestation.ok.reader.pq_pure",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_t3_attestation.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_t3_attestation.other_row.stored.reader.pq_pure",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.content_announcement.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.content_announcement.ok.reader.pq_pure",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.content_announcement.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.content_announcement.other_row.stored.reader.pq_pure",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.station_endpoint.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.station_endpoint.ok.reader.pq_pure",
+        "signer": "station_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.station_endpoint.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.station_endpoint.other_row.stored.reader.pq_pure",
+        "signer": "station_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.org_directory.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.org_directory.ok.reader.pq_pure",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.org_directory.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.org_directory.other_row.stored.reader.pq_pure",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.procedure_delegation.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.procedure_delegation.ok.reader.pq_pure",
+        "signer": "org"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.procedure_delegation.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.procedure_delegation.other_row.stored.reader.pq_pure",
+        "signer": "org"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.app_record.ok.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.app_record.ok.reader.pq_pure",
+        "signer": "org"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_pure"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.app_record.other_row.stored.custodian.pq_pure",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.app_record.other_row.stored.reader.pq_pure",
+        "signer": "org"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_pure"
     },
     {
@@ -372,7 +951,10 @@
         "object_of": "record.node_record.ok.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -386,7 +968,10 @@
         "object_of": "record.station_endpoint.ok.reader.pq_hybrid",
         "signer": "station_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -401,7 +986,10 @@
         "object_of": "record.domain_type.with_subject.ok.reader.pq_hybrid",
         "signer": "org"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -416,7 +1004,10 @@
         "object_of": "record.unknown_builtin_tag.with_subject.stored.reader.pq_hybrid",
         "signer": "org"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -434,7 +1025,10 @@
         "object_of": "record.unknown_builtin_tag.no_subject.refused.reader.pq_hybrid",
         "signer": "org"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -448,7 +1042,10 @@
         "object_of": "record.reserved_successor_tag.stored.reader.pq_hybrid",
         "signer": "org"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -465,7 +1062,10 @@
         "object_of": "record.schema_missing.refused.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -482,7 +1082,10 @@
         "object_of": "record.schema_zero.refused.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -496,7 +1099,10 @@
         "object_of": "record.schema_unknown.stored.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -513,7 +1119,10 @@
         "object_of": "record.lifetime_class_missing.refused.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -530,7 +1139,10 @@
         "object_of": "record.lifetime_class_unknown.refused.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -544,7 +1156,10 @@
         "object_of": "record.lifetime_class_wrong_row.stored.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -561,7 +1176,10 @@
         "object_of": "record.lifetime_too_long.refused.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -575,7 +1193,10 @@
         "object_of": "record.lifetime_at_class_bound.ok.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -592,7 +1213,10 @@
         "object_of": "record.lifetime_reversed.refused.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -609,7 +1233,10 @@
         "object_of": "record.not_yet_valid.refused.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -626,7 +1253,10 @@
         "object_of": "record.expired.refused.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -643,7 +1273,10 @@
         "object_of": "record.extra_tbs_key.refused.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -657,7 +1290,10 @@
         "object_of": "record.ext_noncritical_unknown.ignored.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -671,7 +1307,10 @@
         "object_of": "record.ext_critical_unknown.refused_by_reader.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -688,7 +1327,10 @@
         "object_of": "record.signature_invalid.refused.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -705,7 +1347,10 @@
         "object_of": "record.alg_unregistered.refused.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     },
     {
@@ -719,7 +1364,520 @@
         "object_of": "record.content_id_tag_unknown.stored.reader.pq_hybrid",
         "signer": "client_identity"
       },
-      "lands_with": "macula#100",
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.node_record.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.node_record.ok.reader.pq_hybrid",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.node_record.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.node_record.other_row.stored.reader.pq_hybrid",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_directory.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_directory.ok.reader.pq_hybrid",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_directory.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_directory.other_row.stored.reader.pq_hybrid",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_stations.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_stations.ok.reader.pq_hybrid",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_stations.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_stations.other_row.stored.reader.pq_hybrid",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_member_endorsement.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_member_endorsement.ok.reader.pq_hybrid",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.realm_member_endorsement.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.realm_member_endorsement.other_row.stored.reader.pq_hybrid",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.procedure_advertisement.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.procedure_advertisement.ok.reader.pq_hybrid",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.procedure_advertisement.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.procedure_advertisement.other_row.stored.reader.pq_hybrid",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.tombstone.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.tombstone.ok.reader.pq_hybrid",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.tombstone.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.tombstone.other_row.stored.reader.pq_hybrid",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_seed_list.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_seed_list.ok.reader.pq_hybrid",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_seed_list.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_seed_list.other_row.stored.reader.pq_hybrid",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_parameter.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_parameter.ok.reader.pq_hybrid",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_parameter.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_parameter.other_row.stored.reader.pq_hybrid",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_realm_trust_list.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_realm_trust_list.ok.reader.pq_hybrid",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_realm_trust_list.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_realm_trust_list.other_row.stored.reader.pq_hybrid",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_t3_attestation.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_t3_attestation.ok.reader.pq_hybrid",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.foundation_t3_attestation.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.foundation_t3_attestation.other_row.stored.reader.pq_hybrid",
+        "signer": "foundation"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.content_announcement.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.content_announcement.ok.reader.pq_hybrid",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.content_announcement.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.content_announcement.other_row.stored.reader.pq_hybrid",
+        "signer": "client_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.station_endpoint.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.station_endpoint.ok.reader.pq_hybrid",
+        "signer": "station_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.station_endpoint.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.station_endpoint.other_row.stored.reader.pq_hybrid",
+        "signer": "station_identity"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.org_directory.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.org_directory.ok.reader.pq_hybrid",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.org_directory.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.org_directory.other_row.stored.reader.pq_hybrid",
+        "signer": "realm"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.procedure_delegation.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.procedure_delegation.ok.reader.pq_hybrid",
+        "signer": "org"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.procedure_delegation.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.procedure_delegation.other_row.stored.reader.pq_hybrid",
+        "signer": "org"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.app_record.ok.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.app_record.ok.reader.pq_hybrid",
+        "signer": "org"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
+      "profile": "pq_hybrid"
+    },
+    {
+      "covers": [
+        "D4"
+      ],
+      "expect": { "outcome": "store" },
+      "id": "record.type.app_record.other_row.stored.custodian.pq_hybrid",
+      "input": {
+        "now_ms": 1791800001000,
+        "object_of": "record.type.app_record.other_row.stored.reader.pq_hybrid",
+        "signer": "org"
+      },
+      "lands_with": [
+        "macula#100",
+        "macula-station#94"
+      ],
       "profile": "pq_hybrid"
     }
   ],

@@ -10,7 +10,7 @@ import (
 	"github.com/macula-io/macula-go/internal/wire10vectors"
 )
 
-// The wire 1.0 envelope vectors (macula test/vectors/wire_1_0/envelope.json,
+// The wire 1.0 envelope vectors (macula priv/vectors/wire_1_0/envelope.json,
 // macula#99): what a link does with each frame after HELLO, on the control
 // stream or a dedicated stream, and with a length header alone.
 

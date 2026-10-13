@@ -1,5 +1,5 @@
 // Package wire10vectors reads macula's wire 1.0 conformance vectors
-// (test/vectors/wire_1_0, macula#97), which scripts/interop/copy_wire_1_0_vectors.sh
+// (priv/vectors/wire_1_0, macula#97), which scripts/interop/copy_wire_1_0_vectors.sh
 // copies into testdata/wire_1_0 pinned by macula commit, for the runners each
 // package holds itself to: every stack runs the same cases and must agree on
 // every verdict (macula docs/design/WIRE_1_0.md section 9).
@@ -27,7 +27,7 @@ type Case struct {
 	ID        string         `json:"id"`
 	Profile   string         `json:"profile"`
 	Covers    []string       `json:"covers"`
-	LandsWith string         `json:"lands_with"`
+	LandsWith []string       `json:"lands_with"`
 	Input     map[string]any `json:"input"`
 	Expect    map[string]any `json:"expect"`
 }

@@ -9,7 +9,7 @@ import (
 )
 
 // The wire 1.0 enum vectors for HELLO's refusal_code (macula
-// test/vectors/wire_1_0/enums.json): a per-hop enum, so a code this library
+// priv/vectors/wire_1_0/enums.json): a per-hop enum, so a code this library
 // does not know reads as not_accepted, counted.
 func TestTheWireOneRefusalCodeVectors(t *testing.T) {
 	f, err := wire10vectors.Load("enums")

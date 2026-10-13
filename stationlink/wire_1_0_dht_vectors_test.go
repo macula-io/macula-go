@@ -11,7 +11,7 @@ import (
 	"github.com/macula-io/macula-go/record"
 )
 
-// The wire 1.0 _dht.* vectors (macula test/vectors/wire_1_0/dht_procedures.json,
+// The wire 1.0 _dht.* vectors (macula priv/vectors/wire_1_0/dht_procedures.json,
 // macula#102). Replies are read as this client reads them; an argument form a
 // station accepts must be exactly what this client sends for the same field; one
 // a station refuses as malformed_args is checked against the station reading

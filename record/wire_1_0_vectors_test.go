@@ -11,7 +11,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 )
 
-// The wire 1.0 record vectors (macula test/vectors/wire_1_0, macula#100): a
+// The wire 1.0 record vectors (macula priv/vectors/wire_1_0, macula#100): a
 // reader (Verify) runs verify.json and check_order.json's reader cases; a
 // custodian (CheckAsCustodian, the checks a station stores by) runs
 // custodian.json and check_order.json's custodian cases. Each refusal is the
