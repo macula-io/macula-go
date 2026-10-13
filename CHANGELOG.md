@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The wire 1.0 conformance vectors run in CI** (macula#97):
   `scripts/interop/copy_wire_1_0_vectors.sh` copies macula's
-  `test/vectors/wire_1_0` into `testdata/wire_1_0`, pinned by the macula commit
+  `priv/vectors/wire_1_0` into `testdata/wire_1_0`, pinned by the macula commit
   in `MACULA_COMMIT`, and each package holds itself to the classes it reads
   (envelope, enums, `_dht.*`).
 
@@ -71,7 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once with a HELLO naming the station's ranges; the challenge repeats them and
   CONNECT repeats the client's, with the chosen `profile`. The client proof is
   V3, over SHA-384 of the CONNECT tbs, so every CONNECT field (capabilities,
-  ranges, `member_endorsement`) is covered. New refusals:
+  ranges, `member_endorsement`) is covered. The station's session proof is V2
+  (`MACULA-PQ-SESSION-PROOF-V2`): it signs SHA-384 of the HELLO tbs in place of
+  a fixed 64-bit capabilities field, so the station's capability set can grow
+  as the client's does. New refusals:
   `ErrDowngradeDetected`, `ErrNegotiationMismatch`, `ErrVersionBelowFloor`,
   `ErrProfileUnsupported`. `handshake.ReadChallenge` checks a challenge without
   signing. stationlink keeps a floor per station for the run and never

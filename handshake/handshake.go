@@ -34,7 +34,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha512"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"slices"
@@ -61,7 +60,7 @@ const (
 	mldsaKeySize      = 2592
 	maxProfiles       = 8
 	connectProofLabel = "MACULA-PQ-CONNECT-PROOF-V3"
-	sessionProofLabel = "MACULA-PQ-SESSION-PROOF-V1"
+	sessionProofLabel = "MACULA-PQ-SESSION-PROOF-V2"
 )
 
 // The capability bits CONNECT and HELLO carry (WIRE_1_0.md section 4.7): an
@@ -615,7 +614,8 @@ func checkConnect(connect []byte, s StationSession) (Client, []byte, error) {
 	if s.SignSessionProof == nil {
 		return Client{}, nil, ErrExporterUnavailable
 	}
-	sessionProof, err := s.SignSessionProof(nodeID, sessionProofMessage(e, s.Challenge, connect, stationNodeID, nodeID, s.Capabilities))
+	sessionProof, err := s.SignSessionProof(nodeID,
+		sessionProofMessage(e, s.Challenge, connect, stationNodeID, nodeID, helloAccepted(s.Capabilities, nil)))
 	if errors.Is(err, ErrSessionProofRate) {
 		return Client{}, nil, ErrSessionProofRate
 	}
@@ -637,19 +637,33 @@ func checkConnect(connect []byte, s StationSession) (Client, []byte, error) {
 }
 
 // connectTBS is the CONNECT tbs a received CONNECT's proof covers: the frame
-// with proof as the zero-length byte string, re-encoded deterministically. A
-// CONNECT whose received bytes are not its own deterministic encoding is
-// ErrMalformedFrame, so the rebuild is exact (WIRE_1_0.md section 4.2).
+// with proof as the zero-length byte string, re-encoded deterministically
+// (WIRE_1_0.md section 4.2).
 func connectTBS(connect []byte) ([]byte, error) {
-	v, err := cbor.Decode(connect)
-	if err != nil || !bytes.Equal(cbor.Encode(v), connect) {
+	return frameTBS(connect, "proof")
+}
+
+// helloTBS is the HELLO tbs a received HELLO's session proof covers: the frame
+// with session_proof as the zero-length byte string, re-encoded
+// deterministically (WIRE_1_0.md section 4.3).
+func helloTBS(hello []byte) ([]byte, error) {
+	return frameTBS(hello, "session_proof")
+}
+
+// frameTBS is a received frame with its signature field as the zero-length
+// byte string, re-encoded deterministically. A frame whose received bytes are
+// not its own deterministic encoding is ErrMalformedFrame, so the rebuild is
+// exact.
+func frameTBS(raw []byte, signatureKey string) ([]byte, error) {
+	v, err := cbor.Decode(raw)
+	if err != nil || !bytes.Equal(cbor.Encode(v), raw) {
 		return nil, ErrMalformedFrame
 	}
 	entries, _ := v.AsMap()
 	rebuilt := make([]cbor.MapEntry, len(entries))
 	for i, e := range entries {
 		rebuilt[i] = e
-		if key, _ := e.Key.AsText(); key == "proof" {
+		if key, _ := e.Key.AsText(); key == signatureKey {
 			rebuilt[i].Val = cbor.Bytes(nil)
 		}
 	}
@@ -699,14 +713,15 @@ func proofMessage(nonce []byte, stationNodeID, clientNodeID [32]byte, leafDER, c
 	return append(out, connectHash[:]...)
 }
 
-// sessionProofMessage is what the station's session proof signs: the label, a
-// zero byte, E, the SHA-384 of the challenge and of CONNECT, the station's and
-// the client's node_ids, and the station's capabilities, 8 bytes big-endian.
-// The SHA-384 of the challenge covers the chosen version and profile and the
-// station's ranges, and that of CONNECT the client's.
-func sessionProofMessage(e, challenge, connect []byte, stationNodeID, clientNodeID [32]byte, capabilities uint64) []byte {
-	challengeHash, connectHash := sha512.Sum384(challenge), sha512.Sum384(connect)
-	out := make([]byte, 0, len(sessionProofLabel)+1+exporterSize+2*48+2*32+8)
+// sessionProofMessage is what the station's session proof signs (WIRE_1_0.md
+// section 4.3): the label, a zero byte, E, the SHA-384 of the challenge and of
+// CONNECT, the station's and the client's node_ids, and the SHA-384 of the
+// HELLO tbs, which covers the station's capabilities at any width and
+// accepted. The SHA-384 of the challenge covers the chosen version and profile
+// and the station's ranges, and that of CONNECT the client's.
+func sessionProofMessage(e, challenge, connect []byte, stationNodeID, clientNodeID [32]byte, helloTBS []byte) []byte {
+	challengeHash, connectHash, helloHash := sha512.Sum384(challenge), sha512.Sum384(connect), sha512.Sum384(helloTBS)
+	out := make([]byte, 0, len(sessionProofLabel)+1+exporterSize+3*48+2*32)
 	out = append(out, sessionProofLabel...)
 	out = append(out, 0)
 	out = append(out, e...)
@@ -714,7 +729,7 @@ func sessionProofMessage(e, challenge, connect []byte, stationNodeID, clientNode
 	out = append(out, connectHash[:]...)
 	out = append(out, stationNodeID[:]...)
 	out = append(out, clientNodeID[:]...)
-	return binary.BigEndian.AppendUint64(out, capabilities)
+	return append(out, helloHash[:]...)
 }
 
 // wireRefusal is the coarse code a refusing HELLO carries for a close reason.
@@ -781,12 +796,15 @@ func ReadHello(hello []byte, station Station) (uint64, error) {
 	case len(proof) != identity.SignatureSize(station.profile):
 		return 0, ErrMalformedFrame
 	}
-	capabilities := f.uint("capabilities")
-	message := sessionProofMessage(station.exporterValue, station.challenge, station.connect, station.NodeID, station.clientNodeID, capabilities)
+	tbs, err := helloTBS(hello)
+	if err != nil {
+		return 0, err
+	}
+	message := sessionProofMessage(station.exporterValue, station.challenge, station.connect, station.NodeID, station.clientNodeID, tbs)
 	if !identity.Verify(message, proof, station.IdentityKey, station.profile) {
 		return 0, ErrSessionProofInvalid
 	}
-	return capabilities, nil
+	return f.uint("capabilities"), nil
 }
 
 // StatusFrame is a status frame carrying a fresh status statement, sent at
