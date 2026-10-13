@@ -42,6 +42,9 @@ func TestControlFramesReadBackThroughTheirTables(t *testing.T) {
 		}
 	}
 	entries, _ := bare.AsMap()
+	if _, has := bare.Get("detail"); has {
+		t.Errorf("a GOODBYE without a detail carries one: absent is omitted (WIRE_1_0.md section 3.1)")
+	}
 	for name, v := range map[string]cbor.Value{
 		"a field no GOODBYE has":    cbor.Map(append(entries, textEntry("colour", "blue"))),
 		"a neighbour signature":     cbor.Map(append(entries, valueEntry("neighbour", cbor.Map(nil)))),
@@ -49,6 +52,9 @@ func TestControlFramesReadBackThroughTheirTables(t *testing.T) {
 		"a 257-byte reason":         frameWith(bare, "reason", cbor.Text(strings.Repeat("r", 257))),
 		"a SUBSCRIBE without realm": frameWithout(subscribe, "realm"),
 		"a type with no table":      frameWith(bare, "frame_type", cbor.Text("example_future_frame")),
+		"a null detail":             cbor.Map(append(entries, valueEntry("detail", cbor.Null()))),
+		"a 257-byte detail":         cbor.Map(append(entries, valueEntry("detail", cbor.Bytes(make([]byte, 257))))),
+		"a null options":            frameWith(subscribe, "options", cbor.Null()),
 	} {
 		if _, err := ReadControl(v); !errors.Is(err, ErrMalformedFrame) {
 			t.Errorf("%s: %v, want ErrMalformedFrame", name, err)

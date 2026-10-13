@@ -61,8 +61,7 @@ func TestAFrameWithAnUnknownCriticalExtensionIsDroppedAndTheLinkStaysUp(t *testi
 		Key: cbor.Text("no_such.extension"),
 		Val: cbor.Map([]cbor.MapEntry{{Key: cbor.Text("critical"), Val: cbor.Int(1)}, {Key: cbor.Text("value"), Val: cbor.Int(1)}}),
 	}})}
-	goodbye := controlFrame("goodbye", ext, cbor.MapEntry{Key: cbor.Text("reason"), Val: cbor.Text("normal")},
-		cbor.MapEntry{Key: cbor.Text("detail"), Val: cbor.Null()})
+	goodbye := controlFrame("goodbye", ext, cbor.MapEntry{Key: cbor.Text("reason"), Val: cbor.Text("normal")})
 	s.send(goodbye)
 	stillUp(t, s)
 	if got := link.Unrouted()["extension_unsupported"]; got != 1 {

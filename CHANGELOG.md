@@ -100,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile, nowMs)` runs the checks a station stores by, under the same
   allowlist, and returns the slot, placing a type with no
   rule of its own at H(type | signer key id | subject).
+- **Absent is omitted** (WIRE_1_0.md section 3.1): a GOODBYE without a
+  detail omits the key instead of carrying null, and a control frame whose
+  `detail` or SUBSCRIBE `options` is null is `frame.ErrMalformedFrame`
+  (`detail` is bytes of at most 256, `options` a map).
 - **App records** (`record.TypeAppRecord`, 0x17, macula#75), as wire 1.0's
   record vectors carry them: an org's signed statement of one of its apps,
   signed by the org key its `org_key` names, living at most 30 minutes, with

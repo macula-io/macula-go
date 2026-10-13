@@ -102,6 +102,18 @@ func anyBytes(v cbor.Value) bool {
 	return isBytes
 }
 
+func anyMap(v cbor.Value) bool {
+	_, isMap := v.AsMap()
+	return isMap
+}
+
+func bytesWithin(max int) fieldRule {
+	return func(v cbor.Value) bool {
+		b, isBytes := v.AsBytes()
+		return isBytes && len(b) <= max
+	}
+}
+
 func bytesOf(size int) fieldRule {
 	return func(v cbor.Value) bool {
 		b, isBytes := v.AsBytes()

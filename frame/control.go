@@ -35,13 +35,13 @@ func controlTable(frameType string) (map[string]fieldRule, []string, bool) {
 		table["withdrawal"] = anyBytes
 		return table, []string{"withdrawal"}, true
 	case "subscribe":
-		table["realm"], table["topic"], table["subscriber"], table["options"] = bytesOf(32), anyBytes, bytesOf(32), anyValue
+		table["realm"], table["topic"], table["subscriber"], table["options"] = bytesOf(32), anyBytes, bytesOf(32), anyMap
 		return table, []string{"realm", "topic", "subscriber"}, true
 	case "unsubscribe":
 		table["realm"], table["topic"], table["subscriber"] = bytesOf(32), anyBytes, bytesOf(32)
 		return table, []string{"realm", "topic", "subscriber"}, true
 	case "goodbye":
-		table["reason"], table["detail"] = textWithin(maxGoodbyeReasonBytes), anyValue
+		table["reason"], table["detail"] = textWithin(maxGoodbyeReasonBytes), bytesWithin(maxGoodbyeDetailBytes)
 		return table, []string{"reason"}, true
 	}
 	return nil, nil, false
@@ -110,18 +110,18 @@ func topicFrame(frameType string, topic []byte, realm, subscriber [32]byte) ([]c
 }
 
 // GoodbyeFrame is macula 12's GOODBYE: a reason of at most 256 bytes, and a
-// detail of at most 256 bytes of UTF-8, or none when detail is nil.
+// detail of at most 256 bytes of UTF-8, omitted when detail is nil (absent is
+// omitted, WIRE_1_0.md section 3.1).
 func GoodbyeFrame(reason string, detail []byte) (cbor.Value, error) {
 	if err := boundedText("reason", reason, maxGoodbyeReasonBytes); err != nil {
 		return cbor.Value{}, err
 	}
-	detailValue := cbor.Null()
-	if detail != nil {
-		if err := boundedText("detail", string(detail), maxGoodbyeDetailBytes); err != nil {
-			return cbor.Value{}, err
-		}
-		detailValue = cbor.Bytes(detail)
+	fields := append(base("goodbye", freshFrameID(), currentMillis()), textEntry("reason", reason))
+	if detail == nil {
+		return cbor.Map(fields), nil
 	}
-	return cbor.Map(append(base("goodbye", freshFrameID(), currentMillis()),
-		textEntry("reason", reason), valueEntry("detail", detailValue))), nil
+	if err := boundedText("detail", string(detail), maxGoodbyeDetailBytes); err != nil {
+		return cbor.Value{}, err
+	}
+	return cbor.Map(append(fields, bytesEntry("detail", detail))), nil
 }
