@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0-rc.1] - 2026-10-13
+
 ### Added
 
 - **The wire 1.0 conformance vectors run in CI** (macula#97):
