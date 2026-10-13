@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Sealed calls and streams across macula 13 and macula-go, both ways, through
+# Sealed calls and streams across macula (wire 1.0) and macula-go, both ways, through
 # macula-go's test station: an Erlang provider named-key and required, called
 # and streamed to by gosealed; then a Go provider, called and streamed to by
 # erlang_sealed.escript. The Erlang side runs in macula's pinned CI image.
 #
-#   MACULA_BUILD=<macula checkout at v13.x, compiled> scripts/interop/sealed.sh [pq_hybrid|pq_pure]
+#   MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/sealed.sh [pq_hybrid|pq_pure]
 #
 # SEALED_PEER=ts runs the same two directions with @macula-io/ts in place of
 # macula-go (scripts/interop/tssealed, over macula-go's shared library, from
@@ -25,7 +25,7 @@ image="${MACULA_CI_IMAGE:-ghcr.io/macula-io/macula-ci-otp@sha256:aff1d39bc4aa29d
 profile="${1:-pq_hybrid}"
 peer="${SEALED_PEER:-go}"
 case "$peer" in go|ts) ;; *) echo "sealed.sh: SEALED_PEER is go or ts, not $peer" >&2; exit 2 ;; esac
-: "${MACULA_BUILD:?a compiled macula checkout at v13.x}"
+: "${MACULA_BUILD:?a compiled macula at 15.0.0-rc.1 or later (wire 1.0)}"
 work="$(mktemp -d)"
 erl_name="macula-go-sealed-$$"
 cleanup() {

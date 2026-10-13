@@ -152,7 +152,7 @@ escript scripts/interop/erlang_ownership_proof.escript emit <macula lib dir>/ebi
 ## Sealed calls and streams (macula 13, E2E seal scheme 1)
 
 `sealed.sh` runs macula-go's test station and, through it, both directions in
-one profile: an Erlang macula 13 provider (`erlang_sealed.escript serve`,
+one profile: an Erlang macula provider (15.0.0-rc.1 or later) (`erlang_sealed.escript serve`,
 `kem_advertise` on, a call and a server stream in its own namespace, both
 `confidential => required`, their advertisements published for direct dial)
 called and streamed to by `gosealed call`, sealed to the key its advertisement
@@ -166,12 +166,12 @@ macula's direct dial does, and called in the clear at its station
 runs in macula's pinned CI image with the host's network.
 
 ```sh
-MACULA_BUILD=<macula checkout at v13.x, compiled> scripts/interop/sealed.sh pq_hybrid
-MACULA_BUILD=<macula checkout at v13.x, compiled> scripts/interop/sealed.sh pq_pure
+MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/sealed.sh pq_hybrid
+MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/sealed.sh pq_pure
 ```
 
 `MACULA_BUILD` may also be a rebar3 project that depends on macula from hex
-(`{deps, [{macula, "13.0.1"}]}`), compiled in the same image: the script
+(`{deps, [{macula, "15.0.0-rc.1"}]}`), compiled in the same image: the script
 reads `_build/default/lib/macula` and its dependencies beside it.
 
 The Erlang caller also calls with `confidential => off` by direct dial.

@@ -116,6 +116,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`detail` is bytes of at most 256, `options` a map). Null at any depth in a
   protocol field is refused the same way; only a frame's `payload` (and an ext
   entry's `value`) is application data and may hold null.
+- **The sealed interop runs against macula 15.0.0-rc.1** from hex (wire 1.0),
+  both ways in both profiles; `erlang_sealed.escript` gives its throwaway node
+  its own `identity_dir` and reads the key from
+  `macula_node_keys:stored_identity/2`, as macula 15 has them. A pre-release
+  tag (`v0.27.0-rc.1`) publishes a GitHub pre-release.
 - **Every wire 1.0 vector class runs**: `tbs.json` (this library's canonical
   encoding and signing inputs, byte for byte, and the signatures over them) and
   `frames.json` (one frame per type through the envelope rules and, where this

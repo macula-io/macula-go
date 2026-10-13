@@ -19,18 +19,15 @@
 
 ---
 
-> **Status, 2026-09-29:** master speaks the **macula 12** wire and nothing
-> older. Handshake, calls, streaming RPC, publish/subscribe, the DHT, serving
-> procedures (under an org or in a node's own namespace) and node-served
-> content work against live macula stations, including calls and streams by
-> direct dial from one node to another's provider. Content is shared and
-> fetched both ways with macula 12.6.0's Erlang sharer and fetcher. Manifests
-> and MCIDs are macula 12's, byte for byte. Calls and streams are sealed end
-> to end as macula 13 seals them (scheme 1), checked both ways against
-> macula 13.0.0 in `pq_pure` and `pq_hybrid`. On master, links speak macula
-> 13.2.0's handshake v5, bound to the TLS session, and fall back to v4 once
-> for a station before 13.2.0; checked live against macula 13.2.1 from hex.pm
-> in both profiles and both directions (v0.20.0).
+> **Status, 2026-10-13:** master speaks **wire 1.0** (macula 15) and nothing
+> older: a station before wire 1.0 does not accept it, and v0.26.0 stays the
+> release for the 14.x fleet. Handshake, calls, streaming RPC,
+> publish/subscribe, the DHT, serving procedures (under an org or in a node's
+> own namespace) and node-served content work as before, now on the wire 1.0
+> envelope, handshake and records, held to macula's wire 1.0 conformance
+> vectors in every `go test`. Calls and streams are sealed end to end (scheme
+> 1), checked both ways against macula 15.0.0-rc.1 from hex.pm in `pq_pure`
+> and `pq_hybrid`.
 
 ## What is this?
 
@@ -165,7 +162,7 @@ hex> -realm <hex> -realm-key <file> -key <node key file>`):
 | [`profile`](profile) | The `pq_pure` and `pq_hybrid` crypto profiles |
 | [`manifest`](manifest) | Content manifests and MCIDs, as macula 12 makes them |
 | [`cabi`](cabi) | The C ABI every non-Go binding uses (.NET, Python, PHP, TypeScript): `macula.h`, its [contract](cabi/CONTRACT.md), and libmacula on each release |
-| [`teststation`](teststation) | In-process macula 13.2.0 stations for tests (handshake v5 and v4); `teststation/cmd/teststation` serves them to a binding's tests |
+| [`teststation`](teststation) | In-process wire 1.0 stations for tests; `teststation/cmd/teststation` serves them to a binding's tests |
 | [`ucan`](ucan) | macula 12's UCAN: mint, verify a chain against a policy, proof ids and did:keys, held to macula's vectors |
 | [`devicerequest`](devicerequest) | A device's request to a realm, signed: realm proof v2 (macula-realm#29) |
 | [`ownershipproof`](ownershipproof) | The `asserted_by` block of a payload, signed and verified: ownership proof v2 (mcl-om#7) |
