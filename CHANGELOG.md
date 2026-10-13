@@ -104,6 +104,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detail omits the key instead of carrying null, and a control frame whose
   `detail` or SUBSCRIBE `options` is null is `frame.ErrMalformedFrame`
   (`detail` is bytes of at most 256, `options` a map).
+- **`wire_ext_refused`** (WIRE_1_0.md 3.2 and 8): a control frame dropped for
+  an unknown critical extension counts each such name once
+  (`frame.WireCounts.ExtRefused`, `frame.CountExtRefused`); the refusal is a
+  `*frame.ExtensionUnsupportedError` naming them. Both extension counters keep
+  at most 64 names, the rest under `other`.
 - **REGISTER_ACK** (WIRE_1_0.md 3.5, macula#12): `frame.ReadRegisterAck`
   reads the station's answer to an ADVERTISE, UNADVERTISE, SUBSCRIBE or
   UNSUBSCRIBE; an unknown `kind` is ignored and an unknown `reason` reads as

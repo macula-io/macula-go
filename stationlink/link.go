@@ -408,6 +408,7 @@ func readControl(payload []byte) (frame.Envelope, bool, error) {
 	}
 	envelope, err := frame.ReadEnvelope(v)
 	if err != nil {
+		frame.CountExtRefused(err)
 		return frame.Envelope{}, false, err
 	}
 	if !controlFrameTypes[envelope.FrameType] {

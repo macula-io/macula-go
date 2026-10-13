@@ -77,6 +77,10 @@ func TestTheWireOneEnvelopeVectors(t *testing.T) {
 				if sum(after.ExtIgnored) == sum(before.ExtIgnored) {
 					t.Errorf("wire_ext_ignored did not count")
 				}
+			case "wire_ext_refused":
+				if sum(after.ExtRefused) == sum(before.ExtRefused) {
+					t.Errorf("wire_ext_refused did not count")
+				}
 			}
 		})
 	}

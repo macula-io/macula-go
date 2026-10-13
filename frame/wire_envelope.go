@@ -3,6 +3,8 @@ package frame
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/macula-io/macula-go/cbor"
 )
@@ -116,6 +118,19 @@ func CheckExt(v cbor.Value) error {
 	return err
 }
 
+// ExtensionUnsupportedError is ErrExtensionUnsupported naming every unknown
+// critical extension the ext map carries, ascending.
+type ExtensionUnsupportedError struct {
+	Names []string
+}
+
+func (e *ExtensionUnsupportedError) Error() string {
+	return fmt.Sprintf("%v: %s", ErrExtensionUnsupported, strings.Join(e.Names, ", "))
+}
+
+// Is makes an ExtensionUnsupportedError match ErrExtensionUnsupported.
+func (e *ExtensionUnsupportedError) Is(target error) bool { return target == ErrExtensionUnsupported }
+
 // ActOnExt acts on a well-formed ext map as a receiver that knows no
 // extension: an unknown critical one is ErrExtensionUnsupported, and only when
 // none is, each unknown non-critical one is counted under its name.
@@ -124,10 +139,15 @@ func ActOnExt(v cbor.Value) error {
 	if err != nil {
 		return err
 	}
+	var refused []string
 	for name, isCritical := range critical {
 		if !knownExtensions[name] && isCritical {
-			return fmt.Errorf("%w: %s", ErrExtensionUnsupported, name)
+			refused = append(refused, name)
 		}
+	}
+	if refused != nil {
+		slices.Sort(refused)
+		return &ExtensionUnsupportedError{Names: refused}
 	}
 	for name := range critical {
 		if !knownExtensions[name] {
