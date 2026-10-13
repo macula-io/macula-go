@@ -291,21 +291,41 @@ func TestAHybridRecordVerifies(t *testing.T) {
 	if r.Alg != "ML-DSA-87-PS384" {
 		t.Errorf("a pq_hybrid record's alg: %q, want ML-DSA-87-PS384", r.Alg)
 	}
-	wire := wireOf(t, r)
-	if _, err := Verify(wire, profile.PQHybrid, nowMs()); err != nil {
+	if _, err := Verify(wireOf(t, r), profile.PQHybrid, nowMs()); err != nil {
 		t.Errorf("verify a pq_hybrid record under pq_hybrid: %v", err)
 	}
-	_, err := Verify(wire, profile.PQPure, nowMs())
-	wantRefusal(t, "a pq_hybrid record under pq_pure", err, identity.ErrObjectAlgMismatch)
 }
 
-// A record's alg selects its verifier (WIRE_1_0.md section 7), so a record of
-// the other profile verifies as a signed object, and a reader then refuses it
-// for naming another profile's algorithm than its own.
-func TestARecordUnderAnotherProfileIsRefusedForItsAlg(t *testing.T) {
-	keys := keysFor(t)
-	_, err := Verify(wireOf(t, signedNodeRecord(t, keys.node)), profile.PQHybrid, nowMs())
-	wantRefusal(t, "a pq_pure record under pq_hybrid", err, identity.ErrObjectAlgMismatch)
+// The alg allowlist is the verifier's own profile (WIRE_1_0.md section 5.2
+// step 4): the other profile's alg is alg_unsupported before any crypto,
+// whatever form the key is in, and the verifier's own alg with a key in the
+// other profile's form is malformed. Custodian and reader alike.
+func TestTheOtherProfilesAlgIsUnsupported(t *testing.T) {
+	pure := keysFor(t).node
+	hybrid := must[*identity.NodeKey](t)(identity.GenerateKey(identity.PurposeIdentity, profile.PQHybrid))
+	withKey := func(wire []byte, key *identity.NodeKey) []byte {
+		object := must[identity.Object](t)(identity.DecodeObject(wire))
+		object.Key = key.PublicKey()
+		return cbor.Encode(object.Value())
+	}
+	hybridSigned := wireOf(t, signedNodeRecord(t, hybrid))
+	pureSigned := wireOf(t, signedNodeRecord(t, pure))
+	for _, c := range []struct {
+		name string
+		wire []byte
+		want error
+	}{
+		{"a pq_hybrid record", hybridSigned, identity.ErrObjectAlgUnsupported},
+		{"a pq_hybrid alg over a pq_pure key", withKey(hybridSigned, pure), identity.ErrObjectAlgUnsupported},
+		{"a pq_pure alg over a pq_hybrid key", withKey(pureSigned, hybrid), ErrMalformed},
+	} {
+		_, err := CheckAsCustodian(c.wire, profile.PQPure, nowMs())
+		wantRefusal(t, c.name+" at a pq_pure custodian", err, c.want)
+		_, err = Verify(c.wire, profile.PQPure, nowMs())
+		wantRefusal(t, c.name+" at a pq_pure reader", err, c.want)
+	}
+	_, err := Verify(pureSigned, profile.PQHybrid, nowMs())
+	wantRefusal(t, "a pq_pure record at a pq_hybrid reader", err, identity.ErrObjectAlgUnsupported)
 }
 
 func TestARecordSignedUnderAnotherLabelIsRefused(t *testing.T) {

@@ -83,16 +83,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Records are wire 1.0 records** (WIRE_1_0.md section 5, macula#100). Every
   tbs carries `schema` (1) and `lifetime_class`, a row of the frozen table
   (5 minutes, 30 minutes, 6 hours, 48 hours, 7 days, 30 days): a procedure
-  delegation now lives at most 30 minutes, and a tombstone stays within its
-  withdrawn type's row. `record.Verify` reads in section 5.2's order: alg
-  selects the verifier (`identity.VerifyObjectByAlg`,
-  `identity.ErrObjectAlgUnsupported`) before the signature is checked, then
+  delegation now lives at most 30 minutes, and a tombstone lives at most its
+  withdrawn type's row plus 10 minutes. `record.Verify` reads in section 5.2's
+  order: alg selects the verifier from the reader's own profile alone
+  (`identity.VerifyObjectByAlg`; the other profile's alg is
+  `identity.ErrObjectAlgUnsupported`, before any crypto; the own alg over a key
+  of the other form is `ErrMalformed`) before the signature is checked, then
   the envelope keys, clock, lifetime row (`ErrLifetimeClassUnknown`), and
   slot (`ErrSubjectMissing`); then, as a reader, `ErrTypeUnknown`,
   `ErrSchemaUnsupported`, `ErrLifetimeClassMismatch`, an unknown critical
-  extension, the payload rules and `ErrMcidTagUnknown`. A record of the other
-  profile is `identity.ErrObjectAlgMismatch`. `record.CheckAsCustodian` runs
-  the checks a station stores by and returns the slot, placing a type with no
+  extension, the payload rules and `ErrMcidTagUnknown`. A record no longer
+  refuses as `identity.ErrObjectAlgMismatch`. `record.CheckAsCustodian(wire,
+  profile, nowMs)` runs the checks a station stores by, under the same
+  allowlist, and returns the slot, placing a type with no
   rule of its own at H(type | signer key id | subject).
 - **Algorithm agility** (WIRE_1_0.md section 7, macula#101). A signed object
   whose `alg` names no registered verifier is `identity.ErrObjectAlgUnsupported`

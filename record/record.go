@@ -77,8 +77,8 @@ const defaultTTLMs = 48 * hourMs
 
 // The refusals of a record, named as macula_record names them. A signature that
 // does not verify is identity.ErrObjectSignatureInvalid, a signed object whose
-// alg names another profile is identity.ErrObjectAlgMismatch, and a binary
-// without ML-DSA refuses with identity.ErrPostQuantumUnavailable.
+// alg is not the verifier's profile's is identity.ErrObjectAlgUnsupported, and a
+// binary without ML-DSA refuses with identity.ErrPostQuantumUnavailable.
 var (
 	// ErrRecordTooLarge is a record whose wire form is over 256 KiB.
 	ErrRecordTooLarge = errors.New("record: over 256 KiB")
@@ -288,14 +288,14 @@ func Encode(r Record) ([]byte, error) {
 // clock nowMs in Unix milliseconds. It runs a custodian's checks first
 // (CheckAsCustodian): a wire form over 256 KiB (ErrRecordTooLarge); a signed
 // object of key, tbs and signature (ErrMalformed); a tbs under the decoding
-// rule holding alg as text (ErrMalformed); alg naming a registered verifier
-// (identity.ErrObjectAlgUnsupported) and key in its carried form
+// rule holding alg as text (ErrMalformed); alg of p's profile, the allowlist
+// (identity.ErrObjectAlgUnsupported), and key in its carried form
 // (ErrMalformed); the signature (identity.ErrObjectSignatureInvalid); a tbs of
 // exactly the envelope keys, each of its type (ErrMalformed); the clock
 // (ErrNotYetValid, ErrExpired, 5 minutes of tolerance); the lifetime
 // (ErrLifetimeReversed, ErrLifetimeClassUnknown, ErrLifetimeTooLong against
-// its row); and the slot (ErrSubjectMissing). Then a reader's own: alg of p's
-// profile (identity.ErrObjectAlgMismatch); a type it knows (ErrTypeUnknown),
+// its row); and the slot (ErrSubjectMissing). Then a reader's own: a type it
+// knows (ErrTypeUnknown),
 // a schema it reads (ErrSchemaUnsupported) and the type's lifetime row
 // (ErrLifetimeClassMismatch); an unknown critical extension
 // (frame.ErrExtensionUnsupported), unknown non-critical ones counted; the
@@ -306,12 +306,9 @@ func Encode(r Record) ([]byte, error) {
 // which shares no memory with wire: the decoder copies every byte string out
 // of its input, and the key and tbs are copies too.
 func Verify(wire []byte, p profile.Profile, nowMs int64) (Verified, error) {
-	r, signedUnder, err := custodianChecks(wire, nowMs)
+	r, err := custodianChecks(wire, p, nowMs)
 	if err != nil {
 		return Verified{}, err
-	}
-	if signedUnder != p {
-		return Verified{}, identity.ErrObjectAlgMismatch
 	}
 	if err := readerKnows(r); err != nil {
 		return Verified{}, err
@@ -331,12 +328,13 @@ func Verify(wire []byte, p profile.Profile, nowMs int64) (Verified, error) {
 }
 
 // CheckAsCustodian runs the checks a station stores a record by (WIRE_1_0.md
-// section 5.2, steps 1 to 9, in Verify's order): it never reads a payload
+// section 5.2, steps 1 to 9, in Verify's order) under p's alg allowlist: it
+// never reads a payload
 // beyond its type's slot rule and never checks schema, and stores any type,
 // known or not. It returns the record's storage key: its type's own slot, or
 // for a type with none, H(type | signer key id | subject).
-func CheckAsCustodian(wire []byte, nowMs int64) ([32]byte, error) {
-	r, _, err := custodianChecks(wire, nowMs)
+func CheckAsCustodian(wire []byte, p profile.Profile, nowMs int64) ([32]byte, error) {
+	r, err := custodianChecks(wire, p, nowMs)
 	if err != nil {
 		return [32]byte{}, err
 	}
@@ -345,34 +343,34 @@ func CheckAsCustodian(wire []byte, nowMs int64) ([32]byte, error) {
 
 // custodianChecks runs section 5.2's steps 1 to 9 and returns the record read,
 // with the profile its alg selected.
-func custodianChecks(wire []byte, nowMs int64) (Record, profile.Profile, error) {
+func custodianChecks(wire []byte, p profile.Profile, nowMs int64) (Record, error) {
 	if len(wire) > MaxRecordBytes {
-		return Record{}, "", ErrRecordTooLarge
+		return Record{}, ErrRecordTooLarge
 	}
 	object, err := identity.DecodeObject(wire)
 	if err != nil {
-		return Record{}, "", fmt.Errorf("%w: %w", ErrMalformed, err)
+		return Record{}, fmt.Errorf("%w: %w", ErrMalformed, err)
 	}
-	verified, p, err := identity.VerifyObjectByAlg(label, object.Value())
+	verified, err := identity.VerifyObjectByAlg(label, object.Value(), p)
 	if err != nil {
-		return Record{}, "", objectRefusal(err)
+		return Record{}, objectRefusal(err)
 	}
 	r, ok := readEnvelopeTBS(verified.Fields)
 	if !ok {
-		return Record{}, "", ErrMalformed
+		return Record{}, ErrMalformed
 	}
 	r.Key, r.TBS, r.Signature = verified.Key, verified.TBS, bytes.Clone(object.Signature)
 	if err := clock(r, nowMs); err != nil {
-		return Record{}, "", err
+		return Record{}, err
 	}
 	if err := lifetime(r); err != nil {
-		return Record{}, "", err
+		return Record{}, err
 	}
 	r.KeyID = keyIDOf(signerKind(int64(r.Type), r.Payload), r.Key, p)
 	if _, err := custodianSlot(r); err != nil {
-		return Record{}, "", err
+		return Record{}, err
 	}
-	return r, p, nil
+	return r, nil
 }
 
 // custodianSlot is a record's slot as a custodian places it: a type with a

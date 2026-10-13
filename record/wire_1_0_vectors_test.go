@@ -123,7 +123,7 @@ func TestTheWireOneCustodianVectors(t *testing.T) {
 				if wire == nil {
 					t.Fatalf("no object for %s", c.Text("object_of"))
 				}
-				_, err := CheckAsCustodian(wire, c.Int("now_ms"))
+				_, err := CheckAsCustodian(wire, profile.Profile(c.Profile), c.Int("now_ms"))
 				switch c.Outcome() {
 				case "store":
 					if err != nil {

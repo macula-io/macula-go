@@ -45,39 +45,38 @@ func ProfileOfAlg(alg string) (profile.Profile, bool) {
 }
 
 // VerifyObjectByAlg verifies a signed object that carries its key, under
-// label, with the verifier its alg selects (WIRE_1_0.md sections 5.2 and 7), in
-// this order: exactly the keys key, tbs and signature, each a byte string; tbs
-// under the decoding rule, a map holding alg as text (ErrObjectMalformed, and
-// nothing else in tbs is acted on before the signature); alg naming a
-// registered verifier (ErrObjectAlgUnsupported); key in that verifier's
-// carried form (ErrObjectMalformed); the signature over tbs as received
-// (ErrObjectSignatureInvalid). It returns the object with the profile alg
-// selected.
-func VerifyObjectByAlg(label string, v cbor.Value) (VerifiedObject, profile.Profile, error) {
+// label, with the verifier its alg selects from p's allowlist (WIRE_1_0.md
+// sections 5.2 and 7), in this order: exactly the keys key, tbs and signature,
+// each a byte string; tbs under the decoding rule, a map holding alg as text
+// (ErrObjectMalformed, and nothing else in tbs is acted on before the
+// signature); alg on the allowlist, which is p's own algorithm alone, so the
+// other profile's alg is refused before any crypto (ErrObjectAlgUnsupported);
+// key in that verifier's carried form (ErrObjectMalformed); the signature over
+// tbs as received (ErrObjectSignatureInvalid).
+func VerifyObjectByAlg(label string, v cbor.Value, p profile.Profile) (VerifiedObject, error) {
 	object, err := ParseObject(v)
 	if err != nil {
-		return VerifiedObject{}, "", err
+		return VerifiedObject{}, err
 	}
 	fields, err := cbor.Decode(object.TBS)
 	if err != nil {
-		return VerifiedObject{}, "", fmt.Errorf("%w: %w", ErrObjectMalformed, err)
+		return VerifiedObject{}, fmt.Errorf("%w: %w", ErrObjectMalformed, err)
 	}
 	algValue, hasAlg := fields.Get("alg")
 	alg, isText := algValue.AsText()
 	if _, isMap := fields.AsMap(); !isMap || !hasAlg || !isText {
-		return VerifiedObject{}, "", ErrObjectMalformed
+		return VerifiedObject{}, ErrObjectMalformed
 	}
-	p, registered := ProfileOfAlg(alg)
-	if !registered {
-		return VerifiedObject{}, "", fmt.Errorf("%w: %q", ErrObjectAlgUnsupported, alg)
+	if alg != sigAlg(p) {
+		return VerifiedObject{}, fmt.Errorf("%w: %q", ErrObjectAlgUnsupported, alg)
 	}
 	if !CarriedKeyWellFormed(object.Key, p) {
-		return VerifiedObject{}, "", ErrObjectMalformed
+		return VerifiedObject{}, ErrObjectMalformed
 	}
 	if err := verifySignature(objectSignedBytes(label, object.Key, object.TBS), object.Signature, object.Key, p, ErrObjectSignatureInvalid); err != nil {
-		return VerifiedObject{}, "", err
+		return VerifiedObject{}, err
 	}
-	return VerifiedObject{Key: bytes.Clone(object.Key), TBS: bytes.Clone(object.TBS), Fields: fields}, p, nil
+	return VerifiedObject{Key: bytes.Clone(object.Key), TBS: bytes.Clone(object.TBS), Fields: fields}, nil
 }
 
 // Object is a signed object that carries its signer's key as carried: a
