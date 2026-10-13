@@ -49,6 +49,8 @@ func payloadOK(t Type, payload cbor.Value) bool {
 		return isID(field("realm_id")) && isText(field("org_name")) && isID(field("org_key"))
 	case TypeProcedureDelegation:
 		return isID(field("org_key")) && isID(field("advertiser"))
+	case TypeAppRecord:
+		return appPayloadOK(payload, len(entries))
 	}
 	return t >= DomainTypeMin
 }
@@ -197,6 +199,8 @@ func slotFieldNames(t int64) []string {
 		return []string{"realm_id", "org_name"}
 	case int64(TypeProcedureDelegation):
 		return []string{"advertiser"}
+	case int64(TypeAppRecord):
+		return []string{"realm_id", "org_name", "app_name"}
 	}
 	return nil
 }
@@ -205,7 +209,7 @@ func slotFieldNames(t int64) []string {
 // MCID, or a 32-byte id.
 func slotValueOK(name string, v cbor.Value) bool {
 	switch name {
-	case "procedure", "param_name", "org_name":
+	case "procedure", "param_name", "org_name", "app_name":
 		return isText(v)
 	case "mcid":
 		return isContentID(v)

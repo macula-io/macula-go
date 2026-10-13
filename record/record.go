@@ -68,6 +68,7 @@ const (
 	TypeStationEndpoint          Type = 0x12
 	TypeOrgDirectory             Type = 0x15
 	TypeProcedureDelegation      Type = 0x16
+	TypeAppRecord                Type = 0x17
 	DomainTypeMin                Type = 0x20
 )
 
@@ -645,9 +646,10 @@ func tombstoneMarginMs(t Type) int64 {
 // typeLifetimeClass is the row a record of type t names (section 5.1), and
 // whether this library knows the type: node record and content announcement
 // 48 hours; procedure advertisement and station endpoint 5 minutes; realm
-// stations and org directory 6 hours; procedure delegation 30 minutes; realm
-// member endorsement 30 days; a domain type 7 days; the other built-in types
-// it knows 30 days; and a tombstone the row of the type it withdraws.
+// stations and org directory 6 hours; procedure delegation and app record 30
+// minutes; realm member endorsement 30 days; a domain type 7 days; the other
+// built-in types it knows 30 days; and a tombstone the row of the type it
+// withdraws.
 func typeLifetimeClass(t int64, payload cbor.Value) (uint8, bool) {
 	switch {
 	case t == int64(TypeNodeRecord), t == int64(TypeContentAnnouncement):
@@ -656,7 +658,7 @@ func typeLifetimeClass(t int64, payload cbor.Value) (uint8, bool) {
 		return lifetimeClass5Minutes, true
 	case t == int64(TypeRealmStations), t == int64(TypeOrgDirectory):
 		return lifetimeClass6Hours, true
-	case t == int64(TypeProcedureDelegation):
+	case t == int64(TypeProcedureDelegation), t == int64(TypeAppRecord):
 		return lifetimeClass30Minutes, true
 	case t == int64(TypeRealmMemberEndorsement), t == int64(TypeRealmDirectory),
 		t >= int64(TypeFoundationSeedList) && t <= int64(TypeFoundationT3Attestation):
@@ -709,7 +711,7 @@ func signerPurposes(t int64, payload cbor.Value) []identity.Purpose {
 	case t == int64(TypeRealmDirectory), t == int64(TypeRealmStations), t == int64(TypeRealmMemberEndorsement),
 		t == int64(TypeOrgDirectory):
 		return []identity.Purpose{"realm"}
-	case t == int64(TypeProcedureDelegation):
+	case t == int64(TypeProcedureDelegation), t == int64(TypeAppRecord):
 		return []identity.Purpose{"org"}
 	case t >= int64(TypeFoundationSeedList) && t <= int64(TypeFoundationT3Attestation):
 		return []identity.Purpose{"foundation"}
@@ -764,7 +766,7 @@ func namedSigner(t Type, payload cbor.Value, keyID [32]byte) bool {
 		name = "advertiser_node"
 	case TypeContentAnnouncement:
 		name = "announcer_node"
-	case TypeProcedureDelegation:
+	case TypeProcedureDelegation, TypeAppRecord:
 		name = "org_key"
 	default:
 		return true

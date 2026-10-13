@@ -98,6 +98,8 @@ func slotKey(t int64, payload cbor.Value, subject []byte, hasSubject bool, r Rec
 		key = derived(t, fields.id("realm_id"), lengthPrefixed(fields.text("org_name")))
 	case t == int64(TypeProcedureDelegation):
 		key = derived(t, fields.signer(), fields.id("advertiser"))
+	case t == int64(TypeAppRecord):
+		key = derived(t, fields.id("realm_id"), lengthPrefixed(fields.text("org_name")), lengthPrefixed(fields.text("app_name")))
 	case t >= int64(DomainTypeMin) && t <= 0xFF && hasSubject:
 		key = derived(t, fields.signer(), lengthPrefixed(subject))
 	case t >= int64(DomainTypeMin) && t <= 0xFF:

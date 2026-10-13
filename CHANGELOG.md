@@ -100,6 +100,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile, nowMs)` runs the checks a station stores by, under the same
   allowlist, and returns the slot, placing a type with no
   rule of its own at H(type | signer key id | subject).
+- **App records** (`record.TypeAppRecord`, 0x17, macula#75), as wire 1.0's
+  record vectors carry them: an org's signed statement of one of its apps,
+  signed by the org key its `org_key` names, living at most 30 minutes, with
+  macula's payload rules (an org namespace that is not `_` or a node's, names
+  and version of 1 to 64 bytes, unique services whose procedures are all in
+  the org's namespace, an authorization of exactly `org_directory`), stored
+  under `record.AppRecordKey(realmID, orgName, appName)`.
 - **Algorithm agility** (WIRE_1_0.md section 7, macula#101). A signed object
   whose `alg` names no registered verifier is `identity.ErrObjectAlgUnsupported`
   (`alg_unsupported`), in a frame as in a record; `identity.ProfileOfAlg` is the

@@ -120,6 +120,28 @@ func advertisementPayload(advertiser [32]byte) cbor.Value {
 	})
 }
 
+// appPayload is an app record's payload for the org acme's app weather, signed
+// by orgKey: one service whose procedures are in acme's namespace.
+func appPayload(orgKey [32]byte) []cbor.MapEntry {
+	return []cbor.MapEntry{
+		bytesEntry("realm_id", idBytes(0x11)),
+		textEntry("org_name", "acme"),
+		textEntry("app_name", "weather"),
+		textEntry("version", "1.2.0"),
+		bytesEntry("org_key", orgKey[:]),
+		valueEntry("services", cbor.List([]cbor.Value{appService("forecast", "acme/get_forecast_v1", "acme/get_alerts_v1")})),
+		valueEntry("authorization", cbor.Map([]cbor.MapEntry{bytesEntry("org_directory", []byte("directory"))})),
+	}
+}
+
+func appService(name string, procedures ...string) cbor.Value {
+	listed := make([]cbor.Value, len(procedures))
+	for i, p := range procedures {
+		listed[i] = cbor.Text(p)
+	}
+	return cbor.Map([]cbor.MapEntry{textEntry("name", name), valueEntry("procedures", cbor.List(listed))})
+}
+
 func contentAnnouncementPayload(announcer [32]byte) cbor.Value {
 	mcid := make([]byte, 50)
 	mcid[0], mcid[1] = 2, 0x55
@@ -483,6 +505,12 @@ func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 	}
 	advertisementTombstone := withdrawing(TypeProcedureAdvertisement, bytesEntry("realm_id", idBytes(0x11)), textEntry("procedure", "acme/echo_v1"))
 	endorsementTombstone := withdrawing(TypeRealmMemberEndorsement, bytesEntry("realm_id", idBytes(0x11)), bytesEntry("member_node", idBytes(2)))
+	app := appPayload(identity.KeyIDOf(keys.node.PublicKey(), profile.PQPure))
+	appServices := func(services ...cbor.Value) []cbor.MapEntry {
+		return withEntry(app, "services", cbor.List(services))
+	}
+	appTombstone := withdrawing(TypeAppRecord, bytesEntry("realm_id", idBytes(0x11)), textEntry("org_name", "acme"),
+		textEntry("app_name", "weather"))
 	for _, c := range []struct {
 		name       string
 		recordType Type
@@ -523,6 +551,30 @@ func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 		{"an endorsement tombstone without member_node", TypeTombstone, withoutEntry(endorsementTombstone, "member_node"), testHour, ErrMalformed},
 		{"an endorsement tombstone with a member_node of 31 bytes", TypeTombstone,
 			withEntry(endorsementTombstone, "member_node", cbor.Bytes(make([]byte, 31))), testHour, ErrMalformed},
+		{"an app record", TypeAppRecord, app, 30 * testMinute, nil},
+		{"an app record with no services", TypeAppRecord, appServices(), 30 * testMinute, nil},
+		{"an app record of the org _", TypeAppRecord, withEntry(app, "org_name", cbor.Text("_")), 30 * testMinute, ErrMalformed},
+		{"an app record of a node's namespace", TypeAppRecord, withEntry(app, "org_name", cbor.Text("~ab")), 30 * testMinute, ErrMalformed},
+		{"an org name with a slash", TypeAppRecord, withEntry(app, "org_name", cbor.Text("ac/me")), 30 * testMinute, ErrMalformed},
+		{"an app name with a slash", TypeAppRecord, withEntry(app, "app_name", cbor.Text("wea/ther")), 30 * testMinute, ErrMalformed},
+		{"an app name of 65 bytes", TypeAppRecord, withEntry(app, "app_name", cbor.Text(strings.Repeat("w", 65))), 30 * testMinute, ErrMalformed},
+		{"an app name of 64 bytes", TypeAppRecord, withEntry(app, "app_name", cbor.Text(strings.Repeat("w", 64))), 30 * testMinute, nil},
+		{"an empty version", TypeAppRecord, withEntry(app, "version", cbor.Text("")), 30 * testMinute, ErrMalformed},
+		{"a service listing another org's procedure", TypeAppRecord, appServices(appService("forecast", "other/get_forecast_v1")), 30 * testMinute, ErrMalformed},
+		{"a service listing a node's procedure", TypeAppRecord, appServices(appService("forecast", "~ab/get_forecast_v1")), 30 * testMinute, ErrMalformed},
+		{"a service listing a procedure with no namespace", TypeAppRecord, appServices(appService("forecast", "get_forecast_v1")), 30 * testMinute, ErrMalformed},
+		{"two services of one name", TypeAppRecord, appServices(appService("forecast"), appService("forecast")), 30 * testMinute, ErrMalformed},
+		{"a service with an empty name", TypeAppRecord, appServices(appService("")), 30 * testMinute, ErrMalformed},
+		{"a service with a third key", TypeAppRecord, appServices(cbor.Map([]cbor.MapEntry{textEntry("name", "forecast"),
+			valueEntry("procedures", cbor.List(nil)), textEntry("port", "1")})), 30 * testMinute, ErrMalformed},
+		{"an app record with an eighth field", TypeAppRecord, withEntry(app, "homepage", cbor.Text("h")), 30 * testMinute, ErrMalformed},
+		{"an authorization with a second key", TypeAppRecord, withEntry(app, "authorization", cbor.Map([]cbor.MapEntry{
+			bytesEntry("org_directory", []byte("directory")), bytesEntry("procedure_delegation", []byte("d"))})), 30 * testMinute, ErrMalformed},
+		{"an org directory as text", TypeAppRecord, withEntry(app, "authorization", cbor.Map([]cbor.MapEntry{
+			textEntry("org_directory", "directory")})), 30 * testMinute, ErrMalformed},
+		{"an app record naming another org key", TypeAppRecord, withEntry(app, "org_key", cbor.Bytes(idBytes(9))), 30 * testMinute, ErrKeyIDMismatch},
+		{"a tombstone of an app record", TypeTombstone, appTombstone, 30 * testMinute, nil},
+		{"an app tombstone without app_name", TypeTombstone, withoutEntry(appTombstone, "app_name"), 30 * testMinute, ErrMalformed},
 		{"a signer that is not its key", TypeProcedureAdvertisement,
 			withEntry(advertisement, "advertiser_node", cbor.Bytes(idBytes(9))), 5 * testMinute, ErrKeyIDMismatch},
 		{"a payload fault and a lifetime fault", TypeProcedureAdvertisement, unknownKey, 5*testMinute + 1, ErrLifetimeTooLong},
@@ -650,6 +702,7 @@ func TestARecordLivingPastItsTypesMaximumIsRefused(t *testing.T) {
 			bytesEntry("realm_id", idBytes(0x11)), bytesEntry("member_node", nodeID[:])})},
 		{"a realm directory, which has no rule of its own", TypeRealmDirectory, 30 * testDay, realm},
 		{"a domain record", DomainTypeMin, 7 * testDay, cbor.Map(nil)},
+		{"an app record", TypeAppRecord, 30 * testMinute, cbor.Map(appPayload(keyID))},
 		{"a tombstone withdrawing a procedure advertisement", TypeTombstone, 15 * testMinute, cbor.Map([]cbor.MapEntry{
 			uintEntry("withdrawn_type", uint64(TypeProcedureAdvertisement)), bytesEntry("withdrawn_version", make([]byte, 16)),
 			textEntry("reason", "shutdown"), bytesEntry("realm_id", idBytes(0x11)), textEntry("procedure", "acme/echo_v1")})},

@@ -59,6 +59,8 @@ func TestRecordsNamedByTheirPayloadMatchTheVectors(t *testing.T) {
 			"c3860b4b53a5ad2ab73ec3c26ec8c228e46f2f0c123732b257ea5c8b93351138"},
 		{"an org directory", unsignedRecord(t, TypeOrgDirectory, realm, textEntry("org_name", "acme"), bytesEntry("org_key", idBytes(0x44))),
 			"a0c45a66de0f7000a76726e424add18ef32014cbd106e9c72e8c8425c1282924"},
+		{"an app record", unsignedRecord(t, TypeAppRecord, appPayload(fill(0x44))...),
+			"d1bfbda0745c91dd39ead9ccdaff401c2bdf0bcdd0883d12cce023e598d5bdbb"},
 	} {
 		if got, want := must[[32]byte](t)(StorageKey(c.r)), vector(t, c.want); got != want {
 			t.Errorf("%s is stored under %x, want %x", c.name, got, want)
