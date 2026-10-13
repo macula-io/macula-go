@@ -51,3 +51,17 @@ func TestATombstoneOfAnUnknownTagIsStoredContentBlind(t *testing.T) {
 	_, err = Verify(signed(lifetimeClass5Minutes, 5*testMinute, true), profile.PQPure, nowMs())
 	wantRefusal(t, "at a reader", err, ErrTypeUnknown)
 }
+
+// The known types of every wire 1.0 custodian are exactly these tags and the
+// domain types 0x20 to 0xFF (WIRE_1_0.md 5.1); every other tag from 0x01 to
+// 0x1F is unknown, the reserved 0x14 included.
+func TestTheKnownTagsAreWireOnePointZerosList(t *testing.T) {
+	known := map[int64]bool{0x01: true, 0x03: true, 0x04: true, 0x05: true, 0x06: true, 0x0C: true, 0x0D: true,
+		0x0E: true, 0x0F: true, 0x10: true, 0x11: true, 0x12: true, 0x13: true, 0x15: true, 0x16: true, 0x17: true}
+	for tag := int64(0x01); tag <= 0xFF; tag++ {
+		want := known[tag] || tag >= int64(DomainTypeMin)
+		if got := hasOwnSlot(tag); got != want {
+			t.Errorf("tag %#02x known %t, want %t", tag, got, want)
+		}
+	}
+}
