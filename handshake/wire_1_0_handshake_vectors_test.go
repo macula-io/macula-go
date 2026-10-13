@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/internal/wire10vectors"
 	"github.com/macula-io/macula-go/profile"
@@ -181,7 +182,7 @@ func TestTheWireOneHandshakeVectors(t *testing.T) {
 					wantVerdict(t, i, err, expect)
 					wantHello(t, i, hello, expect)
 					negotiated = n
-				case from == "station" && challenge == nil:
+				case from == "station" && challenge == nil && frameTypeOf(t, frameBytes) == "challenge":
 					challenge = frameBytes
 					s, err := ReadChallenge(frameBytes, ClientSession{
 						Profile: p, ExpectedNodeID: client.expected, Leaf: leaf, IdentityKey: clientIdentity,
@@ -216,12 +217,42 @@ func TestTheWireOneHandshakeVectors(t *testing.T) {
 					read.connect = connect
 					_, err := ReadHello(frameBytes, read)
 					wantVerdict(t, i, err, expect)
+					wantStationRanges(t, i, err, expect)
 					if want, ok := step["session_proof_message"].(string); ok && !bytes.Equal(captured, mustHex(t, want)) {
 						t.Errorf("step %d: session proof message\n got %x\nwant %s", i, captured, want)
 					}
 				}
 			}
 		})
+	}
+}
+
+// frameTypeOf is a transcript frame's frame_type.
+func frameTypeOf(t *testing.T, frame []byte) string {
+	t.Helper()
+	v, err := cbor.Decode(frame)
+	if err != nil {
+		t.Fatalf("a transcript frame does not decode: %v", err)
+	}
+	frameType, _ := v.Get("frame_type")
+	text, _ := frameType.AsText()
+	return text
+}
+
+// wantStationRanges checks the ranges an early refusal names against the
+// step's station_ranges, when it has them.
+func wantStationRanges(t *testing.T, step int, err error, expect map[string]any) {
+	t.Helper()
+	want, has := expect["station_ranges"].(map[string]any)
+	if !has {
+		return
+	}
+	var refused *RefusedError
+	if !errors.As(err, &refused) || refused.StationRanges == nil {
+		t.Fatalf("step %d: %v, want a refusal naming the station's ranges", step, err)
+	}
+	if got := refused.StationRanges; !sameRanges(*got, sideOf(t, want).ranges) {
+		t.Errorf("step %d: the station's ranges %+v, want %v", step, *got, want)
 	}
 }
 
