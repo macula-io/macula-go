@@ -47,7 +47,7 @@ int32_t macula_abi_version(void);
  * at load. */
 const char *macula_library_version(void);
 
-/* Since macula-go v0.28.0. The wire the library speaks, major.minor, e.g.
+/* Since macula-go v0.27.0. The wire the library speaks, major.minor, e.g.
  * "1.0": every wire 1.x peer shares its frozen core. The library owns the
  * string: never free it. A binding compares it with MACULA_WIRE_VERSION at
  * load. */

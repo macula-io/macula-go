@@ -25,7 +25,7 @@ at load and refuses an older library, naming both versions, instead of
 inferring a floor from function presence and silently linking against a
 library that predates what it relies on.
 
-`macula_wire_version()` (since v0.28.0) returns the wire the library speaks,
+`macula_wire_version()` (since v0.27.0) returns the wire the library speaks,
 major.minor, `"1.0"` (macula `docs/design/WIRE_1_0.md`), and `macula.h`
 defines `MACULA_WIRE_VERSION`, the wire it was written for. The library owns
 the string: never free it. Every wire 1.x peer shares the frozen core, so a
