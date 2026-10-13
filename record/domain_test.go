@@ -80,14 +80,14 @@ func TestAnEmptySubjectIsRefusedInATombstonesSlot(t *testing.T) {
 	}
 }
 
-// A domain record's tombstone signs within the domain row, 7 days, on the
-// record's slot, and a millisecond past that bound is refused (WIRE_1_0.md
-// section 5.1).
-func TestADomainRecordTombstoneSignsWithinTheDomainRowOnItsSlot(t *testing.T) {
+// A domain record's tombstone signs within the domain row, 7 days, plus twice
+// the clock tolerance, on the record's slot, and a millisecond past that bound
+// is refused (WIRE_1_0.md section 5.1).
+func TestADomainRecordTombstoneSignsWithinTheMaximumAndTwiceTheToleranceOnItsSlot(t *testing.T) {
 	keys := keysFor(t)
 	withdrawn := must[Record](t)(Sign(must[Record](t)(Envelope(DomainTypeMin, cbor.Map(nil), []byte("s1"), uint64(7*testDay))), keys.node))
 	tombstone := must[Record](t)(NewTombstone(withdrawn, ReasonShutdown, TombstoneOptions{}))
-	tombstone.ExpiresAt = tombstone.CreatedAt + uint64(7*testDay)
+	tombstone.ExpiresAt = tombstone.CreatedAt + uint64(7*testDay+10*testMinute)
 	atBound := must[Record](t)(Sign(tombstone, keys.node))
 	if _, err := Verify(wireOf(t, atBound), profile.PQPure, nowMs()); err != nil {
 		t.Errorf("verify the tombstone at its bound: %v", err)

@@ -605,7 +605,7 @@ func TestEachIdentityTypeSignsWithinItsMaximumLifetime(t *testing.T) {
 
 // A verifier accepts every type at its lifetime row's maximum and refuses it a
 // millisecond past as lifetime_too_long, with a tombstone living its withdrawn
-// type's row (WIRE_1_0.md section 5.1).
+// type's row plus twice the clock tolerance (WIRE_1_0.md section 5.1).
 func TestARecordLivingPastItsTypesMaximumIsRefused(t *testing.T) {
 	keys := keysFor(t)
 	nodeID := keys.node.KeyID()
@@ -630,7 +630,7 @@ func TestARecordLivingPastItsTypesMaximumIsRefused(t *testing.T) {
 			bytesEntry("realm_id", idBytes(0x11)), bytesEntry("member_node", nodeID[:])})},
 		{"a realm directory, which has no rule of its own", TypeRealmDirectory, 30 * testDay, realm},
 		{"a domain record", DomainTypeMin, 7 * testDay, cbor.Map(nil)},
-		{"a tombstone withdrawing a procedure advertisement", TypeTombstone, 5 * testMinute, cbor.Map([]cbor.MapEntry{
+		{"a tombstone withdrawing a procedure advertisement", TypeTombstone, 15 * testMinute, cbor.Map([]cbor.MapEntry{
 			uintEntry("withdrawn_type", uint64(TypeProcedureAdvertisement)), bytesEntry("withdrawn_version", make([]byte, 16)),
 			textEntry("reason", "shutdown"), bytesEntry("realm_id", idBytes(0x11)), textEntry("procedure", "acme/echo_v1")})},
 	} {

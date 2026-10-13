@@ -620,7 +620,9 @@ func clock(r Record, nowMs int64) error {
 
 // lifetime refuses a record whose lifetime, created_at to expires_at, does not
 // run forward, whose lifetime_class names no row of the frozen table, or that
-// lives longer than its row's maximum (section 5.1).
+// lives longer than its row's maximum (section 5.1). A tombstone may live twice
+// the clock tolerance past its row: it outlives a record that may have been
+// created up to the tolerance ahead, by the tolerance.
 func lifetime(r Record) error {
 	lived := int64(r.ExpiresAt) - int64(r.CreatedAt)
 	switch {
@@ -628,10 +630,18 @@ func lifetime(r Record) error {
 		return ErrLifetimeReversed
 	case int(r.LifetimeClass) >= len(lifetimeClassMaxMs):
 		return fmt.Errorf("%w: %d", ErrLifetimeClassUnknown, r.LifetimeClass)
-	case lived > lifetimeClassMaxMs[r.LifetimeClass]:
+	case lived > lifetimeClassMaxMs[r.LifetimeClass]+tombstoneMarginMs(r.Type):
 		return ErrLifetimeTooLong
 	}
 	return nil
+}
+
+// tombstoneMarginMs is how far past its row a record of type t may live.
+func tombstoneMarginMs(t Type) int64 {
+	if t == TypeTombstone {
+		return 2 * ClockToleranceMs
+	}
+	return 0
 }
 
 // typeLifetimeClass is the row a record of type t names (section 5.1), and

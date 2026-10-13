@@ -70,10 +70,7 @@ func NewTombstone(withdrawn Record, reason Reason, opts TombstoneOptions) (Recor
 	if err != nil {
 		return Record{}, err
 	}
-	// A tombstone outlives what it withdraws by the clock tolerance, within
-	// the lifetime row it shares with it (WIRE_1_0.md section 5.1).
-	r.ExpiresAt = min(max(r.CreatedAt+ttlMs, withdrawn.ExpiresAt+ClockToleranceMs),
-		r.CreatedAt+uint64(lifetimeClassMaxMs[r.LifetimeClass]))
+	r.ExpiresAt = max(r.CreatedAt+ttlMs, withdrawn.ExpiresAt+ClockToleranceMs)
 	return r, nil
 }
 
