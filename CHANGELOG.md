@@ -100,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile, nowMs)` runs the checks a station stores by, under the same
   allowlist, and returns the slot, placing a type with no
   rule of its own at H(type | signer key id | subject).
+- **STATUS is an envelope frame after HELLO** (WIRE_1_0.md 3.1, with #98):
+  `handshake.ReadStatus` reads one carrying `frame_id` and `sent_at_ms` (and
+  `ext`, which the envelope reads first) and refuses `realm`, `call_id` and
+  `source_route` as `ErrMalformedFrame`.
 - **Absent is omitted** (WIRE_1_0.md section 3.1): a GOODBYE without a
   detail omits the key instead of carrying null, and a control frame whose
   `detail` or SUBSCRIBE `options` is null is `frame.ErrMalformedFrame`

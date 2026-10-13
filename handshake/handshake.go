@@ -260,7 +260,16 @@ var (
 	helloAcceptedKeys = []string{"accepted", "capabilities", "frame_type", "version"}
 	helloRefusedKeys  = []string{"accepted", "capabilities", "frame_type", "refusal_code", "version"}
 	helloEarlyKeys    = []string{"accepted", "frame_type", "profiles", "refusal_code", "version", "versions"}
-	statusKeys        = []string{"frame_type", "statement", "version"}
+	// statusLayouts are a STATUS's keys: an envelope frame after HELLO
+	// (WIRE_1_0.md section 3.1), it may carry frame_id and sent_at_ms, and
+	// ext, which the envelope reads before it; never realm, call_id or
+	// source_route.
+	statusLayouts = [][]string{
+		{"frame_type", "statement", "version"},
+		{"frame_id", "frame_type", "statement", "version"},
+		{"frame_type", "sent_at_ms", "statement", "version"},
+		{"frame_id", "frame_type", "sent_at_ms", "statement", "version"},
+	}
 )
 
 // Opener is the client's first frame on the control stream: its ranges, and
@@ -826,7 +835,7 @@ type Peer struct {
 // ReadStatus checks a peer's status frame and returns when its statement
 // expires.
 func ReadStatus(status []byte, p Peer) (int64, error) {
-	f, err := decode(status, "status", statusKeys)
+	f, err := decode(status, "status", statusLayouts...)
 	if err != nil {
 		return 0, err
 	}
@@ -919,9 +928,12 @@ func fieldTyped(key string, v cbor.Value) bool {
 	case "tls_binding", "tls_status", "connect_binding", "connect_status", "statement":
 		_, err := identity.ParseSignedTBS(v)
 		return err == nil
-	case "capabilities":
+	case "capabilities", "sent_at_ms":
 		n, isInt := v.AsInt64()
 		return isInt && n >= 0 && n < maxProtocolInt
+	case "frame_id":
+		id, isBytes := v.AsBytes()
+		return isBytes && len(id) == 16
 	case "accepted":
 		n, isInt := v.AsInt64()
 		return isInt && (n == 0 || n == 1)

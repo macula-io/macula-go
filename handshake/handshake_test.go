@@ -905,6 +905,30 @@ func TestStatusFramesRenewAPeersStatement(t *testing.T) {
 		if version, _ := fields(t, frame)["version"].AsInt64(); version != 5 {
 			t.Errorf("status frame version %d, want 5", version)
 		}
+		// STATUS is an envelope frame after HELLO (WIRE_1_0.md 3.1): it may
+		// carry frame_id and sent_at_ms (ext is read by the envelope before
+		// it), never realm, call_id or source_route.
+		statementEntry := entry("statement", statement.Value())
+		frameID, sentAt := entry("frame_id", cbor.Bytes(make([]byte, 16))), entry("sent_at_ms", cbor.Int(now))
+		for name, enveloped := range map[string][]byte{
+			"frame_id":   encodeFrame("status", statementEntry, frameID),
+			"sent_at_ms": encodeFrame("status", statementEntry, sentAt),
+			"both":       encodeFrame("status", statementEntry, frameID, sentAt),
+		} {
+			if _, err := ReadStatus(enveloped, peer); err != nil {
+				t.Errorf("a status frame with %s: %v, want it read", name, err)
+			}
+		}
+		for name, routed := range map[string]cbor.MapEntry{
+			"realm":                  entry("realm", cbor.Bytes(make([]byte, 32))),
+			"call_id":                entry("call_id", cbor.Bytes(make([]byte, 16))),
+			"source_route":           entry("source_route", cbor.Bytes([]byte{1})),
+			"a frame_id of 15 bytes": entry("frame_id", cbor.Bytes(make([]byte, 15))),
+		} {
+			if _, err := ReadStatus(encodeFrame("status", statementEntry, routed), peer); !errors.Is(err, ErrMalformedFrame) {
+				t.Errorf("a status frame with %s: %v, want ErrMalformedFrame", name, err)
+			}
+		}
 		v4 := encodeFrameVersion(4, "status", entry("statement", statement.Value()))
 		if _, err := ReadStatus(v4, peer); !errors.Is(err, ErrUnsupportedVersion) {
 			t.Errorf("a version 4 status frame: %v, want ErrUnsupportedVersion", err)
