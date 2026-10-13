@@ -104,6 +104,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detail omits the key instead of carrying null, and a control frame whose
   `detail` or SUBSCRIBE `options` is null is `frame.ErrMalformedFrame`
   (`detail` is bytes of at most 256, `options` a map).
+- **Station authorizations** (`record.TypeStationAuthorization`, 0x13,
+  macula-station#63): a realm's signed statement that a node serves it as a
+  station at a hostname, in roles, over a window of at most 30 minutes, with the
+  optional attestation pair under macula's co-presence bound; stored under
+  `record.StationAuthorizationKey(realmID, stationNode)`.
+- **A custodian checks a known type's row** (WIRE_1_0.md 5.2 step 8): a
+  `lifetime_class` other than the type's own is `ErrLifetimeClassMismatch` at
+  `CheckAsCustodian` as at `Verify`, after the lifetime bound; a reader no
+  longer checks it a second time.
 - **App records** (`record.TypeAppRecord`, 0x17, macula#75), as wire 1.0's
   record vectors carry them: an org's signed statement of one of its apps,
   signed by the org key its `org_key` names, living at most 30 minutes, with

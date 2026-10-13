@@ -51,6 +51,8 @@ func payloadOK(t Type, payload cbor.Value) bool {
 		return isID(field("org_key")) && isID(field("advertiser"))
 	case TypeAppRecord:
 		return appPayloadOK(payload, len(entries))
+	case TypeStationAuthorization:
+		return stationAuthorizationPayloadOK(payload)
 	}
 	return t >= DomainTypeMin
 }
@@ -201,6 +203,8 @@ func slotFieldNames(t int64) []string {
 		return []string{"advertiser"}
 	case int64(TypeAppRecord):
 		return []string{"realm_id", "org_name", "app_name"}
+	case int64(TypeStationAuthorization):
+		return []string{"realm_id", "station_node"}
 	}
 	return nil
 }

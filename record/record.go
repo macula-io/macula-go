@@ -66,6 +66,7 @@ const (
 	TypeFoundationT3Attestation  Type = 0x10
 	TypeContentAnnouncement      Type = 0x11
 	TypeStationEndpoint          Type = 0x12
+	TypeStationAuthorization     Type = 0x13
 	TypeOrgDirectory             Type = 0x15
 	TypeProcedureDelegation      Type = 0x16
 	TypeAppRecord                Type = 0x17
@@ -295,10 +296,10 @@ func Encode(r Record) ([]byte, error) {
 // exactly the envelope keys, each of its type (ErrMalformed); the clock
 // (ErrNotYetValid, ErrExpired, 5 minutes of tolerance); the lifetime
 // (ErrLifetimeReversed, ErrLifetimeClassUnknown, ErrLifetimeTooLong against
-// its row); and the slot (ErrSubjectMissing). Then a reader's own: a type it
-// knows (ErrTypeUnknown),
-// a schema it reads (ErrSchemaUnsupported) and the type's lifetime row
-// (ErrLifetimeClassMismatch); an unknown critical extension
+// the row named, then for a known type its own row, ErrLifetimeClassMismatch);
+// and the slot (ErrSubjectMissing). Then a reader's own: a type it knows
+// (ErrTypeUnknown) and a schema it reads (ErrSchemaUnsupported); an unknown
+// critical extension
 // (frame.ErrExtensionUnsupported), unknown non-critical ones counted; the
 // type's payload rules (ErrMalformed), a content id tag it knows
 // (ErrMcidTagUnknown), and a payload that names its signer by the key's id
@@ -367,6 +368,9 @@ func custodianChecks(wire []byte, p profile.Profile, nowMs int64) (Record, error
 	if err := lifetime(r); err != nil {
 		return Record{}, err
 	}
+	if err := ownRow(r); err != nil {
+		return Record{}, err
+	}
 	r.KeyID = keyIDOf(signerKind(int64(r.Type), r.Payload), r.Key, p)
 	if _, err := custodianSlot(r); err != nil {
 		return Record{}, err
@@ -400,16 +404,24 @@ func readerChecks(r Record) error {
 	return payloadChecks(r)
 }
 
-// readerKnows is section 5.2's step 10: a type this library knows, a schema it
-// reads and the type's lifetime row.
+// readerKnows is section 5.2's step 10: a type this library knows and a
+// schema it reads.
 func readerKnows(r Record) error {
-	row, known := typeLifetimeClass(int64(r.Type), r.Payload)
-	switch {
-	case !known:
+	if _, known := typeLifetimeClass(int64(r.Type), r.Payload); !known {
 		return fmt.Errorf("%w: %#02x", ErrTypeUnknown, uint8(r.Type))
-	case r.Schema != Schema:
+	}
+	if r.Schema != Schema {
 		return fmt.Errorf("%w: schema %d of type %#02x", ErrSchemaUnsupported, r.Schema, uint8(r.Type))
-	case r.LifetimeClass != row:
+	}
+	return nil
+}
+
+// ownRow is the end of section 5.2's step 8: a known type (section 5.1) names
+// its own row, else ErrLifetimeClassMismatch. A custodian bounds an unknown
+// type by the row it names.
+func ownRow(r Record) error {
+	row, known := typeLifetimeClass(int64(r.Type), r.Payload)
+	if known && r.LifetimeClass != row {
 		return fmt.Errorf("%w: class %d, type %#02x has %d", ErrLifetimeClassMismatch, r.LifetimeClass, uint8(r.Type), row)
 	}
 	return nil
@@ -646,8 +658,8 @@ func tombstoneMarginMs(t Type) int64 {
 // typeLifetimeClass is the row a record of type t names (section 5.1), and
 // whether this library knows the type: node record and content announcement
 // 48 hours; procedure advertisement and station endpoint 5 minutes; realm
-// stations and org directory 6 hours; procedure delegation and app record 30
-// minutes; realm member endorsement 30 days; a domain type 7 days; the other
+// stations and org directory 6 hours; procedure delegation, app record and
+// station authorization 30 minutes; realm member endorsement 30 days; a domain type 7 days; the other
 // built-in types it knows 30 days; and a tombstone the row of the type it
 // withdraws.
 func typeLifetimeClass(t int64, payload cbor.Value) (uint8, bool) {
@@ -658,7 +670,7 @@ func typeLifetimeClass(t int64, payload cbor.Value) (uint8, bool) {
 		return lifetimeClass5Minutes, true
 	case t == int64(TypeRealmStations), t == int64(TypeOrgDirectory):
 		return lifetimeClass6Hours, true
-	case t == int64(TypeProcedureDelegation), t == int64(TypeAppRecord):
+	case t == int64(TypeProcedureDelegation), t == int64(TypeAppRecord), t == int64(TypeStationAuthorization):
 		return lifetimeClass30Minutes, true
 	case t == int64(TypeRealmMemberEndorsement), t == int64(TypeRealmDirectory),
 		t >= int64(TypeFoundationSeedList) && t <= int64(TypeFoundationT3Attestation):
@@ -709,7 +721,7 @@ func signerPurposes(t int64, payload cbor.Value) []identity.Purpose {
 		t == int64(TypeStationEndpoint):
 		return []identity.Purpose{identity.PurposeIdentity}
 	case t == int64(TypeRealmDirectory), t == int64(TypeRealmStations), t == int64(TypeRealmMemberEndorsement),
-		t == int64(TypeOrgDirectory):
+		t == int64(TypeOrgDirectory), t == int64(TypeStationAuthorization):
 		return []identity.Purpose{"realm"}
 	case t == int64(TypeProcedureDelegation), t == int64(TypeAppRecord):
 		return []identity.Purpose{"org"}

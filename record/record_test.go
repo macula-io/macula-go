@@ -142,6 +142,19 @@ func appService(name string, procedures ...string) cbor.Value {
 	return cbor.Map([]cbor.MapEntry{textEntry("name", name), valueEntry("procedures", cbor.List(listed))})
 }
 
+// stationAuthorizationPayload is a realm's authorization of the station 0x77...
+// at a hostname, valid for the 30 minutes from validFrom.
+func stationAuthorizationPayload(validFrom int64) []cbor.MapEntry {
+	return []cbor.MapEntry{
+		bytesEntry("realm_id", idBytes(0x11)),
+		bytesEntry("station_node", idBytes(0x77)),
+		textEntry("hostname", "station.example"),
+		valueEntry("roles", cbor.List([]cbor.Value{cbor.Text("relay")})),
+		uintEntry("valid_from", uint64(validFrom)),
+		uintEntry("valid_until", uint64(validFrom+30*testMinute)),
+	}
+}
+
 func contentAnnouncementPayload(announcer [32]byte) cbor.Value {
 	mcid := make([]byte, 50)
 	mcid[0], mcid[1] = 2, 0x55
@@ -511,6 +524,9 @@ func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 	}
 	appTombstone := withdrawing(TypeAppRecord, bytesEntry("realm_id", idBytes(0x11)), textEntry("org_name", "acme"),
 		textEntry("app_name", "weather"))
+	authorization := stationAuthorizationPayload(nowMs())
+	authorizationTombstone := withdrawing(TypeStationAuthorization, bytesEntry("realm_id", idBytes(0x11)),
+		bytesEntry("station_node", idBytes(0x77)))
 	for _, c := range []struct {
 		name       string
 		recordType Type
@@ -551,6 +567,30 @@ func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 		{"an endorsement tombstone without member_node", TypeTombstone, withoutEntry(endorsementTombstone, "member_node"), testHour, ErrMalformed},
 		{"an endorsement tombstone with a member_node of 31 bytes", TypeTombstone,
 			withEntry(endorsementTombstone, "member_node", cbor.Bytes(make([]byte, 31))), testHour, ErrMalformed},
+		{"a station authorization", TypeStationAuthorization, authorization, 30 * testMinute, nil},
+		{"a station authorization requiring an attestation", TypeStationAuthorization, append(slices.Clone(authorization),
+			uintEntry("attestation_required", 1), bytesEntry("attestation_key_id", idBytes(0x66))), 30 * testMinute, nil},
+		{"an attestation key id without the flag", TypeStationAuthorization, append(slices.Clone(authorization),
+			bytesEntry("attestation_key_id", idBytes(0x66))), 30 * testMinute, nil},
+		{"an attestation required with no key id", TypeStationAuthorization, append(slices.Clone(authorization),
+			uintEntry("attestation_required", 1)), 30 * testMinute, ErrMalformed},
+		{"an attestation required as 0", TypeStationAuthorization, append(slices.Clone(authorization),
+			uintEntry("attestation_required", 0), bytesEntry("attestation_key_id", idBytes(0x66))), 30 * testMinute, ErrMalformed},
+		{"an attestation key id of 31 bytes", TypeStationAuthorization, append(slices.Clone(authorization),
+			bytesEntry("attestation_key_id", make([]byte, 31))), 30 * testMinute, ErrMalformed},
+		{"a station authorization without station_node", TypeStationAuthorization, withoutEntry(authorization, "station_node"), 30 * testMinute, ErrMalformed},
+		{"an empty hostname", TypeStationAuthorization, withEntry(authorization, "hostname", cbor.Text("")), 30 * testMinute, ErrMalformed},
+		{"a hostname of 254 bytes", TypeStationAuthorization, withEntry(authorization, "hostname", cbor.Text(strings.Repeat("h", 254))), 30 * testMinute, ErrMalformed},
+		{"a hostname of 253 bytes", TypeStationAuthorization, withEntry(authorization, "hostname", cbor.Text(strings.Repeat("h", 253))), 30 * testMinute, nil},
+		{"a role of 65 bytes", TypeStationAuthorization, withEntry(authorization, "roles",
+			cbor.List([]cbor.Value{cbor.Text(strings.Repeat("r", 65))})), 30 * testMinute, ErrMalformed},
+		{"a role as bytes", TypeStationAuthorization, withEntry(authorization, "roles",
+			cbor.List([]cbor.Value{cbor.Bytes([]byte("relay"))})), 30 * testMinute, ErrMalformed},
+		{"no roles", TypeStationAuthorization, withEntry(authorization, "roles", cbor.List(nil)), 30 * testMinute, nil},
+		{"a window reversed", TypeStationAuthorization, withEntry(authorization, "valid_until", cbor.Int(1)), 30 * testMinute, ErrMalformed},
+		{"a window over 30 minutes", TypeStationAuthorization, withEntry(authorization, "valid_until",
+			cbor.Uint64(uint64(nowMs()+30*testMinute+testMinute))), 30 * testMinute, ErrMalformed},
+		{"a tombstone of a station authorization", TypeTombstone, authorizationTombstone, 40 * testMinute, nil},
 		{"an app record", TypeAppRecord, app, 30 * testMinute, nil},
 		{"an app record with no services", TypeAppRecord, appServices(), 30 * testMinute, nil},
 		{"an app record of the org _", TypeAppRecord, withEntry(app, "org_name", cbor.Text("_")), 30 * testMinute, ErrMalformed},
@@ -703,6 +743,7 @@ func TestARecordLivingPastItsTypesMaximumIsRefused(t *testing.T) {
 		{"a realm directory, which has no rule of its own", TypeRealmDirectory, 30 * testDay, realm},
 		{"a domain record", DomainTypeMin, 7 * testDay, cbor.Map(nil)},
 		{"an app record", TypeAppRecord, 30 * testMinute, cbor.Map(appPayload(keyID))},
+		{"a station authorization", TypeStationAuthorization, 30 * testMinute, cbor.Map(stationAuthorizationPayload(nowMs()))},
 		{"a tombstone withdrawing a procedure advertisement", TypeTombstone, 15 * testMinute, cbor.Map([]cbor.MapEntry{
 			uintEntry("withdrawn_type", uint64(TypeProcedureAdvertisement)), bytesEntry("withdrawn_version", make([]byte, 16)),
 			textEntry("reason", "shutdown"), bytesEntry("realm_id", idBytes(0x11)), textEntry("procedure", "acme/echo_v1")})},

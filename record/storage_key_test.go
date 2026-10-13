@@ -59,6 +59,8 @@ func TestRecordsNamedByTheirPayloadMatchTheVectors(t *testing.T) {
 			"c3860b4b53a5ad2ab73ec3c26ec8c228e46f2f0c123732b257ea5c8b93351138"},
 		{"an org directory", unsignedRecord(t, TypeOrgDirectory, realm, textEntry("org_name", "acme"), bytesEntry("org_key", idBytes(0x44))),
 			"a0c45a66de0f7000a76726e424add18ef32014cbd106e9c72e8c8425c1282924"},
+		{"a station authorization", unsignedRecord(t, TypeStationAuthorization, stationAuthorizationPayload(0)...),
+			"3fd8d52ca2f352dffb12184e1b08d331811b6753673db609811a68ea9fb50f2b"},
 		{"an app record", unsignedRecord(t, TypeAppRecord, appPayload(fill(0x44))...),
 			"d1bfbda0745c91dd39ead9ccdaff401c2bdf0bcdd0883d12cce023e598d5bdbb"},
 	} {
