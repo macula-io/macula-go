@@ -2,12 +2,16 @@ package stationlink
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"testing"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/handshake"
+	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/internal/wire10vectors"
+	"github.com/macula-io/macula-go/profile"
 )
 
 // The wire 1.0 envelope vectors (macula priv/vectors/wire_1_0/envelope.json,
@@ -40,7 +44,10 @@ func envelopeVerdict(t *testing.T, c wire10vectors.Case) (outcome, reason string
 		}
 		return "accept", "", 0
 	}
-	_, known, err := readControl(payload)
+	envelope, known, err := readControl(payload)
+	if err == nil && known && envelope.FrameType == "status" {
+		_, err = handshake.ReadStatus(cbor.Encode(envelope.Frame), statusPeer(t, c))
+	}
 	switch {
 	case errors.Is(err, frame.ErrExtensionUnsupported):
 		return "refuse", "extension_unsupported", 0
@@ -50,6 +57,34 @@ func envelopeVerdict(t *testing.T, c wire10vectors.Case) (outcome, reason string
 		return "ignore", "", 0
 	}
 	return "accept", "", 0
+}
+
+// statusPeer is the sender a STATUS case names (input.status_peer): its
+// identity key, by role in keys.json, and its TLS binding, as a link holds
+// them after HELLO; the link reads a STATUS as statusRenewed does.
+func statusPeer(t *testing.T, c wire10vectors.Case) handshake.Peer {
+	t.Helper()
+	sender, _ := c.Input["status_peer"].(map[string]any)
+	binding, _ := sender["binding"].(map[string]any)
+	keys, err := wire10vectors.LoadKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, _ := sender["identity"].(string)
+	key, err := keys.Key(c.Profile, role)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hexOf := func(name string) []byte {
+		s, _ := binding[name].(string)
+		b, err := hex.DecodeString(s)
+		if err != nil || s == "" {
+			t.Fatalf("status_peer.binding.%s: %q, %v", name, s, err)
+		}
+		return b
+	}
+	return handshake.Peer{Profile: profile.Profile(c.Profile), IdentityKey: key,
+		Binding: identity.SignedTBS{TBS: hexOf("tbs"), Signature: hexOf("signature")}, NowMs: c.Int("now_ms")}
 }
 
 func TestTheWireOneEnvelopeVectors(t *testing.T) {
