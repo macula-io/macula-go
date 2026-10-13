@@ -32,12 +32,19 @@ func (f *handshakeFloors) of(nodeID [32]byte) int64 {
 	return f.floor[nodeID]
 }
 
-// completed records a handshake completed with nodeID in version.
-func (f *handshakeFloors) completed(nodeID [32]byte, version int64) {
+// completed records a handshake completed with nodeID in version, and reports
+// false, recording nothing, when version is below the floor: another link may
+// have raised it during this one's round trip, so the floor read before the
+// round trip is not the last word.
+func (f *handshakeFloors) completed(nodeID [32]byte, version int64) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.floor[nodeID] = max(f.floor[nodeID], version)
+	if version < f.floor[nodeID] {
+		return false
+	}
+	f.floor[nodeID] = version
 	f.counters["connections"]++
+	return true
 }
 
 func (f *handshakeFloors) count(name string) {

@@ -218,6 +218,9 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 	if err != nil {
 		return nil, err
 	}
+	if !floors.completed(station.NodeID, station.Version) {
+		return nil, fmt.Errorf("stationlink: version %d: %w", station.Version, handshake.ErrVersionBelowFloor)
+	}
 	_ = stream.SetReadDeadline(time.Time{})
 	self, err := cfg.IdentityKey.NodeID()
 	if err != nil {
@@ -253,7 +256,6 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		keyring: cfg.Keyring, kemAdvertise: cfg.KEMAdvertise,
 		done: make(chan struct{}),
 	}
-	floors.completed(station.NodeID, station.Version)
 	// Under the link's lock: end reads the timers under the same lock.
 	link.mu.Lock()
 	link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })
