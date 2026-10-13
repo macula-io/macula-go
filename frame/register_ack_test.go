@@ -61,3 +61,36 @@ func TestARegisterAckReadsAsItsKindNamesIt(t *testing.T) {
 		}
 	}
 }
+
+// A station's REGISTER_ACK, as RegisterAckFrame builds it, reads back as built;
+// the builder refuses what a reader would: an unknown kind, an empty or
+// over-long name, and a refusal without a reason it knows.
+func TestARegisterAckBuildsAsItReads(t *testing.T) {
+	for _, ack := range []RegisterAck{
+		{Kind: "advertise", Realm: [32]byte{1}, Name: "acme/echo_v1", RecordVersion: [16]byte{2}, Accepted: true},
+		{Kind: "unadvertise", Realm: [32]byte{1}, Name: "acme/echo_v1", RecordVersion: [16]byte{2}, Reason: "record_refused"},
+		{Kind: "subscribe", Realm: [32]byte{1}, Name: "acme/topic", Subscriber: [32]byte{3}, Accepted: true},
+		{Kind: "unsubscribe", Realm: [32]byte{1}, Name: "acme/topic", Subscriber: [32]byte{3}, Reason: "too_many_realms"},
+	} {
+		built, err := RegisterAckFrame(ack)
+		if err != nil {
+			t.Fatalf("%+v: %v", ack, err)
+		}
+		read, known, err := ReadRegisterAck(built)
+		if err != nil || !known || read != ack {
+			t.Errorf("built %+v, read back (%+v, %t, %v)", ack, read, known, err)
+		}
+	}
+	for name, ack := range map[string]RegisterAck{
+		"an unknown kind":                {Kind: "register", Name: "x", Accepted: true},
+		"an empty name":                  {Kind: "advertise", Accepted: true},
+		"a name of 513 bytes":            {Kind: "advertise", Name: strings.Repeat("n", 513), Accepted: true},
+		"a refusal with no reason":       {Kind: "advertise", Name: "x"},
+		"a refusal of an unknown reason": {Kind: "advertise", Name: "x", Reason: "a_reason_from_wire_1_1"},
+		"an acceptance with a reason":    {Kind: "advertise", Name: "x", Accepted: true, Reason: "refused"},
+	} {
+		if _, err := RegisterAckFrame(ack); !errors.Is(err, ErrMalformedFrame) {
+			t.Errorf("%s: %v, want ErrMalformedFrame", name, err)
+		}
+	}
+}

@@ -31,12 +31,12 @@ permissions:
 
 env:
   # The version scripts/interop/README.md records as last run; move both together.
-  MACULA_VERSION: ${{ inputs.macula_version || '15.0.0-rc.1' }}
+  MACULA_VERSION: ${{ inputs.macula_version || '15.0.0-rc.2' }}
   MACULA_CI_IMAGE: ghcr.io/macula-io/macula-ci-otp@sha256:aff1d39bc4aa29d13044b90b38e9b7f4b757d50818cc11c5bb7e84cdbf82ac70
 
 jobs:
   sealed:
-    name: sealed interop (macula ${{ inputs.macula_version || '15.0.0-rc.1' }})
+    name: sealed interop (macula ${{ inputs.macula_version || '15.0.0-rc.2' }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

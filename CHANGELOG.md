@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The test station answers registrations with REGISTER_ACK** (WIRE_1_0.md
+  3.5): every ADVERTISE, UNADVERTISE, SUBSCRIBE and UNSUBSCRIBE gets the
+  station's verdict, as a wire 1.0 station gives it, so a client that waits for
+  it (macula 15.0.0-rc.2's advertise and subscribe) is answered.
+  `frame.RegisterAckFrame` builds one.
+
+### Changed
+
+- **The sealed interop runs against macula 15.0.0-rc.2** from hex, both ways,
+  in both profiles.
+
 ## [0.27.0-rc.1] - 2026-10-13
 
 ### Added

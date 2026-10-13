@@ -1,6 +1,7 @@
 package frame
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/macula-io/macula-go/cbor"
@@ -113,4 +114,38 @@ func nonEmptyTextWithin(max int) fieldRule {
 		s, isText := v.AsText()
 		return isText && len(s) > 0 && len(s) <= max
 	}
+}
+
+// RegisterAckFrame is a station's REGISTER_ACK answering ack.Kind (WIRE_1_0.md
+// section 3.5): the record version for an advertise kind, the subscriber for a
+// subscribe kind, and the reason exactly when it refuses. A kind or a reason
+// section 3.5 does not name, or a name that is empty or over 512 bytes, is
+// ErrMalformedFrame, since no reader would take it.
+func RegisterAckFrame(ack RegisterAck) (cbor.Value, error) {
+	switch {
+	case !slices.Contains(registerAckKinds, ack.Kind):
+		return cbor.Value{}, fmt.Errorf("%w: a REGISTER_ACK of kind %q", ErrMalformedFrame, ack.Kind)
+	case ack.Name == "" || len(ack.Name) > maxRegisterAckNameBytes:
+		return cbor.Value{}, fmt.Errorf("%w: a REGISTER_ACK name of %d bytes", ErrMalformedFrame, len(ack.Name))
+	case ack.Accepted != (ack.Reason == ""):
+		return cbor.Value{}, fmt.Errorf("%w: a REGISTER_ACK has a reason exactly when it refuses", ErrMalformedFrame)
+	case !ack.Accepted && !slices.Contains(registerAckReasons, ack.Reason):
+		return cbor.Value{}, fmt.Errorf("%w: a REGISTER_ACK reason %q", ErrMalformedFrame, ack.Reason)
+	}
+	accepted := 0
+	if ack.Accepted {
+		accepted = 1
+	}
+	fields := append(base("register_ack", freshFrameID(), currentMillis()),
+		textEntry("kind", ack.Kind), bytesEntry("realm", ack.Realm[:]), textEntry("name", ack.Name),
+		valueEntry("accepted", cbor.Int(int64(accepted))))
+	if ack.Kind == "advertise" || ack.Kind == "unadvertise" {
+		fields = append(fields, bytesEntry("record_version", ack.RecordVersion[:]))
+	} else {
+		fields = append(fields, bytesEntry("subscriber", ack.Subscriber[:]))
+	}
+	if !ack.Accepted {
+		fields = append(fields, textEntry("reason", ack.Reason))
+	}
+	return cbor.Map(fields), nil
 }

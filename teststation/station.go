@@ -455,7 +455,7 @@ func (s *Station) received(c *conn, payload []byte) {
 	case "advertise":
 		s.advertised(c, opened)
 	case "unadvertise":
-		s.unadvertised(opened)
+		s.unadvertised(c, opened)
 	case "subscribe", "unsubscribe":
 		s.subscribed(c, opened, frameType == "subscribe")
 	case "publish":
@@ -638,59 +638,91 @@ func (s *Station) find(match func(slot, []byte) bool) [][]byte {
 // it; a renewal replaces the one before it. An advertisement in a node's own
 // namespace is admitted as macula-station admits one (0.6.4): only by the
 // node it names, with no authorization.
+// Each is answered with a REGISTER_ACK (WIRE_1_0.md section 3.5), as a wire
+// 1.0 station answers it: a client that waits for the verdict (macula 15's
+// advertise and subscribe) gets one.
 func (s *Station) advertised(c *conn, v cbor.Value) {
 	wire, _ := field(v, "advertisement").AsBytes()
 	verified, err := record.Verify(wire, s.Profile, time.Now().UnixMilli())
 	if err != nil {
 		s.t.Errorf("teststation: an advertisement that does not verify: %v", err)
+		s.acknowledge(c, frame.RegisterAck{Kind: "advertise", Name: "unreadable", Reason: "record_refused"})
 		return
 	}
-	ad, err := record.ReadProcedureAdvertisement(verified.Record())
+	r := verified.Record()
+	ad, err := record.ReadProcedureAdvertisement(r)
+	ack := frame.RegisterAck{Kind: "advertise", Realm: ad.RealmID, Name: ad.Procedure, RecordVersion: r.Version, Accepted: true}
 	if err != nil || ad.AdvertiserNode != c.nodeID {
 		s.t.Errorf("teststation: an advertisement for another node: %v", err)
+		ack.Accepted, ack.Reason = false, "not_authorized"
+		s.acknowledge(c, ack)
 		return
 	}
 	if record.InOwnNamespace(ad.Procedure) {
 		if err := record.OwnNamespace(verified); err != nil {
 			s.t.Errorf("teststation: an own-namespace advertisement the station would not admit: %v", err)
+			ack.Accepted, ack.Reason = false, "not_authorized"
+			s.acknowledge(c, ack)
 			return
 		}
 	}
 	s.mu.Lock()
 	s.routes[routeKey{ad.RealmID, ad.Procedure}] = c
 	s.mu.Unlock()
+	s.acknowledge(c, ack)
+}
+
+// acknowledge sends c the REGISTER_ACK ack.
+func (s *Station) acknowledge(c *conn, ack frame.RegisterAck) {
+	v, err := frame.RegisterAckFrame(ack)
+	if err != nil {
+		s.t.Errorf("teststation: a REGISTER_ACK it cannot build: %v", err)
+		return
+	}
+	_ = c.writer.write(cbor.Encode(v), maxFrameBytes)
 }
 
 // unadvertised withdraws the route a tombstone names.
-func (s *Station) unadvertised(v cbor.Value) {
+func (s *Station) unadvertised(c *conn, v cbor.Value) {
 	wire, _ := field(v, "withdrawal").AsBytes()
 	verified, err := record.Verify(wire, s.Profile, time.Now().UnixMilli())
 	if err != nil {
 		s.t.Errorf("teststation: a withdrawal that does not verify: %v", err)
+		s.acknowledge(c, frame.RegisterAck{Kind: "unadvertise", Name: "unreadable", Reason: "record_refused"})
 		return
 	}
 	tombstone, err := record.ReadTombstone(verified.Record())
+	ack := frame.RegisterAck{Kind: "unadvertise", Realm: tombstone.RealmID, Name: tombstone.Procedure,
+		RecordVersion: tombstone.WithdrawnVersion, Accepted: true}
 	if err != nil || tombstone.WithdrawnType != record.TypeProcedureAdvertisement {
 		s.t.Errorf("teststation: a withdrawal of something else: %v", err)
+		ack.Accepted, ack.Reason, ack.Name = false, "record_refused", "unreadable"
+		s.acknowledge(c, ack)
 		return
 	}
 	s.mu.Lock()
 	delete(s.routes, routeKey{tombstone.RealmID, tombstone.Procedure})
 	s.mu.Unlock()
+	s.acknowledge(c, ack)
 }
 
 func (s *Station) subscribed(c *conn, v cbor.Value, on bool) {
 	realmBytes, _ := field(v, "realm").AsBytes()
 	topic, _ := field(v, "topic").AsBytes()
-	var realm [32]byte
+	subscriberBytes, _ := field(v, "subscriber").AsBytes()
+	var realm, subscriber [32]byte
 	copy(realm[:], realmBytes)
+	copy(subscriber[:], subscriberBytes)
+	kind := "unsubscribe"
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if on {
+		kind = "subscribe"
 		c.topics[routeKey{realm, string(topic)}] = true
 	} else {
 		delete(c.topics, routeKey{realm, string(topic)})
 	}
+	s.mu.Unlock()
+	s.acknowledge(c, frame.RegisterAck{Kind: kind, Realm: realm, Name: string(topic), Subscriber: subscriber, Accepted: true})
 }
 
 // published delivers a verified publication as an EVENT to every connection

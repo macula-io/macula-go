@@ -26,7 +26,7 @@
 > own namespace) and node-served content work as before, now on the wire 1.0
 > envelope, handshake and records, held to macula's wire 1.0 conformance
 > vectors in every `go test`. Calls and streams are sealed end to end (scheme
-> 1), checked both ways against macula 15.0.0-rc.1 from hex.pm in `pq_pure`
+> 1), checked both ways against macula 15.0.0-rc.2 from hex.pm in `pq_pure`
 > and `pq_hybrid`.
 
 ## What is this?
