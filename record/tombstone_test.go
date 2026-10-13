@@ -87,7 +87,7 @@ func TestATombstoneExpiresNoEarlierThanTheWithdrawnRecord(t *testing.T) {
 func TestATombstoneOutlivesTheWithdrawnRecordByTheClockTolerance(t *testing.T) {
 	keys := keysFor(t)
 	now := nowMs()
-	advertisement := must[Record](t)(NewProcedureAdvertisement(keys.node.KeyID(), fill(0x11), "acme/echo_v1", fill(0x77),
+	advertisement := must[Record](t)(NewProcedureAdvertisement(keys.node.KeyID(), fill(0x11), "acme/echo_v1", [][32]byte{fill(0x77)},
 		ProcedureAdvertisementOptions{}))
 	advertisement.CreatedAt, advertisement.ExpiresAt = uint64(now+4*testMinute), uint64(now+9*testMinute)
 	withdrawn := must[Record](t)(Sign(advertisement, keys.node))

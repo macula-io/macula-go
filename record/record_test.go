@@ -116,7 +116,7 @@ func advertisementPayload(advertiser [32]byte) cbor.Value {
 		bytesEntry("realm_id", idBytes(0x11)),
 		textEntry("procedure", "acme/echo_v1"),
 		bytesEntry("advertiser_node", advertiser[:]),
-		bytesEntry("serving_station", idBytes(0x77)),
+		valueEntry("serving_stations", cbor.List([]cbor.Value{cbor.Bytes(idBytes(0x77))})),
 	})
 }
 
@@ -540,7 +540,16 @@ func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 		{"an authorization that is not a map", TypeProcedureAdvertisement,
 			withEntry(advertisement, "authorization", cbor.List([]cbor.Value{cbor.Uint64(1)})), 5 * testMinute, ErrMalformed},
 		{"a fifth key that is not authorization", TypeProcedureAdvertisement, unknownKey, 5 * testMinute, ErrMalformed},
-		{"an advertisement without serving_station", TypeProcedureAdvertisement, withoutEntry(advertisement, "serving_station"), 5 * testMinute, ErrMalformed},
+		{"an advertisement without serving_stations", TypeProcedureAdvertisement, withoutEntry(advertisement, "serving_stations"), 5 * testMinute, ErrMalformed},
+		{"an advertisement naming serving_station, one", TypeProcedureAdvertisement,
+			append(withoutEntry(advertisement, "serving_stations"), bytesEntry("serving_station", idBytes(0x77))), 5 * testMinute, ErrMalformed},
+		{"serving_stations of no station", TypeProcedureAdvertisement, withEntry(advertisement, "serving_stations", cbor.List(nil)), 5 * testMinute, ErrMalformed},
+		{"serving_stations descending", TypeProcedureAdvertisement, withEntry(advertisement, "serving_stations",
+			cbor.List([]cbor.Value{cbor.Bytes(idBytes(9)), cbor.Bytes(idBytes(3))})), 5 * testMinute, ErrMalformed},
+		{"serving_stations naming one twice", TypeProcedureAdvertisement, withEntry(advertisement, "serving_stations",
+			cbor.List([]cbor.Value{cbor.Bytes(idBytes(3)), cbor.Bytes(idBytes(3))})), 5 * testMinute, ErrMalformed},
+		{"a serving station of 31 bytes", TypeProcedureAdvertisement, withEntry(advertisement, "serving_stations",
+			cbor.List([]cbor.Value{cbor.Bytes(make([]byte, 31))})), 5 * testMinute, ErrMalformed},
 		{"a realm_id of 31 bytes", TypeProcedureAdvertisement, withEntry(advertisement, "realm_id", cbor.Bytes(make([]byte, 31))), 5 * testMinute, ErrMalformed},
 		{"a procedure as bytes", TypeProcedureAdvertisement, withEntry(advertisement, "procedure", cbor.Bytes([]byte("acme/x"))), 5 * testMinute, ErrMalformed},
 		{"a content announcement", TypeContentAnnouncement, announcement, testHour, nil},

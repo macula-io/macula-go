@@ -104,6 +104,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detail omits the key instead of carrying null, and a control frame whose
   `detail` or SUBSCRIBE `options` is null is `frame.ErrMalformedFrame`
   (`detail` is bytes of at most 256, `options` a map).
+- **An advertisement names 1 to 8 serving stations** (WIRE_1_0.md 5.3, K > 1,
+  macula-station#55). **Breaking:** `record.NewProcedureAdvertisement` takes
+  `servingStations [][32]byte`, sorts them ascending and refuses none, more
+  than 8 or one twice (`ErrMalformed`); the payload's `serving_station` is
+  `serving_stations`, strictly ascending, and a reader refuses anything else.
+  `ProcedureAdvertisement.ServingStation` is `ServingStations`. The pool tries
+  a provider through each station it names.
 - **Station authorizations** (`record.TypeStationAuthorization`, 0x13,
   macula-station#63): a realm's signed statement that a node serves it as a
   station at a hostname, in roles, over a window of at most 30 minutes, with the

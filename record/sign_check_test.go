@@ -86,7 +86,7 @@ func TestEveryBuilderSignsAndVerifies(t *testing.T) {
 		r    Record
 	}{
 		{"a node record", node},
-		{"a procedure advertisement", must[Record](t)(NewProcedureAdvertisement(nodeID, fill(0x11), "acme/x", fill(2), ProcedureAdvertisementOptions{
+		{"a procedure advertisement", must[Record](t)(NewProcedureAdvertisement(nodeID, fill(0x11), "acme/x", [][32]byte{fill(2)}, ProcedureAdvertisementOptions{
 			Authorization: Authorization{Form: DelegationAuthorization, OrgDirectory: []byte("d"), ProcedureDelegation: []byte("p")},
 		}))},
 		{"a content announcement", must[Record](t)(NewContentAnnouncement(nodeID, testContentID(), ContentAnnouncementOptions{RealmID: fill(3), ServingStation: fill(4), Procedure: testProcedure, Name: "a.bin", Size: &size}))},

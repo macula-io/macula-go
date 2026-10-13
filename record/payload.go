@@ -58,15 +58,15 @@ func payloadOK(t Type, payload cbor.Value) bool {
 }
 
 // advertisementPayloadOK reports whether a procedure advertisement's payload is
-// exactly realm_id, procedure (text), advertiser_node and serving_station, with
-// authorization (a map) when it carries one, and with a KEM key pair when it
-// names one (kemKeyFields).
+// exactly realm_id, procedure (text), advertiser_node and serving_stations
+// (servingStationsOK), with authorization (a map) when it carries one, and with
+// a KEM key pair when it names one (kemKeyFields).
 func advertisementPayloadOK(payload cbor.Value, size int) bool {
 	realmID, _ := payload.Get("realm_id")
 	procedure, _ := payload.Get("procedure")
 	advertiser, _ := payload.Get("advertiser_node")
-	serving, _ := payload.Get("serving_station")
-	if !isID(realmID) || !isText(procedure) || !isID(advertiser) || !isID(serving) {
+	serving, _ := payload.Get("serving_stations")
+	if !isID(realmID) || !isText(procedure) || !isID(advertiser) || !servingStationsOK(serving) {
 		return false
 	}
 	authorization, hasAuthorization := payload.Get("authorization")
@@ -80,6 +80,29 @@ func advertisementPayloadOK(payload cbor.Value, size int) bool {
 		want++
 	}
 	return size == want
+}
+
+// maxServingStations is how many stations an advertisement may name (K > 1,
+// macula-station#55).
+const maxServingStations = 8
+
+// servingStationsOK reports whether v is an advertisement's serving_stations:
+// 1 to 8 node ids, strictly ascending by bytes, so none twice (WIRE_1_0.md
+// section 5.3).
+func servingStationsOK(v cbor.Value) bool {
+	stations, isList := v.AsList()
+	if !isList || len(stations) == 0 || len(stations) > maxServingStations {
+		return false
+	}
+	var previous []byte
+	for _, station := range stations {
+		id, _ := station.AsBytes()
+		if !isID(station) || (previous != nil && bytes.Compare(previous, id) >= 0) {
+			return false
+		}
+		previous = id
+	}
+	return true
 }
 
 // kemKeyFields is how many payload fields a KEM key pair takes, as

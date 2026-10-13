@@ -465,7 +465,7 @@ func TestAProcedureInTheNodesOwnNamespaceNeedsNoRealmKey(t *testing.T) {
 	}
 	mallory := teststation.Key(t, profile.PQPure, "own impostor")
 	malloryID, _ := mallory.NodeID()
-	forged, err := record.NewProcedureAdvertisement(malloryID, realm, ring, callers.NodeID, record.ProcedureAdvertisementOptions{})
+	forged, err := record.NewProcedureAdvertisement(malloryID, realm, ring, [][32]byte{callers.NodeID}, record.ProcedureAdvertisementOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -194,7 +195,7 @@ func TestServeAdvertisesWithTheDelegationChain(t *testing.T) {
 				t.Errorf("its authorization: %v", err)
 			}
 			ad, err := record.ReadProcedureAdvertisement(verified.Record())
-			if err != nil || ad.Procedure != servedProcedure || ad.AdvertiserNode != link.NodeID() || ad.ServingStation != s.nodeID {
+			if err != nil || ad.Procedure != servedProcedure || ad.AdvertiserNode != link.NodeID() || !slices.Equal(ad.ServingStations, [][32]byte{s.nodeID}) {
 				t.Errorf("advertisement %+v, %v", ad, err)
 			}
 		})
@@ -454,7 +455,7 @@ func TestServeInTheNodesOwnNamespace(t *testing.T) {
 				t.Errorf("VerifyAuthorization with no realm key: %v", err)
 			}
 			ad, _ := record.ReadProcedureAdvertisement(verified.Record())
-			if ad.Authorization.Form != record.NoAuthorization || ad.ServingStation != s.nodeID {
+			if ad.Authorization.Form != record.NoAuthorization || !slices.Equal(ad.ServingStations, [][32]byte{s.nodeID}) {
 				t.Errorf("advertisement %+v", ad)
 			}
 			_, request := s.call(t, link.NodeID(), procedure, cbor.Text("ring ring"), time.Now().Add(5*time.Second))

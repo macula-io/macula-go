@@ -205,7 +205,7 @@ func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 // own namespace.
 func (l *Link) advertisement(ctx context.Context, o Offer, maxTTL time.Duration) (record.Record, []byte, error) {
 	if record.InOwnNamespace(o.Procedure) {
-		unsigned, err := record.NewProcedureAdvertisement(l.self, o.Realm, o.Procedure, l.station.NodeID,
+		unsigned, err := record.NewProcedureAdvertisement(l.self, o.Realm, o.Procedure, [][32]byte{l.station.NodeID},
 			record.ProcedureAdvertisementOptions{TTLMs: uint64(maxTTL / time.Millisecond), KEMKey: l.kemKey(o)})
 		if err != nil {
 			return record.Record{}, nil, err
@@ -239,7 +239,7 @@ func (l *Link) advertisement(ctx context.Context, o Offer, maxTTL time.Duration)
 	if ttl <= 0 {
 		return record.Record{}, nil, record.ErrAuthorizationOutlived
 	}
-	unsigned, err := record.NewProcedureAdvertisement(l.self, o.Realm, o.Procedure, l.station.NodeID,
+	unsigned, err := record.NewProcedureAdvertisement(l.self, o.Realm, o.Procedure, [][32]byte{l.station.NodeID},
 		record.ProcedureAdvertisementOptions{
 			Authorization: record.Authorization{Form: record.DelegationAuthorization,
 				OrgDirectory: directoryWire, ProcedureDelegation: delegationWire},

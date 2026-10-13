@@ -2,6 +2,7 @@ package record
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 
 	"github.com/macula-io/macula-go/cbor"
@@ -10,7 +11,7 @@ import (
 
 // These tests mirror macula's macula_record_advertisement_tests at merge-11.0.0
 // 2d2c2ecb for the advertisement itself: the payload holds realm_id, procedure,
-// advertiser_node, serving_station and, for a procedure with an org namespace,
+// advertiser_node, serving_stations and, for a procedure with an org namespace,
 // the provider authorization, an org directory and a procedure delegation,
 // which a storing verifier never parses. macula 11.0.0 has no other form: its
 // builder builds none, and its reader reads any other authorization map, a
@@ -20,12 +21,39 @@ import (
 // TestAPayloadItsTypeDoesNotAllowIsMalformed, and procedure_org/1 and
 // verify_authorization/3 are in provider_authorization_test.go.
 
-func TestTheAdvertisementPayloadHoldsRealmIDProcedureAdvertiserAndServingStation(t *testing.T) {
-	r := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "_/posts.get_page", fill(0x77), ProcedureAdvertisementOptions{}))
+func TestTheAdvertisementPayloadHoldsRealmIDProcedureAdvertiserAndServingStations(t *testing.T) {
+	r := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "_/posts.get_page", [][32]byte{fill(0x77)}, ProcedureAdvertisementOptions{}))
 	want := cbor.Map([]cbor.MapEntry{bytesEntry("realm_id", idBytes(0x11)), textEntry("procedure", "_/posts.get_page"),
-		bytesEntry("advertiser_node", idBytes(1)), bytesEntry("serving_station", idBytes(0x77))})
+		bytesEntry("advertiser_node", idBytes(1)), valueEntry("serving_stations", cbor.List([]cbor.Value{cbor.Bytes(idBytes(0x77))}))})
 	if !sameValue(r.Payload, want) {
 		t.Errorf("the payload %v, want %v", r.Payload, want)
+	}
+}
+
+// An advertisement names 1 to 8 serving stations, strictly ascending by bytes
+// (WIRE_1_0.md section 5.3, K > 1): the builder sorts them, and refuses none,
+// nine or a station named twice.
+func TestAnAdvertisementNamesOneToEightServingStationsAscending(t *testing.T) {
+	build := func(stations ...[32]byte) (Record, error) {
+		return NewProcedureAdvertisement(fill(1), fill(0x11), "acme/echo_v1", stations, ProcedureAdvertisementOptions{})
+	}
+	r := must[Record](t)(build(fill(9), fill(3), fill(7)))
+	read := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(r))
+	if want := [][32]byte{fill(3), fill(7), fill(9)}; !slices.Equal(read.ServingStations, want) {
+		t.Errorf("serving stations %x, want them ascending %x", read.ServingStations, want)
+	}
+	eight := make([][32]byte, 8)
+	for i := range eight {
+		eight[i] = fill(byte(i + 1))
+	}
+	if _, err := build(eight...); err != nil {
+		t.Errorf("eight serving stations: %v, want it built", err)
+	}
+	for name, stations := range map[string][][32]byte{
+		"none": nil, "nine": append(slices.Clone(eight), fill(9)), "a station twice": {fill(3), fill(3)},
+	} {
+		_, err := build(stations...)
+		wantRefusal(t, "an advertisement naming "+name, err, ErrMalformed)
 	}
 }
 
@@ -34,7 +62,7 @@ func TestTheAdvertisementPayloadHoldsRealmIDProcedureAdvertiserAndServingStation
 // malformed form ErrMalformed.
 func TestTheAuthorizationTravelsInsideThePayload(t *testing.T) {
 	delegation := Authorization{Form: DelegationAuthorization, OrgDirectory: []byte("org directory"), ProcedureDelegation: []byte("delegation")}
-	r := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "acme/get_forecast_v1", fill(0x77),
+	r := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "acme/get_forecast_v1", [][32]byte{fill(0x77)},
 		ProcedureAdvertisementOptions{Authorization: delegation}))
 	want := cbor.Map([]cbor.MapEntry{bytesEntry("org_directory", []byte("org directory")),
 		bytesEntry("procedure_delegation", []byte("delegation"))})
@@ -49,7 +77,7 @@ func TestTheAuthorizationTravelsInsideThePayload(t *testing.T) {
 		{"the unsupported form", UnsupportedAuthorization, ErrAuthorizationFormUnsupported},
 		{"the malformed form", MalformedAuthorization, ErrMalformed},
 	} {
-		_, err := NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", fill(2),
+		_, err := NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", [][32]byte{fill(2)},
 			ProcedureAdvertisementOptions{Authorization: Authorization{Form: c.form}})
 		wantRefusal(t, "build an advertisement with "+c.name, err, c.want)
 	}
@@ -59,15 +87,15 @@ func TestReadProcedureAdvertisementReturnsTheTypedPayload(t *testing.T) {
 	keys := keysFor(t)
 	nodeID := keys.node.KeyID()
 	delegation := Authorization{Form: DelegationAuthorization, OrgDirectory: []byte("org directory"), ProcedureDelegation: []byte("delegation")}
-	built := must[Record](t)(NewProcedureAdvertisement(nodeID, fill(0x11), "acme/get_forecast_v1", fill(0x77),
+	built := must[Record](t)(NewProcedureAdvertisement(nodeID, fill(0x11), "acme/get_forecast_v1", [][32]byte{fill(0x77)},
 		ProcedureAdvertisementOptions{Authorization: delegation}))
 	verified := must[Verified](t)(Verify(wireOf(t, must[Record](t)(Sign(built, keys.node))), profile.PQPure, nowMs())).Record()
 	read := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(verified))
 	if read.RealmID != fill(0x11) || read.Procedure != "acme/get_forecast_v1" || read.AdvertiserNode != nodeID ||
-		read.ServingStation != fill(0x77) || !sameAuthorization(read.Authorization, delegation) {
+		!slices.Equal(read.ServingStations, [][32]byte{fill(0x77)}) || !sameAuthorization(read.Authorization, delegation) {
 		t.Errorf("read %+v, want the advertisement as built", read)
 	}
-	bare := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "echo.ping", fill(2), ProcedureAdvertisementOptions{}))
+	bare := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "echo.ping", [][32]byte{fill(2)}, ProcedureAdvertisementOptions{}))
 	if read := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(bare)); read.Authorization.Form != NoAuthorization {
 		t.Errorf("an advertisement without an authorization reads %+v, want none", read.Authorization)
 	}
@@ -77,14 +105,14 @@ func TestReadProcedureAdvertisementReturnsTheTypedPayload(t *testing.T) {
 
 func TestSignRefusesAnAdvertisementForAnotherAdvertiser(t *testing.T) {
 	keys := keysFor(t)
-	_, err := Sign(must[Record](t)(NewProcedureAdvertisement(fill(9), fill(0x11), "x.y", fill(2), ProcedureAdvertisementOptions{})), keys.node)
+	_, err := Sign(must[Record](t)(NewProcedureAdvertisement(fill(9), fill(0x11), "x.y", [][32]byte{fill(2)}, ProcedureAdvertisementOptions{})), keys.node)
 	wantRefusal(t, "an advertisement naming another advertiser", err, ErrKeyIDMismatch)
 }
 
 func TestAStoringVerifierNeverParsesTheAuthorization(t *testing.T) {
 	keys := keysFor(t)
 	opaque := Authorization{Form: DelegationAuthorization, OrgDirectory: []byte("not a record"), ProcedureDelegation: []byte{}}
-	built := must[Record](t)(NewProcedureAdvertisement(keys.node.KeyID(), fill(0x11), "_/x", fill(2),
+	built := must[Record](t)(NewProcedureAdvertisement(keys.node.KeyID(), fill(0x11), "_/x", [][32]byte{fill(2)},
 		ProcedureAdvertisementOptions{Authorization: opaque}))
 	if _, err := Verify(wireOf(t, must[Record](t)(Sign(built, keys.node))), profile.PQPure, nowMs()); err != nil {
 		t.Errorf("verify an advertisement whose authorization holds no records: %v, want it verified", err)
@@ -94,7 +122,7 @@ func TestAStoringVerifierNeverParsesTheAuthorization(t *testing.T) {
 // A procedure advertisement built without a ttl lives its type's maximum, five
 // minutes, as macula_record_tests has it.
 func TestAProcedureAdvertisementDefaultsToItsMaximumLifetime(t *testing.T) {
-	r := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "acme/echo_v1", fill(0x77), ProcedureAdvertisementOptions{}))
+	r := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "acme/echo_v1", [][32]byte{fill(0x77)}, ProcedureAdvertisementOptions{}))
 	if lived := int64(r.ExpiresAt - r.CreatedAt); lived != 5*testMinute {
 		t.Errorf("an advertisement built without a ttl lives %d ms, want 5 minutes", lived)
 	}

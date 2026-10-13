@@ -51,7 +51,7 @@ func TestRecordsNamedByTheirPayloadMatchTheVectors(t *testing.T) {
 			"d92cb1913d63777c2d7a4e7cb2177a978ecff041c00bb9567cf9fafd1e812341"},
 		{"a realm member endorsement", unsignedRecord(t, TypeRealmMemberEndorsement, realm, bytesEntry("member_node", idBytes(0x22))),
 			"d93b63bd8a0c04442b094aa046be12eb4e72e34156913e2e413904c580bfdc3b"},
-		{"a procedure advertisement", must[Record](t)(NewProcedureAdvertisement(fill(0x55), fill(0x11), "acme/get_forecast_v1", fill(0x77),
+		{"a procedure advertisement", must[Record](t)(NewProcedureAdvertisement(fill(0x55), fill(0x11), "acme/get_forecast_v1", [][32]byte{fill(0x77)},
 			ProcedureAdvertisementOptions{})), "efbcd93463f2cd8c2c00fd481ef4f2ad2948af8476f505d4e3aeb13b9e69e2bc"},
 		{"a foundation T3 attestation", unsignedRecord(t, TypeFoundationT3Attestation, bytesEntry("station_id", idBytes(0x77)),
 			uintEntry("audit_date", 1789000000000)), "51c6fc4b520eed65bb556522be043366a888fb7c9a2d0915392378ca0adb8c31"},

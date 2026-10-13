@@ -93,7 +93,7 @@ func delegationBundleWire(t *testing.T, procedure string, o delegationOverrides)
 	if o.swapDirectoryAndGrant {
 		directory, delegation = delegation, directory
 	}
-	built := must[Record](t)(NewProcedureAdvertisement(keys.node.KeyID(), fill(0x11), procedure, fill(0x77), ProcedureAdvertisementOptions{
+	built := must[Record](t)(NewProcedureAdvertisement(keys.node.KeyID(), fill(0x11), procedure, [][32]byte{fill(0x77)}, ProcedureAdvertisementOptions{
 		Authorization: Authorization{Form: DelegationAuthorization, OrgDirectory: directory, ProcedureDelegation: delegation},
 		TTLMs:         uint64(5 * testMinute),
 	}))
@@ -110,7 +110,7 @@ func delegationBundle(t *testing.T, procedure string, o delegationOverrides) (Ve
 // signedAdvertisement is key's advertisement of procedure, as Verify returns it.
 func signedAdvertisement(t *testing.T, key *identity.NodeKey, procedure string, opts ProcedureAdvertisementOptions) Verified {
 	t.Helper()
-	built := must[Record](t)(NewProcedureAdvertisement(key.KeyID(), fill(0x11), procedure, fill(2), opts))
+	built := must[Record](t)(NewProcedureAdvertisement(key.KeyID(), fill(0x11), procedure, [][32]byte{fill(2)}, opts))
 	return must[Verified](t)(Verify(wireOf(t, must[Record](t)(Sign(built, key))), key.Profile(), nowMs()))
 }
 
@@ -119,7 +119,7 @@ func signedAdvertisement(t *testing.T, key *identity.NodeKey, procedure string, 
 // builds only the delegation form, and returned as Verify returns it.
 func signedAdvertisementCarrying(t *testing.T, key *identity.NodeKey, procedure string, authorization cbor.Value) Verified {
 	t.Helper()
-	built := must[Record](t)(NewProcedureAdvertisement(key.KeyID(), fill(0x11), procedure, fill(2), ProcedureAdvertisementOptions{}))
+	built := must[Record](t)(NewProcedureAdvertisement(key.KeyID(), fill(0x11), procedure, [][32]byte{fill(2)}, ProcedureAdvertisementOptions{}))
 	entries, _ := built.Payload.AsMap()
 	built.Payload = cbor.Map(withEntry(entries, "authorization", authorization))
 	return must[Verified](t)(Verify(wireOf(t, must[Record](t)(Sign(built, key))), key.Profile(), nowMs()))

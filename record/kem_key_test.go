@@ -60,7 +60,7 @@ func TestAKEMKeyTravelsAsAPairOrNotAtAll(t *testing.T) {
 func TestAnAdvertisementNamesItsKEMKey(t *testing.T) {
 	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
 		key := kemKeyOf(t, p)
-		r := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", fill(0x77),
+		r := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", [][32]byte{fill(0x77)},
 			ProcedureAdvertisementOptions{KEMKey: key}))
 		if !payloadOK(r.Type, r.Payload) {
 			t.Fatalf("%s: the builder made a payload the rule refuses", p)
@@ -70,11 +70,11 @@ func TestAnAdvertisementNamesItsKEMKey(t *testing.T) {
 			t.Errorf("%s: read key %d bytes, id %x", p, len(read.KEMKey), read.KEMKeyID)
 		}
 	}
-	plain := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", fill(0x77), ProcedureAdvertisementOptions{}))
+	plain := must[Record](t)(NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", [][32]byte{fill(0x77)}, ProcedureAdvertisementOptions{}))
 	if read := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(plain)); read.KEMKey != nil {
 		t.Errorf("an advertisement without a key reads as naming one")
 	}
-	if _, err := NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", fill(0x77),
+	if _, err := NewProcedureAdvertisement(fill(1), fill(0x11), "acme/x", [][32]byte{fill(0x77)},
 		ProcedureAdvertisementOptions{KEMKey: make([]byte, 1000)}); err == nil {
 		t.Error("the builder named a key of no profile's size")
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/seal"
@@ -56,15 +57,25 @@ type ProcedureAdvertisementOptions struct {
 
 // NewProcedureAdvertisement is an unsigned advertisement, by the node
 // advertiserNode, which signs it, of procedure in the realm realmID, served
-// through servingStation. It builds no authorization but an org directory and a
+// through each of servingStations: 1 to 8 stations, which it names ascending
+// by bytes; none, more, or one named twice is ErrMalformed. It builds no authorization but an org directory and a
 // procedure delegation, as macula_record builds no other: the unsupported form
 // is ErrAuthorizationFormUnsupported, and the malformed form ErrMalformed.
-func NewProcedureAdvertisement(advertiserNode, realmID [32]byte, procedure string, servingStation [32]byte, opts ProcedureAdvertisementOptions) (Record, error) {
+func NewProcedureAdvertisement(advertiserNode, realmID [32]byte, procedure string, servingStations [][32]byte, opts ProcedureAdvertisementOptions) (Record, error) {
+	ascending := slices.Clone(servingStations)
+	slices.SortFunc(ascending, func(a, b [32]byte) int { return bytes.Compare(a[:], b[:]) })
+	if len(ascending) == 0 || len(ascending) > maxServingStations || len(slices.Compact(slices.Clone(ascending))) != len(ascending) {
+		return Record{}, fmt.Errorf("%w: %d serving stations, want 1 to %d, none twice", ErrMalformed, len(servingStations), maxServingStations)
+	}
+	stations := make([]cbor.Value, len(ascending))
+	for i, station := range ascending {
+		stations[i] = cbor.Bytes(bytes.Clone(station[:]))
+	}
 	entries := []cbor.MapEntry{
 		bytesEntry("realm_id", bytes.Clone(realmID[:])),
 		textEntry("procedure", procedure),
 		bytesEntry("advertiser_node", bytes.Clone(advertiserNode[:])),
-		bytesEntry("serving_station", bytes.Clone(servingStation[:])),
+		valueEntry("serving_stations", cbor.List(stations)),
 	}
 	switch authorization := opts.Authorization; authorization.Form {
 	case NoAuthorization:
@@ -95,8 +106,10 @@ type ProcedureAdvertisement struct {
 	RealmID        [32]byte
 	Procedure      string
 	AdvertiserNode [32]byte
-	ServingStation [32]byte
-	Authorization  Authorization
+	// ServingStations are the stations the provider is served through, 1 to
+	// 8, ascending.
+	ServingStations [][32]byte
+	Authorization   Authorization
 	// KEMKey is the KEM key the provider names, as carried, and KEMKeyID its
 	// id: a caller seals to it. Nil when the provider names none.
 	KEMKey   []byte
@@ -113,7 +126,12 @@ func ReadProcedureAdvertisement(r Record) (ProcedureAdvertisement, error) {
 	advertisement := ProcedureAdvertisement{Procedure: procedure, Authorization: readAuthorization(r.Payload)}
 	readID(advertisement.RealmID[:], payloadField(r.Payload, "realm_id"))
 	readID(advertisement.AdvertiserNode[:], payloadField(r.Payload, "advertiser_node"))
-	readID(advertisement.ServingStation[:], payloadField(r.Payload, "serving_station"))
+	stations, _ := payloadField(r.Payload, "serving_stations").AsList()
+	for _, station := range stations {
+		var id [32]byte
+		readID(id[:], station)
+		advertisement.ServingStations = append(advertisement.ServingStations, id)
+	}
 	if key, ok := payloadField(r.Payload, "kem_key").AsBytes(); ok {
 		advertisement.KEMKey = bytes.Clone(key)
 		if id, ok := payloadField(r.Payload, "kem_key_id").AsBytes(); ok && len(id) == len(advertisement.KEMKeyID) {

@@ -245,8 +245,10 @@ func (p *Pool) resolve(ctx context.Context, key resolvedKey, realmKey []byte) ([
 		if record.VerifyAuthorization(verified, trust, now) != nil {
 			continue
 		}
-		out = append(out, candidate{Provider: Provider{Node: ad.AdvertiserNode, Station: ad.ServingStation},
-			expiresAt: int64(r.ExpiresAt), createdAt: int64(r.CreatedAt), kemKey: ad.KEMKey, kemKeyID: ad.KEMKeyID})
+		for _, station := range ad.ServingStations {
+			out = append(out, candidate{Provider: Provider{Node: ad.AdvertiserNode, Station: station},
+				expiresAt: int64(r.ExpiresAt), createdAt: int64(r.CreatedAt), kemKey: ad.KEMKey, kemKeyID: ad.KEMKeyID})
+		}
 	}
 	if len(out) == 0 {
 		return nil, ErrNoProvider
