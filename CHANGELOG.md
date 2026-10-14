@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sealed groups, the member side** (macula 13.2,
+  `DESIGN_E2E_SEALED_PUBSUB.md`; #34): `pool.PublishGroup` seals a group's
+  event under its current epoch, `pool.SubscribeGroup` opens it, and package
+  `group` holds the epochs, the event seal, the `group_keys_v1` payloads and
+  the `Keyring` (re-pull in the ahead window, backoff, a monotonic policy, at
+  most three unknown-id pulls per publisher per epoch, keys in memory only).
+  A clear publish under a held group is refused, a clear event under a
+  `required` group is not delivered, and an event that cannot be opened
+  arrives once with its reason. A PUBLISH and an EVENT carry `sealed` in
+  place of `payload` (`frame.PublicationSpec.Sealed`,
+  `VerifiedPublication.Sealed`); a sealed EVENT used to be counted
+  `event_unverified`. Held to macula's `e2e_seal_v1_group_keys.json`
+  (`scripts/interop/copy_group_keys_vectors.sh`) and checked both ways against
+  macula 15.0.0-rc.2 in both profiles (`scripts/interop/groups.sh`).
+- **The test station command mints the org's grant**: `grant <node_id>`
+  answers a `group_keys` UCAN over `mri:org:<realm>/<org>`, and its first line
+  carries `org_key_id`.
+- **The C ABI marks a sealed group's event**: `"sealed": 1`, `"seal_key_id"`,
+  a null payload and `"unopened": "no_group"`.
+
 - **The test station answers registrations with REGISTER_ACK** (WIRE_1_0.md
   3.5): every ADVERTISE, UNADVERTISE, SUBSCRIBE and UNSUBSCRIBE gets the
   station's verdict, as a wire 1.0 station gives it, so a client that waits for

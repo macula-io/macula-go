@@ -27,10 +27,21 @@ const (
 	ReasonTagInvalid        Reason = "tag_invalid"
 )
 
-// Error is a refusal or failure by its Reason.
-type Error struct{ Reason Reason }
+// Error is a refusal or failure by its Reason, with the pull's own error
+// when there was one.
+type Error struct {
+	Reason Reason
+	Err    error
+}
 
-func (e *Error) Error() string { return "group: " + string(e.Reason) }
+func (e *Error) Error() string {
+	if e.Err != nil {
+		return "group: " + string(e.Reason) + ": " + e.Err.Error()
+	}
+	return "group: " + string(e.Reason)
+}
+
+func (e *Error) Unwrap() error { return e.Err }
 
 // Is matches another *Error of the same reason, so errors.Is(err,
 // &Error{ReasonNotAMember}) reads as it says.
@@ -394,11 +405,11 @@ func (k *Keyring) pull(ctx context.Context, key groupKey, g *held, payload cbor.
 		if errors.Is(err, ErrNotAdvertised) && g.pinKind == pinAuto {
 			g.pinKind = pinNone
 		}
-		return Reply{}, reasonError(refusalOf(err))
+		return Reply{}, &Error{Reason: refusalOf(err), Err: err}
 	}
 	reply, err := ParseReply(key.prefix, result)
 	if err != nil {
-		return Reply{}, reasonError(ReasonNoDistributor)
+		return Reply{}, &Error{Reason: ReasonNoDistributor, Err: err}
 	}
 	if g.pinKind == pinNone {
 		g.pin, g.pinKind = provider, pinAuto

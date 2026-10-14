@@ -79,6 +79,7 @@ On the wire:
 | Node-served content (D27) | ✅ | ✅ | `pool.ShareContent` serves on `~<node_id>/content_v1` and announces; `pool.GetContent` checks the block, the manifest and every chunk against their content ids, bounded, with no realm key; cross-checked both ways against macula 12.6.0 |
 | Gated procedures (UCAN) | ✅ | ✅ | `ucan.Create` mints macula 12's post-quantum UCAN (refusing an `exp` more than ten years out, at minting and, as macula does, at verification), `Call.Token` and `Proofs` present it and its chain, `Offer.Policy` gates a procedure as macula's link does (`unauthorized`, or `malformed_frame` for a proof no token names); held to macula's UCAN vectors and checked against `macula_ucan` both ways |
 | End-to-end sealing (macula 13, scheme 1) | ✅ | ✅ | A call's or a stream's payloads sealed to the KEM key the provider's advertisement names, so a station routes what it cannot read; see [Sealing](#sealing) |
+| Sealed groups (macula 13.2) | ✅ | — | `pool.PublishGroup` and `SubscribeGroup`: a group's events sealed under its current epoch, the epoch pulled from the org's distributor over a sealed call; checked both ways against macula; see [Sealed groups](#sealed-groups) |
 
 No cgo outside `cabi`, which is a C ABI and so cgo by nature, and no
 `unsafe` outside `cabi` and identity's Windows key-file guard, which reads a
@@ -168,6 +169,7 @@ hex> -realm <hex> -realm-key <file> -key <node key file>`):
 | [`devicerequest`](devicerequest) | A device's request to a realm, signed: realm proof v2 (macula-realm#29) |
 | [`ownershipproof`](ownershipproof) | The `asserted_by` block of a payload, signed and verified: ownership proof v2 (mcl-om#7) |
 | [`seal`](seal) | End-to-end payload sealing, scheme 1: the key agreement, keys, AAD and AES-256-GCM, and a provider's keyring, held to macula 13's vectors |
+| [`group`](group) | Sealed groups, the member side: epochs, a group event's seal, the `group_keys_v1` payloads, and the keyring a node holds its groups in, held to macula 13.2's vectors |
 
 ## Sealing
 
@@ -221,6 +223,40 @@ A call that could not be kept confidential ends there: the pool never moves
 it to another candidate, which might be keyless. A reseal whose lookup fails
 is `no_kem_key`. Once a CALL has gone out, sealed or not, no other candidate
 is called at all.
+
+## Sealed groups
+
+macula 13.2 seals a group's events end to end
+(`docs/design/DESIGN_E2E_SEALED_PUBSUB.md`): a group is a topic prefix whose
+second segment is its org, its events are sealed under the group's current
+epoch key, and the org's distributor (`<org>/group_keys_v1`, macula's
+`macula_group_keys`) hands the epoch keys to members over a sealed call. A
+member presents the org's grant, a UCAN with `can` `group_keys`, and the
+distributor decides from its verified identity. macula-go is a member: it
+pulls, publishes and subscribes; it runs no distributor.
+
+```go
+g := pool.Group{Prefix: "io.macula/acme/chat", UCAN: orgGrant}
+sub, err := p.SubscribeGroup(ctx, realm, "io.macula/acme/chat/said_v1", g)
+err = p.PublishGroup(ctx, stationlink.Publication{Realm: realm,
+	Topic: "io.macula/acme/chat/said_v1", Payload: cbor.Text("hello")}, g)
+```
+
+A delivered event names its epoch (`Event.Sealed.KeyID`); one that cannot be
+opened arrives once with `Event.Unopened` set to one of macula's closed set
+(`not_a_member`, `membership_unknown`, `unknown_epoch`, `epoch_expired`,
+`no_distributor`, `no_group`, `tag_invalid`) and a null payload. Every held
+group is pulled again at a random instant in its epoch's last third, event or
+no event, and a failed pull is retried with backoff until one succeeds. A
+publish whose epochs have all stopped publishing pulls at once and fails
+closed with that pull's error. A clear `Publish` under a held prefix is
+refused (`*pool.GroupHeldError`), and under a `required` group a clear event
+is not delivered (`Subscription.RefusedClear`). Epoch keys are held in memory
+only and erased once no event under them can be accepted. A plain
+`Subscribe` gets a group's events unopened, as `no_group`. Held to macula's
+`e2e_seal_v1_group_keys` vectors (the pull's payloads byte for byte, the org
+grants' verdicts) and checked both ways against macula 15.0.0-rc.2
+(`scripts/interop/groups.sh`).
 
 `KEMAdvertise` is off by default. Switch it on only once every station runs
 macula 12.11 or later, which stores and routes a keyed advertisement, and

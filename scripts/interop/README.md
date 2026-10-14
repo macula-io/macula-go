@@ -233,3 +233,25 @@ on macula-go v0.18.0's shared library):
   refused `invalid_argument`. A TypeScript provider: `sealed call` and `sealed
   stream` answered, `clear call` refused `sealed_required`, `off by direct
   dial` refused `off_needs_explicit_target`. Exit 0.
+
+## Sealed groups (macula 13.2)
+
+`groups.sh` runs macula's own distributor (`macula_group_keys`, policy
+`required`) for the test realm's org, in Erlang, admitted by the org's
+delegation and advertised with its grant policy and `confidential => required`.
+An Erlang member (`erlang_groups.escript member`) and a Go member
+(`gogroups member`) each get the org's `group_keys` grant from the test
+station (`grant <node_id>`), subscribe under the group, pulling its epoch over
+a sealed call, and publish sealed under it; each must open the other's event,
+under the same epoch. Then a Go node the distributor's removed set names must
+be refused `not_a_member`. The Erlang side runs in macula's pinned CI image.
+
+```sh
+MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh pq_hybrid
+MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh pq_pure
+```
+
+Last run (2026-10-14, `macula-ci-otp@sha256:aff1d39b...`, macula 15.0.0-rc.2
+from hex as a rebar3 dependency): both profiles, both members opened the
+other's event under one epoch, the removed node was refused `not_a_member`,
+exit 0.

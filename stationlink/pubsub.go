@@ -55,7 +55,7 @@ type Event struct {
 	Payload      cbor.Value
 	DeliveredVia string
 	// Sealed is a sealed event's payload, nil for a clear one; a sealed
-	// event's Payload is empty until a group subscription opens it.
+	// event's Payload is null until a group subscription opens it.
 	Sealed *frame.Sealed
 	// Unopened is why a sealed event could not be opened, empty for one that
 	// was opened or is clear: one of package group's reasons. Such an event
@@ -213,6 +213,9 @@ func (l *Link) evented(v cbor.Value) {
 		return
 	}
 	via := frame.DeliveredVia(v)
+	if publication.Sealed != nil {
+		publication.Payload = cbor.Null()
+	}
 	event := Event{Publisher: publication.Publisher, Realm: publication.Realm, Topic: publication.Topic,
 		Seq: publication.Seq, PublishedAt: publication.PublishedAt, Payload: publication.Payload, DeliveredVia: via,
 		Sealed: publication.Sealed}

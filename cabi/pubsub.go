@@ -56,10 +56,20 @@ func subscribe(lp *livePool, realm [32]byte, topic string) (*subscription, error
 }
 
 func eventJSON(e stationlink.Event) string {
-	text, _ := json.Marshal(map[string]any{
+	event := map[string]any{
 		"publisher": hex.EncodeToString(e.Publisher[:]), "realm": hex.EncodeToString(e.Realm[:]), "topic": e.Topic,
 		"seq": e.Seq, "published_at": e.PublishedAt, "payload": payloadToJSON(e.Payload), "delivered_via": e.DeliveredVia,
-	})
+	}
+	if e.Sealed != nil {
+		// A sealed group's event: no group subscription opens it here, so it
+		// arrives once with its payload null and the reason.
+		event["sealed"] = 1
+		event["seal_key_id"] = hex.EncodeToString(e.Sealed.KeyID[:])
+		if e.Unopened != "" {
+			event["unopened"] = e.Unopened
+		}
+	}
+	text, _ := json.Marshal(event)
 	return string(text)
 }
 

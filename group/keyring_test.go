@@ -135,12 +135,12 @@ func TestAJoinTheDistributorRefusesIsNamed(t *testing.T) {
 	f := newFake()
 	f.refuse = "not_a_member"
 	_, err := f.keyring().Join(context.Background(), realm, prefix, JoinOptions{})
-	if !errors.Is(err, &Error{ReasonNotAMember}) {
+	if !errors.Is(err, &Error{Reason: ReasonNotAMember}) {
 		t.Fatalf("join refused as %v", err)
 	}
 	f.refuse, f.failWith = "", errors.New("unreachable")
 	_, err = f.keyring().Join(context.Background(), realm, prefix, JoinOptions{})
-	if !errors.Is(err, &Error{ReasonNoDistributor}) {
+	if !errors.Is(err, &Error{Reason: ReasonNoDistributor}) {
 		t.Fatalf("an unreachable distributor is %v", err)
 	}
 	if _, err := f.keyring().Join(context.Background(), realm, "io.macula", JoinOptions{}); !errors.Is(err, ErrInvalidGroup) {
@@ -197,7 +197,7 @@ func TestAPublisherPastItsEpochPullsAndFailsClosed(t *testing.T) {
 	}
 	f.now += DefaultRotateAfterMs
 	f.failWith = errors.New("withheld")
-	if _, err := k.PublishEpoch(context.Background(), realm, prefix); !errors.Is(err, &Error{ReasonNoDistributor}) {
+	if _, err := k.PublishEpoch(context.Background(), realm, prefix); !errors.Is(err, &Error{Reason: ReasonNoDistributor}) {
 		t.Fatalf("publish past the epoch: %v", err)
 	}
 	f.failWith = nil
@@ -215,12 +215,12 @@ func TestUnknownIDsAreBoundedAndRemembered(t *testing.T) {
 	}
 	publisher := [32]byte{0x77}
 	for i := byte(10); i < 13; i++ {
-		if _, err := k.OpenEpoch(context.Background(), realm, prefix, [IDSize]byte{i}, publisher); !errors.Is(err, &Error{ReasonUnknownEpoch}) {
+		if _, err := k.OpenEpoch(context.Background(), realm, prefix, [IDSize]byte{i}, publisher); !errors.Is(err, &Error{Reason: ReasonUnknownEpoch}) {
 			t.Fatalf("unknown id %d: %v", i, err)
 		}
 	}
 	pulls := f.pullCount()
-	if _, err := k.OpenEpoch(context.Background(), realm, prefix, [IDSize]byte{13}, publisher); !errors.Is(err, &Error{ReasonUnknownEpoch}) || f.pullCount() != pulls {
+	if _, err := k.OpenEpoch(context.Background(), realm, prefix, [IDSize]byte{13}, publisher); !errors.Is(err, &Error{Reason: ReasonUnknownEpoch}) || f.pullCount() != pulls {
 		t.Fatalf("a fourth unknown id pulled (%d pulls, %v)", f.pullCount()-pulls, err)
 	}
 	if _, err := k.OpenEpoch(context.Background(), realm, prefix, [IDSize]byte{10}, [32]byte{0x78}); err == nil || f.pullCount() != pulls {
@@ -235,7 +235,7 @@ func TestAnEpochPastItsAcceptanceIsExpired(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.now += DefaultRotateAfterMs + eventLifeMs + toleranceMs + 1
-	if _, err := k.OpenEpoch(context.Background(), realm, prefix, [IDSize]byte{1}, [32]byte{}); !errors.Is(err, &Error{ReasonEpochExpired}) {
+	if _, err := k.OpenEpoch(context.Background(), realm, prefix, [IDSize]byte{1}, [32]byte{}); !errors.Is(err, &Error{Reason: ReasonEpochExpired}) {
 		t.Fatalf("an expired epoch opened: %v", err)
 	}
 }

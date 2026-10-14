@@ -127,6 +127,10 @@ pool's link events wait in an inbox of 256 until taken with the matching
   1 when the source ended and the inbox is drained, 0 when `timeout_ms` ran
   out with nothing (`timeout_ms` 0 waits for ever). A cancelled wait is the
   error kind `cancelled`.
+- An event sealed under a sealed group (macula 13.2) arrives once with
+  `"sealed": 1`, its epoch's `"seal_key_id"` in hex, `"payload": null` and
+  `"unopened": "no_group"`: the ABI has no group subscription yet, so nothing
+  of a sealed payload reaches a binding.
 - A full subscription inbox drops the newest event and counts it
   (`macula_subscription_dropped`). A full served inbox makes the call wait
   for room until its deadline, then answers it with an error for you. A

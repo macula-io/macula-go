@@ -92,7 +92,7 @@ func TestAGroupsEventsTravelSealedAndOpenForMembers(t *testing.T) {
 		t.Fatalf("sealed under %x, the epoch is %x", opened.Sealed.KeyID, w.epoch.ID)
 	}
 	unopened := next(t, plain)
-	if unopened.Unopened != string(group.ReasonNoGroup) || unopened.Payload.Kind() != 0 {
+	if unopened.Unopened != string(group.ReasonNoGroup) || !unopened.Payload.IsNull() {
 		t.Fatalf("a subscriber with no group: unopened %q, payload %v", unopened.Unopened, unopened.Payload)
 	}
 
