@@ -38,6 +38,11 @@ func (p *Pool) groups() *group.Keyring {
 	defer p.mu.Unlock()
 	if p.keyring == nil {
 		p.keyring = group.NewKeyring(group.Options{Pull: p.pullGroupKey})
+		if p.closed {
+			// A pool that has closed holds nothing: the keyring answers
+			// every join ErrNotJoined and schedules no re-pull.
+			p.keyring.Close()
+		}
 	}
 	return p.keyring
 }
@@ -47,7 +52,11 @@ func (p *Pool) groups() *group.Keyring {
 func (p *Pool) pullGroupKey(ctx context.Context, pl group.Pull) (cbor.Value, [32]byte, error) {
 	result, report, err := p.CallReport(ctx, Call{Realm: pl.Realm, Procedure: pl.Procedure, Provider: pl.Provider,
 		Payload: pl.Payload, Token: pl.Token, Confidential: stationlink.ConfidentialRequired})
-	if errors.Is(err, ErrNoProvider) {
+	// Only no advertisement at all is "not advertised": candidates that
+	// could not be reached come joined with their errors, and keep the
+	// group's distributor, as macula keeps it on anything but
+	// provider_not_advertised.
+	if err == ErrNoProvider {
 		err = errors.Join(group.ErrNotAdvertised, err)
 	}
 	return result, report.Provider, err

@@ -292,3 +292,17 @@ func TestEventsBindMaculasAAD(t *testing.T) {
 		}
 	}
 }
+
+func TestAReplyPastItsAheadWindowDoesNotRepullAtOnce(t *testing.T) {
+	f := newFake()
+	// The member's clock is past the epoch's ahead window: skew, or a
+	// distributor answering a stale epoch.
+	f.now += DefaultRotateAfterMs - 1
+	k := f.keyring()
+	if _, err := k.Join(context.Background(), realm, prefix, JoinOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.lastDelay(); got < time.Second {
+		t.Fatalf("re-pull in %v: the member would pull in a loop", got)
+	}
+}

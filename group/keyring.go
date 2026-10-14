@@ -473,11 +473,14 @@ func (k *Keyring) scheduleLocked(key groupKey, g *held) {
 	g.backoff = firstBackoffMs
 	k.storeLocked(key, g)
 	if len(g.epochs) == 0 {
-		k.wakeInLocked(key, g, 0)
+		k.wakeInLocked(key, g, firstBackoffMs)
 		return
 	}
+	// At least the first backoff: a reply whose ahead window has already
+	// passed on this clock (skew, or stale epochs) must not have the member
+	// pull again at once, over and over.
 	at := g.epochs[len(g.epochs)-1].repullAt(k.opts.Uniform())
-	k.wakeInLocked(key, g, max(0, at-k.opts.Now()))
+	k.wakeInLocked(key, g, max(firstBackoffMs, at-k.opts.Now()))
 }
 
 // backOffLocked retries a failed pull after the group's backoff, then

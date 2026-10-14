@@ -49,15 +49,18 @@ func (p *Pool) subscribe(realm [32]byte, topic, prefix string) (*Subscription, e
 	sub.ctx, sub.cancel = context.WithCancel(p.ctx)
 	if prefix != "" {
 		sub.opening = make(chan stationlink.Event, subscriptionBuffer)
-		go sub.open()
 	}
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
+		sub.cancel()
 		return nil, ErrClosed
 	}
 	p.subs[sub] = struct{}{}
 	p.mu.Unlock()
+	if sub.opening != nil {
+		go sub.open()
+	}
 	for _, link := range p.links() {
 		sub.attach(link)
 	}
