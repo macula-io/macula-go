@@ -102,6 +102,7 @@ the call. The string is a JSON object:
 | `not_settled` | a stream's seal report asked for before it settled, or of a stream that ended first (since v0.19.0; see "The seal report") | |
 | `not_a_caller` | a seal report asked of a served stream (since v0.19.0) | |
 | `unverified` | a signed object that did not verify (since v0.22.0; see "Signed objects") | `reason`: `malformed`, `signature_invalid` or `alg_mismatch` |
+| `group` | a sealed group's refusal or failure (since v0.27.0-rc.3; see "Sealed groups") | `reason`; `prefix` with `group_held` |
 | `failed` | anything else | |
 
 ## Threads and blocking
@@ -127,10 +128,10 @@ pool's link events wait in an inbox of 256 until taken with the matching
   1 when the source ended and the inbox is drained, 0 when `timeout_ms` ran
   out with nothing (`timeout_ms` 0 waits for ever). A cancelled wait is the
   error kind `cancelled`.
-- An event sealed under a sealed group (macula 13.2) arrives once with
-  `"sealed": 1`, its epoch's `"seal_key_id"` in hex, `"payload": null` and
-  `"unopened": "no_group"`: the ABI has no group subscription yet, so nothing
-  of a sealed payload reaches a binding.
+- An event sealed under a sealed group (macula 13.2) carries `"sealed": 1`
+  and its epoch's `"seal_key_id"` in hex. On a plain subscription it arrives
+  once with `"payload": null` and `"unopened": "no_group"`; see "Sealed
+  groups".
 - A full subscription inbox drops the newest event and counts it
   (`macula_subscription_dropped`). A full served inbox makes the call wait
   for room until its deadline, then answers it with an error for you. A
@@ -323,6 +324,32 @@ and their `fields`. A library that cannot verify at all is `failed`, never
 `unverified`. The label is the one the object was signed under;
 an empty label is `invalid_argument`. Verifying says who signed the fields,
 never that what they claim is true.
+
+## Sealed groups
+
+Since v0.27.0-rc.3 (macula 13.2, `docs/design/DESIGN_E2E_SEALED_PUBSUB.md`).
+A group is a topic prefix whose second segment is its org. The org's
+distributor hands its epoch keys to members over a sealed call, and a member
+presents the org's grant: a UCAN with `can` `group_keys`, which the org mints
+for it.
+
+- `macula_pool_publish_group` seals a publication under the group's current
+  epoch. `macula_pool_subscribe_group` opens the group's events. Each joins
+  the group first, which pulls its epoch, so each takes `timeout_ms` and a
+  cancel token like a call.
+- `options_json` is `{"prefix", "ucan"?, "distributor"?}`. `distributor` is
+  a node id in hex, required for a `~<node_id>` group. A prefix that cannot be
+  a group, or a topic not under it, is `invalid_argument`.
+- A group subscription's event is opened: `"sealed": 1`, `"seal_key_id"` and
+  the payload. One that cannot be opened arrives once with `"payload": null`
+  and `"unopened"`, one of `not_a_member`, `membership_unknown`,
+  `unknown_epoch`, `epoch_expired`, `no_distributor`, `no_group` and
+  `tag_invalid`. Under a `required` group a clear event is not delivered.
+- A refused join, or a publish that cannot be sealed, fails with kind `group`
+  and that `reason`. A clear `macula_pool_publish` under a group this pool
+  holds fails with kind `group`, reason `group_held`, and the `prefix`.
+- Epoch keys stay inside the library, in memory. Nothing of them crosses the
+  ABI.
 
 ## Test harness
 

@@ -203,7 +203,16 @@ char *macula_pool_providers(macula_handle pool, const uint8_t realm[32], const c
 void macula_pool_publish(macula_handle pool, const uint8_t realm[32], const char *topic, const char *payload_json,
                          int64_t ttl_ms, char **err_out);
 macula_handle macula_pool_subscribe(macula_handle pool, const uint8_t realm[32], const char *topic, char **err_out);
-/* {"publisher","realm","topic","seq","published_at","payload","delivered_via"} */
+/* Sealed groups (since v0.27.0-rc.3; see CONTRACT.md "Sealed groups"). options_json:
+   {"prefix", "ucan"?, "distributor"?}. Each joins the group first, pulling its epoch from the org's distributor. */
+void macula_pool_publish_group(macula_handle pool, const uint8_t realm[32], const char *topic, const char *payload_json,
+                               const char *options_json, int64_t ttl_ms, int64_t timeout_ms, macula_handle cancel,
+                               char **err_out);
+macula_handle macula_pool_subscribe_group(macula_handle pool, const uint8_t realm[32], const char *topic,
+                                          const char *options_json, int64_t timeout_ms, macula_handle cancel,
+                                          char **err_out);
+/* {"publisher","realm","topic","seq","published_at","payload","delivered_via"}, and for a sealed group's event
+   "sealed": 1, "seal_key_id", and "unopened" with a null payload when it could not be opened. */
 char *macula_subscription_next(macula_handle subscription, int64_t timeout_ms, macula_handle cancel,
                                int32_t *closed, char **err_out);
 /* Events the pool dropped because the inbox was full. */

@@ -44,6 +44,11 @@ func subscribe(lp *livePool, realm [32]byte, topic string) (*subscription, error
 	if err != nil {
 		return nil, err
 	}
+	return inboxed(lp, sub), nil
+}
+
+// inboxed is sub with the inbox its events wait in, until taken.
+func inboxed(lp *livePool, sub *pool.Subscription) *subscription {
 	s := &subscription{owner: lp, sub: sub, box: newInbox(dropNewest)}
 	lp.own(s.box)
 	go func() {
@@ -52,7 +57,7 @@ func subscribe(lp *livePool, realm [32]byte, topic string) (*subscription, error
 			s.box.push(context.Background(), inboxItem{json: eventJSON(event)})
 		}
 	}()
-	return s, nil
+	return s
 }
 
 func eventJSON(e stationlink.Event) string {
@@ -61,8 +66,8 @@ func eventJSON(e stationlink.Event) string {
 		"seq": e.Seq, "published_at": e.PublishedAt, "payload": payloadToJSON(e.Payload), "delivered_via": e.DeliveredVia,
 	}
 	if e.Sealed != nil {
-		// A sealed group's event: no group subscription opens it here, so it
-		// arrives once with its payload null and the reason.
+		// A sealed group's event: opened under a group subscription, or
+		// once with its payload null and the reason it could not be.
 		event["sealed"] = 1
 		event["seal_key_id"] = hex.EncodeToString(e.Sealed.KeyID[:])
 		if e.Unopened != "" {

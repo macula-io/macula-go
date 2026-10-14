@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/macula-io/macula-go/group"
 	"github.com/macula-io/macula-go/pool"
 	"github.com/macula-io/macula-go/stationlink"
 )
@@ -43,6 +44,10 @@ const (
 	// refusal as reason. Since macula-go v0.22.0.
 	kindUnverified errorKind = "unverified"
 	kindFailed     errorKind = "failed"
+	// kindGroup is a sealed group's refusal or failure, with its reason
+	// (one of macula's closed set, or group_held for a clear publish under a
+	// held group, with its prefix). Since macula-go v0.27.0-rc.3.
+	kindGroup errorKind = "group"
 )
 
 // abiError is an error as it crosses the ABI: a kind, a message for people,
@@ -100,6 +105,16 @@ func classify(ctx context.Context, err error) *abiError {
 				return newError(kindTimeout, "the call's timeout ran out")
 			}
 		}
+	}
+	var groupErr *group.Error
+	var held *pool.GroupHeldError
+	switch {
+	case errors.As(err, &groupErr):
+		return &abiError{kind: kindGroup, message: err.Error(), fields: map[string]any{"reason": string(groupErr.Reason)}}
+	case errors.As(err, &held):
+		return &abiError{kind: kindGroup, message: err.Error(), fields: map[string]any{"reason": "group_held", "prefix": held.Prefix}}
+	case errors.Is(err, group.ErrInvalidGroup):
+		return newError(kindInvalidArgument, "%v", err)
 	}
 	var provider *stationlink.ProviderError
 	var relay *stationlink.RelayError

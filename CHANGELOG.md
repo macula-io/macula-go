@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sealed groups through the C ABI** (#34, for macula-io/macula-ts#19):
+  `macula_pool_publish_group` and `macula_pool_subscribe_group`, with options
+  JSON `{prefix, ucan?, distributor?}`, a timeout and a cancel token, since
+  each joins the group first. A group subscription's events arrive opened,
+  with `sealed` and `seal_key_id`, or once with `unopened` and a null payload.
+  A refusal is the new error kind `group` with its `reason` (`group_held` with
+  the `prefix` for a clear publish under a held group). No epoch key crosses
+  the ABI.
+
 ## [0.27.0-rc.2] - 2026-10-14
 
 ### Added
