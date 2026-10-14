@@ -1,0 +1,9 @@
+{
+  "name": "macula-go-interop-tsgroups",
+  "private": true,
+  "type": "module",
+  "description": "@macula-io/ts's side of scripts/interop/groups.sh",
+  "dependencies": {
+    "@macula-io/ts": "0.31.0-rc.2"
+  }
+}

@@ -255,3 +255,17 @@ Last run (2026-10-14, `macula-ci-otp@sha256:aff1d39b...`, macula 15.0.0-rc.2
 from hex as a rebar3 dependency): both profiles, both members opened the
 other's event under one epoch, the removed node was refused `not_a_member`,
 exit 0.
+
+### The TypeScript leg (`GROUPS_PEER=ts`)
+
+`GROUPS_PEER=ts` runs the member and the removed node in TypeScript
+(`tsgroups/tsgroups.mjs`, @macula-io/ts from npm at the version
+`tsgroups/package-lock.json` pins, over macula-go's shared library) in place of
+`gogroups`; the distributor and the other member stay Erlang. `TS_PACKAGE`
+points it at a local @macula-io/ts checkout, built, instead. Needs node and
+npm.
+
+```sh
+GROUPS_PEER=ts MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh pq_hybrid
+GROUPS_PEER=ts MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh pq_pure
+```

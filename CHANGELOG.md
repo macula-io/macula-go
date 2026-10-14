@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The sealed group interop runs TypeScript too**: `GROUPS_PEER=ts
+  scripts/interop/groups.sh` runs the member and the removed node with
+  @macula-io/ts 0.31.0-rc.2 (`scripts/interop/tsgroups`) against macula's own
+  distributor, both ways, both profiles (macula-io/macula-ts#19). A node id the
+  script cannot read now ends the run instead of granting nobody.
+
 ## [0.27.0-rc.3] - 2026-10-14
 
 ### Added

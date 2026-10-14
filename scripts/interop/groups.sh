@@ -8,6 +8,10 @@
 #   MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh [pq_hybrid|pq_pure]
 #
 # MACULA_BUILD may be a rebar3 project that depends on macula from hex, as for sealed.sh.
+#
+# GROUPS_PEER=ts runs the Go member's and the stranger's part with @macula-io/ts in their place
+# (scripts/interop/tsgroups/tsgroups.mjs, from npm at the version its package-lock pins, or TS_PACKAGE, a local
+# @macula-io/ts checkout, built). Needs node and npm.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 image="${MACULA_CI_IMAGE:-ghcr.io/macula-io/macula-ci-otp@sha256:aff1d39bc4aa29d13044b90b38e9b7f4b757d50818cc11c5bb7e84cdbf82ac70}"
@@ -26,7 +30,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+peer="${GROUPS_PEER:-go}"
+case "$peer" in go|ts) ;; *) echo "groups.sh: GROUPS_PEER is go or ts, not $peer" >&2; exit 2 ;; esac
 (cd "$root" && go build -o "$work/teststation" ./teststation/cmd/teststation && go build -o "$work/gogroups" ./scripts/interop/gogroups)
+if [ "$peer" = ts ]; then
+  if [ -n "${TS_PACKAGE:-}" ]; then
+    mkdir -p "$work/ts/node_modules/@macula-io"
+    ln -s "$(cd "$TS_PACKAGE" && pwd)" "$work/ts/node_modules/@macula-io/ts"
+    cp "$root/scripts/interop/tsgroups/tsgroups.mjs" "$work/ts/"
+    tsgroups="$work/ts/tsgroups.mjs"
+  else
+    (cd "$root/scripts/interop/tsgroups" && npm ci --silent --no-audit --no-fund)
+    tsgroups="$root/scripts/interop/tsgroups/tsgroups.mjs"
+  fi
+fi
 mkfifo "$work/stations.in"
 "$work/teststation" "$profile" < "$work/stations.in" > "$work/stations.out" &
 exec 3> "$work/stations.in"
@@ -66,9 +83,13 @@ erl() {
     "$host" "$port" "$station" "$realm" "$realm_key" "$profile" /work "$@"
 }
 gogroups() {
-  "$work/gogroups" -station "$host:$port@$station" -profile "$profile" -realm "$realm" -realm-key "$realm_key" \
-    -work "$shared" -prefix "$prefix" -topic "$topic" "$1"
+  case "$peer" in
+    go) "$work/gogroups" -station "$host:$port@$station" -profile "$profile" -realm "$realm" -realm-key "$realm_key" \
+          -work "$shared" -prefix "$prefix" -topic "$topic" "$1" ;;
+    ts) node "$tsgroups" "$host:$port@$station" "$profile" "$realm" "$realm_key" "$shared" "$prefix" "$topic" "$1" ;;
+  esac
 }
+name="$( [ "$peer" = ts ] && echo TypeScript || echo Go )"
 
 echo "== $profile: the org's distributor in Erlang"
 erl "${names[0]}" distribute "$org" "$org_key_id" 300 > "$work/dist.out" 2>&1 &
@@ -78,13 +99,16 @@ nth_line "$work/stations.out" '^admitted ' 1 > /dev/null
 touch "$shared/admitted.$distributor"
 nth_line "$work/dist.out" '^serving' 1 > /dev/null
 
-echo "== $profile: an Erlang member and a Go member, each opening the other's sealed event"
+echo "== $profile: an Erlang member and a $name member, each opening the other's sealed event"
 erl "${names[1]}" member "$prefix" "$topic" > "$work/erlang.out" 2>&1 &
 erl_pid=$!
 gogroups member > "$work/go.out" 2>&1 &
 go_pid=$!
-grant "$(nth_line "$work/erlang.out" '^node ' 1 | awk '{print $2}')"
-grant "$(nth_line "$work/go.out" '^node ' 1 | awk '{print $2}')"
+# Each node id is read into a variable first: a failed read then ends the script (set -e), where an argument would not.
+erlang_member="$(nth_line "$work/erlang.out" '^node ' 1 | awk '{print $2}')"
+peer_member="$(nth_line "$work/go.out" '^node ' 1 | awk '{print $2}')"
+grant "$erlang_member"
+grant "$peer_member"
 status=0
 wait "$go_pid" || status=1
 go_pid=
@@ -92,7 +116,7 @@ wait "$erl_pid" || status=1
 cat "$work/erlang.out" "$work/go.out"
 [ "$status" = 0 ] || { echo "groups.sh: a member failed"; cat "$work/dist.out"; exit 1; }
 
-echo "== $profile: a Go node the distributor removed"
+echo "== $profile: a $name node the distributor removed"
 gogroups stranger > "$work/stranger.out" 2>&1 &
 go_pid=$!
 stranger="$(nth_line "$work/stranger.out" '^node ' 1 | awk '{print $2}')"
@@ -101,4 +125,4 @@ grant "$stranger"
 wait "$go_pid" || { cat "$work/stranger.out"; exit 1; }
 go_pid=
 cat "$work/stranger.out"
-echo "== $profile: sealed groups both ways"
+echo "== $profile: sealed groups both ways ($name)"
