@@ -57,7 +57,11 @@ type PublicationSpec struct {
 	Seq         uint64
 	PublishedAt uint64
 	Payload     cbor.Value
-	TTLMs       *uint64
+	// Sealed is a sealed group's event payload, carried in place of Payload,
+	// which is then not read: its epoch's id, its random nonce and the
+	// ciphertext (package group seals it).
+	Sealed *Sealed
+	TTLMs  *uint64
 }
 
 // VerifiedPublication is a publication that verified: its fields, the
@@ -67,13 +71,16 @@ type PublicationSpec struct {
 // plus 5 minutes. A subscriber keeps a delivered publication's hash until then.
 // TTLMs is nil when the publication carries none.
 type VerifiedPublication struct {
-	Publisher       [32]byte
-	Realm           [32]byte
-	Topic           string
-	Seq             uint64
-	PublishedAt     uint64
-	TTLMs           *uint64
-	Payload         cbor.Value
+	Publisher   [32]byte
+	Realm       [32]byte
+	Topic       string
+	Seq         uint64
+	PublishedAt uint64
+	TTLMs       *uint64
+	Payload     cbor.Value
+	// Sealed is a sealed event's payload, carried in place of Payload, nil
+	// for a publication in the clear.
+	Sealed          *Sealed
 	Key             []byte
 	PublicationHash [48]byte
 	ExpiresAt       uint64
@@ -100,7 +107,11 @@ func SignPublish(spec PublicationSpec, key *identity.NodeKey) (cbor.Value, error
 		textEntry("topic", spec.Topic),
 		uintEntry("seq", spec.Seq),
 		uintEntry("published_at", spec.PublishedAt),
-		valueEntry("payload", spec.Payload),
+	}
+	if spec.Sealed != nil {
+		fields = append(fields, valueEntry("sealed", spec.Sealed.value()))
+	} else {
+		fields = append(fields, valueEntry("payload", spec.Payload))
 	}
 	if spec.TTLMs != nil {
 		fields = append(fields, uintEntry("ttl_ms", *spec.TTLMs))
@@ -130,8 +141,13 @@ func publicationBuildable(spec PublicationSpec, key *identity.NodeKey) error {
 	if err := boundedText("topic", spec.Topic, maxTopicBytes); err != nil {
 		return err
 	}
-	if err := CheckPayload(spec.Payload); err != nil {
-		return err
+	if spec.Sealed != nil && (!spec.Sealed.KnownScheme() || !spec.Sealed.shaped(sealedEvent)) {
+		return ErrSealedShape
+	}
+	if spec.Sealed == nil {
+		if err := CheckPayload(spec.Payload); err != nil {
+			return err
+		}
 	}
 	if spec.TTLMs != nil && *spec.TTLMs > publicationMaxTTLMs {
 		return fmt.Errorf("%w: a ttl_ms of %d, over one hour", ErrOutOfRange, *spec.TTLMs)
@@ -164,6 +180,7 @@ var publicationTable = map[string]fieldRule{
 	"published_at": protocolUint,
 	"ttl_ms":       protocolUint,
 	"payload":      anyValue,
+	"sealed":       sealedRule(sealedEvent),
 }
 
 // VerifyPublication verifies the publication a received PUBLISH, EVENT or
@@ -199,7 +216,7 @@ func VerifyPublication(v cbor.Value, p profile.Profile, nowMs int64) (VerifiedPu
 		return VerifiedPublication{}, objectRefusal(err)
 	}
 	fields, ok := readFields(verified.Fields, publicationTable)
-	if !ok || !hasFields(fields, "publisher", "realm", "topic", "seq", "published_at", "payload") {
+	if !ok || !hasFields(fields, "publisher", "realm", "topic", "seq", "published_at") || !payloadOrSealed(fields) {
 		return VerifiedPublication{}, ErrMalformedFrame
 	}
 	publication := verifiedPublication(verified, fields)
@@ -229,6 +246,7 @@ func verifiedPublication(verified identity.VerifiedObject, fields map[string]cbo
 		Seq:             uint64(seq),
 		PublishedAt:     uint64(publishedAt),
 		Payload:         fields["payload"],
+		Sealed:          sealedField(fields, sealedEvent),
 		Key:             verified.Key,
 		PublicationHash: sha512.Sum384(verified.TBS),
 	}

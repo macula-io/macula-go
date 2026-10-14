@@ -26,6 +26,21 @@ type Publication struct {
 	Topic   string
 	Payload cbor.Value
 	TTLMs   *uint64
+	// Seal, when set, seals Payload once the publication's seq and time are
+	// known, and the PUBLISH carries what it returns in place of the payload
+	// (a sealed group's event, package group).
+	Seal func(SealFields) (frame.Sealed, error)
+}
+
+// SealFields are what a sealed event is bound to: the publication's routing
+// fields, its publisher included, and the payload to seal.
+type SealFields struct {
+	Realm       [32]byte
+	Topic       string
+	Publisher   [32]byte
+	Seq         uint64
+	PublishedAt uint64
+	Payload     cbor.Value
 }
 
 // Event is a publication a subscription heard, verified: who published it (the
@@ -39,6 +54,13 @@ type Event struct {
 	PublishedAt  uint64
 	Payload      cbor.Value
 	DeliveredVia string
+	// Sealed is a sealed event's payload, nil for a clear one; a sealed
+	// event's Payload is empty until a group subscription opens it.
+	Sealed *frame.Sealed
+	// Unopened is why a sealed event could not be opened, empty for one that
+	// was opened or is clear: one of package group's reasons. Such an event
+	// is delivered once, with nothing of its payload.
+	Unopened string
 }
 
 // PublicationSeq numbers one publisher's publications: the first is the wall
@@ -110,10 +132,19 @@ type SignedPublication struct {
 
 // SignPublication signs p with key at the next seq of seq, as Publish does.
 func SignPublication(key *identity.NodeKey, seq *PublicationSeq, p Publication) (SignedPublication, error) {
-	publish, err := frame.SignPublish(frame.PublicationSpec{
+	spec := frame.PublicationSpec{
 		Realm: p.Realm, Topic: p.Topic, Seq: seq.Next(), PublishedAt: uint64(time.Now().UnixMilli()),
 		Payload: p.Payload, TTLMs: p.TTLMs,
-	}, key)
+	}
+	if p.Seal != nil {
+		sealed, err := p.Seal(SealFields{Realm: spec.Realm, Topic: spec.Topic, Publisher: key.KeyID(), Seq: spec.Seq,
+			PublishedAt: spec.PublishedAt, Payload: p.Payload})
+		if err != nil {
+			return SignedPublication{}, err
+		}
+		spec.Sealed = &sealed
+	}
+	publish, err := frame.SignPublish(spec, key)
 	if err != nil {
 		return SignedPublication{}, err
 	}
@@ -178,14 +209,13 @@ func (l *Link) evented(v cbor.Value) {
 	now := time.Now().UnixMilli()
 	publication, err := frame.VerifyPublication(v, l.profile, now)
 	if err != nil {
-		// A sealed EVENT lands here too: a publication's table has no
-		// `sealed`, so it is counted and not delivered, as macula 13 does.
 		l.count("event_unverified")
 		return
 	}
 	via := frame.DeliveredVia(v)
 	event := Event{Publisher: publication.Publisher, Realm: publication.Realm, Topic: publication.Topic,
-		Seq: publication.Seq, PublishedAt: publication.PublishedAt, Payload: publication.Payload, DeliveredVia: via}
+		Seq: publication.Seq, PublishedAt: publication.PublishedAt, Payload: publication.Payload, DeliveredVia: via,
+		Sealed: publication.Sealed}
 	if !l.dedup.first(publication.PublicationHash, publication.ExpiresAt, now) {
 		l.count("event_duplicate")
 		return

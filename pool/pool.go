@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/macula-io/macula-go/group"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/stationlink"
@@ -137,6 +138,10 @@ type Pool struct {
 
 	// sharer is the content this node shares (content.go).
 	sharer contentSharer
+
+	// keyring holds the sealed groups this node joined (group.go), nil
+	// until the first.
+	keyring *group.Keyring
 }
 
 // Connect validates seeds and opts, dials every seed, and returns once one link
@@ -279,8 +284,12 @@ func (p *Pool) Close() error {
 	members := p.members
 	subs := p.subs
 	p.subs = map[*Subscription]struct{}{}
+	keyring := p.keyring
 	p.mu.Unlock()
 	p.cancel()
+	if keyring != nil {
+		keyring.Close()
+	}
 	for _, m := range members {
 		m.stop()
 	}
