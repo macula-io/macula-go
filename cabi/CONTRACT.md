@@ -348,6 +348,9 @@ for it.
   and `"unopened"`, one of `not_a_member`, `membership_unknown`,
   `unknown_epoch`, `epoch_expired`, `no_distributor`, `no_group` and
   `tag_invalid`. Under a `required` group a clear event is not delivered.
+  Under any other group a clear event under the prefix is delivered too,
+  without `"sealed"`: any realm member can publish one, so check `"sealed"`
+  before taking an event as the group's.
 - A refused join, or a publish that cannot be sealed, fails with kind `group`
   and that `reason`. A distributor that names no KEM key, which a pull never
   calls in the clear, is `no_distributor`; the detail is in `message`. A clear `macula_pool_publish` under a group this pool

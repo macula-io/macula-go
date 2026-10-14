@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"time"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/internal/redact"
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/stationlink"
@@ -54,6 +56,14 @@ type Call struct {
 	// (stationlink.Call). A sealed call never falls back to the clear.
 	Confidential stationlink.Confidentiality
 }
+
+// String writes the Call without its credential: the grant and proofs
+// show by size only.
+func (c Call) String() string { return redact.Struct(c, "Token", "Proofs") }
+
+// Format writes it as String does, whatever the verb, so %+v and %#v never
+// print the credential either.
+func (c Call) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, c.String()) }
 
 // Provider is a node serving a procedure, and the station it serves from.
 type Provider struct {
@@ -622,6 +632,14 @@ type StreamCall struct {
 	// (ConfidentialOff is ErrConfidentialOff).
 	Confidential stationlink.Confidentiality
 }
+
+// String writes the StreamCall without its credential: the grant and proofs
+// show by size only.
+func (s StreamCall) String() string { return redact.Struct(s, "Token", "Proofs") }
+
+// Format writes it as String does, whatever the verb, so %+v and %#v never
+// print the credential either.
+func (s StreamCall) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, s.String()) }
 
 // OpenStream opens a streaming session at a provider of the procedure, reached
 // as Call reaches one: its trusted advertisements from the DHT, freshest

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/internal/redact"
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/ucan"
@@ -84,6 +86,14 @@ type Request struct {
 	// opened plaintext, and the answer goes back sealed.
 	Sealed bool
 }
+
+// String writes the Request without its credential: the grant and proofs
+// show by size only.
+func (r Request) String() string { return redact.Struct(r, "Token", "Proofs") }
+
+// Format writes it as String does, whatever the verb, so %+v and %#v never
+// print the credential either.
+func (r Request) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, r.String()) }
 
 // Handler answers a Request with a result payload, or an error whose text the
 // caller receives as a handler_error's detail.

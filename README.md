@@ -251,7 +251,9 @@ no event, and a failed pull is retried with backoff until one succeeds. A
 publish whose epochs have all stopped publishing pulls at once and fails
 closed with that pull's error. A clear `Publish` under a held prefix is
 refused (`*pool.GroupHeldError`), and under a `required` group a clear event
-is not delivered (`Subscription.RefusedClear`). Epoch keys are held in memory
+is not delivered (`Subscription.RefusedClear`). Under any other group a clear
+event under the prefix is delivered with `Event.Sealed` nil; any realm member
+can publish one, so check `Sealed` before taking an event as the group's. Epoch keys are held in memory
 only and erased once no event under them can be accepted. A plain
 `Subscribe` gets a group's events unopened, as `no_group`. Held to macula's
 `e2e_seal_v1_group_keys` vectors (the pull's payloads byte for byte, the org

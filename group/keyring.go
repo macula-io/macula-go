@@ -4,12 +4,15 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"math/rand/v2"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/internal/redact"
 	"github.com/macula-io/macula-go/stationlink"
 )
 
@@ -93,6 +96,14 @@ type Pull struct {
 	Provider  [32]byte
 }
 
+// String writes the Pull without its credential: the grant and proofs
+// show by size only.
+func (p Pull) String() string { return redact.Struct(p, "Token") }
+
+// Format writes it as String does, whatever the verb, so %+v and %#v never
+// print the credential either.
+func (p Pull) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, p.String()) }
+
 // Puller makes a pull and returns its result and the node that answered.
 // Wrap ErrNotAdvertised when no trusted distributor advertises the
 // procedure; a provider's refusal is a *stationlink.ProviderError.
@@ -115,6 +126,14 @@ type JoinOptions struct {
 	UCAN        []byte
 	Distributor *[32]byte
 }
+
+// String writes the JoinOptions without its credential: the grant and proofs
+// show by size only.
+func (j JoinOptions) String() string { return redact.Struct(j, "UCAN") }
+
+// Format writes it as String does, whatever the verb, so %+v and %#v never
+// print the credential either.
+func (j JoinOptions) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, j.String()) }
 
 const (
 	defaultPullTimeout     = 15 * time.Second

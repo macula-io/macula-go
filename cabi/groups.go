@@ -13,7 +13,10 @@ import (
 // Sealed groups through the ABI (macula 13.2, DESIGN_E2E_SEALED_PUBSUB.md):
 // a publish sealed under a group's current epoch and a subscription that
 // opens its events, each joining the group first, which pulls its epoch from
-// the org's distributor over a sealed call. Since macula-go v0.27.0-rc.3.
+// the org's distributor over a sealed call. Unless the group's policy is
+// required, the subscription also delivers clear events under the prefix,
+// which any realm member can publish: a caller checks "sealed". Since
+// macula-go v0.27.0-rc.3.
 
 // groupOptionsJSON is options_json of macula_pool_publish_group and
 // macula_pool_subscribe_group: the group's prefix, the org's grant (a UCAN),

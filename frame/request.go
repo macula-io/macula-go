@@ -3,9 +3,11 @@ package frame
 import (
 	"crypto/sha512"
 	"fmt"
+	"io"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/identity"
+	"github.com/macula-io/macula-go/internal/redact"
 	"github.com/macula-io/macula-go/profile"
 )
 
@@ -39,6 +41,14 @@ type RequestSpec struct {
 	RetryBudget *uint64
 }
 
+// String writes the RequestSpec without its credential: the grant and proofs
+// show by size only.
+func (r RequestSpec) String() string { return redact.Struct(r, "Token", "Proofs") }
+
+// Format writes it as String does, whatever the verb, so %+v and %#v never
+// print the credential either.
+func (r RequestSpec) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, r.String()) }
+
 // The bound on a request's proofs, as macula 12's request table reads them
 // (D7, chain transport): eight tokens, 256 KiB in all, none repeated.
 const (
@@ -70,6 +80,14 @@ type VerifiedRequest struct {
 	// none.
 	Proofs [][]byte
 }
+
+// String writes the VerifiedRequest without its credential: the grant and proofs
+// show by size only.
+func (v VerifiedRequest) String() string { return redact.Struct(v, "Token", "Proofs") }
+
+// Format writes it as String does, whatever the verb, so %+v and %#v never
+// print the credential either.
+func (v VerifiedRequest) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, v.String()) }
 
 // requestRoutes are the routing fields a CALL or STREAM_OPEN may carry.
 var requestRoutes = map[string]fieldRule{"source_route": anyBytes, "retry_budget": protocolUint}

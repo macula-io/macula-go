@@ -5,13 +5,14 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"time"
-
-	"github.com/quic-go/quic-go"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/internal/redact"
 	"github.com/macula-io/macula-go/seal"
+	"github.com/quic-go/quic-go"
 )
 
 // ErrStreamOpenTooLarge is a STREAM_OPEN over the 1 MiB a peer reads of one.
@@ -46,6 +47,14 @@ type StreamCall struct {
 	// sent again in the clear. Without it, the refusal ends the stream.
 	Reseal func(named *[seal.KeyIDSize]byte) ([]byte, error)
 }
+
+// String writes the StreamCall without its credential: the grant and proofs
+// show by size only.
+func (s StreamCall) String() string { return redact.Struct(s, "Token", "Proofs") }
+
+// Format writes it as String does, whatever the verb, so %+v and %#v never
+// print the credential either.
+func (s StreamCall) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, s.String()) }
 
 // OpenStream opens a streaming session: a QUIC stream of its own, on which it
 // writes the signed STREAM_OPEN. A stream it opens but cannot write the open

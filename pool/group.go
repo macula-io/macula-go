@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/group"
+	"github.com/macula-io/macula-go/internal/redact"
 	"github.com/macula-io/macula-go/stationlink"
 )
 
@@ -21,6 +23,14 @@ type Group struct {
 	UCAN        []byte
 	Distributor *[32]byte
 }
+
+// String writes the Group without its credential: the grant and proofs
+// show by size only.
+func (g Group) String() string { return redact.Struct(g, "UCAN") }
+
+// Format writes it as String does, whatever the verb, so %+v and %#v never
+// print the credential either.
+func (g Group) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, g.String()) }
 
 // GroupHeldError is a publish in the clear under a prefix whose group this
 // node holds: it names the prefix, and is refused rather than sent in the
@@ -100,7 +110,9 @@ func (p *Pool) PublishGroup(ctx context.Context, pub stationlink.Publication, g 
 // SubscribeGroup subscribes to topic in realm under g: it joins the group
 // first, failing with the join's refusal, and then delivers each sealed
 // event opened, or once with Unopened set and no payload when it cannot be
-// opened. Under a Required group a clear event is refused and counted.
+// opened. Under a Required group a clear event is refused and counted;
+// under any other group it is delivered with Sealed nil, and any realm member
+// can publish one, so check Sealed before taking an event as the group's.
 func (p *Pool) SubscribeGroup(ctx context.Context, realm [32]byte, topic string, g Group) (*Subscription, error) {
 	if err := checkedGroup(topic, g); err != nil {
 		return nil, err
