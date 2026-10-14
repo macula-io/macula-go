@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -64,6 +65,10 @@ func (c Call) String() string { return redact.Struct(c, "Token", "Proofs") }
 // Format writes it as String does, whatever the verb, so %+v and %#v never
 // print the credential either.
 func (c Call) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, c.String()) }
+
+// LogValue writes it as String does, so slog's JSON handler, which never
+// asks fmt, does not print the credential either.
+func (c Call) LogValue() slog.Value { return slog.StringValue(c.String()) }
 
 // Provider is a node serving a procedure, and the station it serves from.
 type Provider struct {
@@ -640,6 +645,10 @@ func (s StreamCall) String() string { return redact.Struct(s, "Token", "Proofs")
 // Format writes it as String does, whatever the verb, so %+v and %#v never
 // print the credential either.
 func (s StreamCall) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, s.String()) }
+
+// LogValue writes it as String does, so slog's JSON handler, which never
+// asks fmt, does not print the credential either.
+func (s StreamCall) LogValue() slog.Value { return slog.StringValue(s.String()) }
 
 // OpenStream opens a streaming session at a provider of the procedure, reached
 // as Call reaches one: its trusted advertisements from the DHT, freshest

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -94,6 +95,10 @@ func (r Request) String() string { return redact.Struct(r, "Token", "Proofs") }
 // Format writes it as String does, whatever the verb, so %+v and %#v never
 // print the credential either.
 func (r Request) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, r.String()) }
+
+// LogValue writes it as String does, so slog's JSON handler, which never
+// asks fmt, does not print the credential either.
+func (r Request) LogValue() slog.Value { return slog.StringValue(r.String()) }
 
 // Handler answers a Request with a result payload, or an error whose text the
 // caller receives as a handler_error's detail.

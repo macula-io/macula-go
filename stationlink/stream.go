@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -81,6 +82,26 @@ type StreamEvent struct {
 	Role     frame.StreamRole
 	Payload  cbor.Value
 }
+
+// String names the stream by its side and its open, which shows as
+// frame.VerifiedRequest writes one, so the open's credential never shows. It
+// reads only what is set when the stream is made.
+func (s *Stream) String() string {
+	if s == nil {
+		return "<nil>"
+	}
+	side := "provider"
+	if s.caller {
+		side = "caller"
+	}
+	return fmt.Sprintf("{%s stream open:%s}", side, s.open)
+}
+
+// Format writes it as String does, whatever the verb.
+func (s *Stream) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, s.String()) }
+
+// LogValue writes it as String does, for slog's JSON handler too.
+func (s *Stream) LogValue() slog.Value { return slog.StringValue(s.String()) }
 
 // Stream is one streaming session, on either side.
 type Stream struct {

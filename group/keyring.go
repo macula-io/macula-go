@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"slices"
 	"sync"
@@ -104,6 +105,10 @@ func (p Pull) String() string { return redact.Struct(p, "Token") }
 // print the credential either.
 func (p Pull) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, p.String()) }
 
+// LogValue writes it as String does, so slog's JSON handler, which never
+// asks fmt, does not print the credential either.
+func (p Pull) LogValue() slog.Value { return slog.StringValue(p.String()) }
+
 // Puller makes a pull and returns its result and the node that answered.
 // Wrap ErrNotAdvertised when no trusted distributor advertises the
 // procedure; a provider's refusal is a *stationlink.ProviderError.
@@ -134,6 +139,10 @@ func (j JoinOptions) String() string { return redact.Struct(j, "UCAN") }
 // Format writes it as String does, whatever the verb, so %+v and %#v never
 // print the credential either.
 func (j JoinOptions) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, j.String()) }
+
+// LogValue writes it as String does, so slog's JSON handler, which never
+// asks fmt, does not print the credential either.
+func (j JoinOptions) LogValue() slog.Value { return slog.StringValue(j.String()) }
 
 const (
 	defaultPullTimeout     = 15 * time.Second

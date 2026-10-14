@@ -3,6 +3,8 @@ package frame
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"log/slog"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/identity"
@@ -116,6 +118,23 @@ type sideState struct {
 	ended  bool
 	key    []byte
 	signer [32]byte
+}
+
+// String writes the stream's state with its open as VerifiedRequest writes
+// one, so the open's credential never shows. fmt prints an unexported field
+// by reflection, without its Format, so this is written out by hand.
+func (s StreamState) String() string {
+	return fmt.Sprintf("{open:%s provider:%s caller:%s}", s.open, s.provider, s.caller)
+}
+
+// Format writes it as String does, whatever the verb.
+func (s StreamState) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, s.String()) }
+
+// LogValue writes it as String does, for slog's JSON handler too.
+func (s StreamState) LogValue() slog.Value { return slog.StringValue(s.String()) }
+
+func (s sideState) String() string {
+	return fmt.Sprintf("{next:%d ended:%t signer:%x}", s.next, s.ended, s.signer)
 }
 
 // OpenStream is the state a verifier starts a stream with, as macula_frame's

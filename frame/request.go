@@ -4,6 +4,7 @@ import (
 	"crypto/sha512"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/identity"
@@ -49,6 +50,10 @@ func (r RequestSpec) String() string { return redact.Struct(r, "Token", "Proofs"
 // print the credential either.
 func (r RequestSpec) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, r.String()) }
 
+// LogValue writes it as String does, so slog's JSON handler, which never
+// asks fmt, does not print the credential either.
+func (r RequestSpec) LogValue() slog.Value { return slog.StringValue(r.String()) }
+
 // The bound on a request's proofs, as macula 12's request table reads them
 // (D7, chain transport): eight tokens, 256 KiB in all, none repeated.
 const (
@@ -88,6 +93,10 @@ func (v VerifiedRequest) String() string { return redact.Struct(v, "Token", "Pro
 // Format writes it as String does, whatever the verb, so %+v and %#v never
 // print the credential either.
 func (v VerifiedRequest) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, v.String()) }
+
+// LogValue writes it as String does, so slog's JSON handler, which never
+// asks fmt, does not print the credential either.
+func (v VerifiedRequest) LogValue() slog.Value { return slog.StringValue(v.String()) }
 
 // requestRoutes are the routing fields a CALL or STREAM_OPEN may carry.
 var requestRoutes = map[string]fieldRule{"source_route": anyBytes, "retry_budget": protocolUint}

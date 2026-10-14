@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
@@ -31,6 +32,10 @@ func (g Group) String() string { return redact.Struct(g, "UCAN") }
 // Format writes it as String does, whatever the verb, so %+v and %#v never
 // print the credential either.
 func (g Group) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, g.String()) }
+
+// LogValue writes it as String does, so slog's JSON handler, which never
+// asks fmt, does not print the credential either.
+func (g Group) LogValue() slog.Value { return slog.StringValue(g.String()) }
 
 // GroupHeldError is a publish in the clear under a prefix whose group this
 // node holds: it names the prefix, and is refused rather than sent in the

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/macula-io/macula-go/cbor"
@@ -68,6 +69,10 @@ func (c Call) String() string { return redact.Struct(c, "Token", "Proofs") }
 // Format writes it as String does, whatever the verb, so %+v and %#v never
 // print the credential either.
 func (c Call) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, c.String()) }
+
+// LogValue writes it as String does, so slog's JSON handler, which never
+// asks fmt, does not print the credential either.
+func (c Call) LogValue() slog.Value { return slog.StringValue(c.String()) }
 
 // ProviderError is a provider's ERROR for the call, verified for its request.
 type ProviderError struct {

@@ -1,7 +1,9 @@
 package redact_test
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
@@ -58,5 +60,34 @@ func TestNoCredentialCarrierPrintsItsCredential(t *testing.T) {
 		if out := fmt.Sprintf("%+v", c); !strings.Contains(out, fmt.Sprintf("<grant, %d bytes>", len(grant))) {
 			t.Errorf("%s does not name its grant: %s", name, out)
 		}
+		for _, v := range []any{c, ptr.Interface()} {
+			if out := jsonLog(v); leaks(out) || !strings.Contains(out, "<grant, ") {
+				t.Errorf("%s through slog's JSON handler: %s", name, out)
+			}
+		}
+	}
+}
+
+// jsonLog logs v through slog's JSON handler, which marshals a value
+// rather than formatting it, and returns the line.
+func jsonLog(v any) string {
+	var b bytes.Buffer
+	slog.New(slog.NewJSONHandler(&b, nil)).Info("x", "v", v)
+	return b.String()
+}
+
+func TestAStreamStatePrintsNoCredential(t *testing.T) {
+	mode := frame.ServerStream
+	state, err := frame.OpenStream(frame.VerifiedRequest{FrameType: "stream_open", Mode: &mode, Token: grant, Proofs: [][]byte{proof}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		if out := fmt.Sprintf(verb, state); leaks(out) || !strings.Contains(out, "<grant, ") {
+			t.Errorf("%s: %s", verb, out)
+		}
+	}
+	if out := jsonLog(state); leaks(out) {
+		t.Errorf("slog JSON: %s", out)
 	}
 }
