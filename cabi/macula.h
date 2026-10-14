@@ -204,7 +204,8 @@ void macula_pool_publish(macula_handle pool, const uint8_t realm[32], const char
                          int64_t ttl_ms, char **err_out);
 macula_handle macula_pool_subscribe(macula_handle pool, const uint8_t realm[32], const char *topic, char **err_out);
 /* Sealed groups (since v0.27.0-rc.3; see CONTRACT.md "Sealed groups"). options_json:
-   {"prefix", "ucan"?, "distributor"?}. Each joins the group first, pulling its epoch from the org's distributor. */
+   {"prefix", "ucan"?, "distributor"?}; "distributor" (hex node id) is required for a ~<node_id> group. Each joins the
+   group first, pulling its epoch from the org's distributor; a join stays held even when the subscribe then fails. */
 void macula_pool_publish_group(macula_handle pool, const uint8_t realm[32], const char *topic, const char *payload_json,
                                const char *options_json, int64_t ttl_ms, int64_t timeout_ms, macula_handle cancel,
                                char **err_out);

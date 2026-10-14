@@ -336,7 +336,10 @@ for it.
 - `macula_pool_publish_group` seals a publication under the group's current
   epoch. `macula_pool_subscribe_group` opens the group's events. Each joins
   the group first, which pulls its epoch, so each takes `timeout_ms` and a
-  cancel token like a call.
+  cancel token like a call. One pull is bounded at 15 seconds even with
+  `timeout_ms` 0. A join stays held once it succeeded, also when the
+  subscription after it fails: the pool then refuses clear publishes under the
+  group (`group_held`) as it does for any held group.
 - `options_json` is `{"prefix", "ucan"?, "distributor"?}`. `distributor` is
   a node id in hex, required for a `~<node_id>` group. A prefix that cannot be
   a group, or a topic not under it, is `invalid_argument`.
@@ -346,7 +349,8 @@ for it.
   `unknown_epoch`, `epoch_expired`, `no_distributor`, `no_group` and
   `tag_invalid`. Under a `required` group a clear event is not delivered.
 - A refused join, or a publish that cannot be sealed, fails with kind `group`
-  and that `reason`. A clear `macula_pool_publish` under a group this pool
+  and that `reason`. A distributor that names no KEM key, which a pull never
+  calls in the clear, is `no_distributor`; the detail is in `message`. A clear `macula_pool_publish` under a group this pool
   holds fails with kind `group`, reason `group_held`, and the `prefix`.
 - Epoch keys stay inside the library, in memory. Nothing of them crosses the
   ABI.
