@@ -107,7 +107,10 @@ func TestAFrameAroundASignedObjectIsReadAsAReceivedFrameIs(t *testing.T) {
 // signatures, and nothing else. Which way a run goes is read from
 // crypto/fips140, not from the check under test. CI runs this test both ways.
 func TestASignedFrameVerifierSaysWhetherTheBinaryHasMLDSA(t *testing.T) {
-	carriedKey, tbs := make([]byte, 2592), cbor.Encode(cbor.Map(nil))
+	// The tbs names pq_pure's alg, so it passes the read that comes before the
+	// signature (macula#104) and reaches the signature check.
+	carriedKey := make([]byte, 2592)
+	tbs := cbor.Encode(cbor.Map([]cbor.MapEntry{{Key: cbor.Text("alg"), Val: cbor.Text("ML-DSA-87")}}))
 	signature := make([]byte, identity.SignatureSize(profile.PQPure))
 	object := identity.Object{Key: carriedKey, TBS: tbs, Signature: signature}.Value()
 	held := identity.HeldObject{TBS: tbs, Signature: signature}.Value()

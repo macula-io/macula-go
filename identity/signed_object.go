@@ -138,9 +138,11 @@ func SignHeldObject(label string, fields []cbor.MapEntry, key *NodeKey) (HeldObj
 
 // VerifyObject verifies a signed object that carries its key, under label and
 // the verifier's profile p, reading it in macula's order: exactly the keys key,
-// tbs and signature, each a byte string; key in p's carried form; the
-// signature over tbs as received; only then tbs under the decoding rule, a map
-// whose alg names p's algorithm. alg is checked and never selects an algorithm.
+// tbs and signature, each a byte string; key in p's carried form; tbs under the
+// decoding rule, a map whose alg names p's algorithm; only then the signature
+// over tbs as received. Reading alg first is the cheap refusal: an object
+// naming another algorithm costs a decode, never a signature verification
+// (macula#104). alg is checked and never selects an algorithm.
 func VerifyObject(label string, v cbor.Value, p profile.Profile) (VerifiedObject, error) {
 	object, err := ParseObject(v)
 	if err != nil {
@@ -154,7 +156,7 @@ func VerifyObject(label string, v cbor.Value, p profile.Profile) (VerifiedObject
 
 // VerifyHeldObject verifies a signed object whose key the verifier holds, under
 // label, that key as carried and the verifier's profile p: exactly the keys tbs
-// and signature, each a byte string, then the signature, tbs and alg as
+// and signature, each a byte string, then tbs, alg and the signature as
 // VerifyObject reads them.
 func VerifyHeldObject(label string, v cbor.Value, key []byte, p profile.Profile) (VerifiedObject, error) {
 	held, err := ParseHeldObject(v)
@@ -253,13 +255,10 @@ func objectSignedBytes(label string, key, tbs []byte) []byte {
 	return append(out, tbs...)
 }
 
-// verifiedObject checks the signature over tbs as received, then decodes tbs
-// and checks its alg against profile p. The result holds copies of key and tbs,
-// since both may be a caller's own buffers.
+// verifiedObject decodes tbs and checks its alg against profile p, and only
+// then checks the signature over tbs as received (macula#104). The result holds
+// copies of key and tbs, since both may be a caller's own buffers.
 func verifiedObject(label string, key, tbs, signature []byte, p profile.Profile) (VerifiedObject, error) {
-	if err := verifySignature(objectSignedBytes(label, key, tbs), signature, key, p, ErrObjectSignatureInvalid); err != nil {
-		return VerifiedObject{}, err
-	}
 	fields, err := cbor.Decode(tbs)
 	if err != nil {
 		return VerifiedObject{}, fmt.Errorf("%w: %w", ErrObjectMalformed, err)
@@ -274,6 +273,9 @@ func verifiedObject(label string, key, tbs, signature []byte, p profile.Profile)
 	}
 	if name != sigAlg(p) {
 		return VerifiedObject{}, ErrObjectAlgMismatch
+	}
+	if err := verifySignature(objectSignedBytes(label, key, tbs), signature, key, p, ErrObjectSignatureInvalid); err != nil {
+		return VerifiedObject{}, err
 	}
 	return VerifiedObject{Key: bytes.Clone(key), TBS: bytes.Clone(tbs), Fields: fields}, nil
 }

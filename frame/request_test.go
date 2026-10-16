@@ -215,13 +215,20 @@ func objectOf(t *testing.T, v cbor.Value, name string) identity.Object {
 	return must[identity.Object](t)(identity.ParseObject(field))
 }
 
-// withFlippedTBS is the frame v with one bit changed in the tbs of the object
-// under name.
+// withFlippedTBS is v with the signed object under name holding its tbs with
+// one field added: the tbs still decodes and names its alg, so the signature
+// refuses it. A tbs that no longer decodes, or names another alg, is refused
+// before the signature (macula#104).
 func withFlippedTBS(t *testing.T, v cbor.Value, name string) cbor.Value {
 	t.Helper()
 	object := objectOf(t, v, name)
-	object.TBS = bytes.Clone(object.TBS)
-	object.TBS[20] ^= 1
+	fields, err := cbor.Decode(object.TBS)
+	if err != nil {
+		t.Fatalf("withFlippedTBS: %v", err)
+	}
+	entries, _ := fields.AsMap()
+	tampered := append(append([]cbor.MapEntry(nil), entries...), cbor.MapEntry{Key: cbor.Text("tampered"), Val: cbor.Uint64(1)})
+	object.TBS = cbor.Encode(cbor.Map(tampered))
 	return frameWith(v, name, object.Value())
 }
 

@@ -316,9 +316,11 @@ it, `unavailable` that all failed.
 `macula_signed_object_verify` checks a signed object that carries its
 signer's key, `{key, tbs, signature}` in CBOR, as `macula_signed_object`
 does: exactly those three byte strings, the key in the profile's carried
-form, the signature over the label, a zero byte, the SHA-384 of the key and
-the tbs as received, and only then the tbs, a map whose `alg` names the
-profile's algorithm. It gives the signer's `node_id` (hex, as every id),
+form, the tbs under the decoding rule, a map whose `alg` names the profile's
+algorithm, and only then the signature over the label, a zero byte, the
+SHA-384 of the key and the tbs as received (since v0.27.0-rc.5, macula#104:
+an object naming another algorithm costs no signature verification, and any
+`alg` but the profile's is `alg_mismatch`). It gives the signer's `node_id` (hex, as every id),
 its `key` and the `tbs` bytes (`{"$bytes"}`, as they go back on the wire)
 and their `fields`. A library that cannot verify at all is `failed`, never
 `unverified`. The label is the one the object was signed under;

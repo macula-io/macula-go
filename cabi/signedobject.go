@@ -26,7 +26,10 @@ func errUnverified(err error) *abiError {
 	switch {
 	case errors.Is(err, identity.ErrObjectSignatureInvalid):
 		reason = "signature_invalid"
-	case errors.Is(err, identity.ErrObjectAlgMismatch):
+	// macula_signed_object names any alg but its profile's alg_mismatch,
+	// registered or not; since macula#104 a peer reaches it without a
+	// signature that verifies.
+	case errors.Is(err, identity.ErrObjectAlgMismatch), errors.Is(err, identity.ErrObjectAlgUnsupported):
 		reason = "alg_mismatch"
 	case errors.Is(err, identity.ErrObjectMalformed):
 		reason = "malformed"

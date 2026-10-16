@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **A signed object naming a foreign algorithm is refused before any
+  signature verification** (macula#104). `VerifyObject` and
+  `VerifyHeldObject` decode tbs and check its alg before the ML-DSA-87 verify,
+  as `VerifyObjectByAlg` (records) already did and as macula 15.4.0's
+  `macula_signed_object` now does. An object with a foreign or unregistered
+  alg, or a tbs that does not decode, under a signature that does not verify
+  is now `ErrObjectAlgMismatch`, `ErrObjectAlgUnsupported` or
+  `ErrObjectMalformed` where it was `ErrObjectSignatureInvalid`; a signed frame
+  carrying one is refused as a malformed frame, or as `alg_unsupported`, and
+  the C ABI's `macula_signed_object_verify` reports any of them as
+  `unverified` (an unregistered alg as `alg_mismatch`, as
+  `macula_signed_object` names it, where it was `failed`).
+
 ## [0.27.0-rc.4] - 2026-10-16
 
 ### Changed

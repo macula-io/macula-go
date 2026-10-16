@@ -101,6 +101,18 @@ func TestASignedObjectThatDoesNotVerifyIsUnverifiedWithItsReason(t *testing.T) {
 		t.Errorf("another profile's key: %s", r)
 	}
 
+	// An alg no verifier is registered for is refused before the signature
+	// (macula#104): a verdict on the object, as macula_signed_object names it.
+	parsed, err := identity.DecodeObject(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.TBS = cbor.Encode(cbor.Map([]cbor.MapEntry{{Key: cbor.Text("alg"), Val: cbor.Text("ML-DSA-65")}}))
+	_, err = verifySignedObject(objectLabel, cbor.Encode(parsed.Value()), "")
+	if r := unverifiedReason(t, err); r != "alg_mismatch" {
+		t.Errorf("an unregistered alg under a signature that does not verify: %s", r)
+	}
+
 	for name, b := range map[string][]byte{
 		"not CBOR":     {0xff},
 		"not a map":    cbor.Encode(cbor.Text("x")),

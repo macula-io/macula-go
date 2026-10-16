@@ -12,13 +12,20 @@ import (
 
 // These tests mirror macula's macula_signed_object_tests at merge-11.0.0: a
 // signature covers Label || 0x00 || SHA-384(key as carried) || tbs, and a
-// verifier reads an object in order: its shape, the carried key, the signature
-// over tbs as received, tbs under the decoding rule, then alg.
+// verifier reads an object in order: its shape, the carried key, tbs under the
+// decoding rule and its alg, then the signature over tbs as received.
 
 const (
 	objectLabel      = "MACULA-PQ-RECORD-V1"
 	otherObjectLabel = "MACULA-PQ-REPLY-V1"
 )
+
+// objectExpectedFieldsAnd is the tbs of objectTestFields under p with one more
+// field, extra: a tbs that decodes and names p's alg, but is not what was signed.
+func objectExpectedFieldsAnd(p profile.Profile, extra string) []byte {
+	entries := append(objectTestFields(), textEntry("alg", sigAlg(p)), cbor.MapEntry{Key: cbor.Text(extra), Val: cbor.Uint64(1)})
+	return cbor.Encode(cbor.Map(entries))
+}
 
 // objectTestFields are the fields the tests sign: a type and a payload map.
 func objectTestFields() []cbor.MapEntry {
@@ -127,7 +134,7 @@ func TestASignedObjectWhoseSignatureCannotHoldIsRefused(t *testing.T) {
 		}{
 			{"another label", otherObjectLabel, v},
 			{"a changed signature byte", objectLabel, objectWith(v, "signature", cbor.Bytes(flippedAt(object.Signature, 10)))},
-			{"a changed tbs byte", objectLabel, objectWith(v, "tbs", cbor.Bytes(flippedAt(object.TBS, 10)))},
+			{"another tbs naming the profile's alg", objectLabel, objectWith(v, "tbs", cbor.Bytes(objectExpectedFieldsAnd(p, "tampered")))},
 			{"another valid key", objectLabel, objectWith(v, "key", cbor.Bytes(keys.connect.PublicKey()))},
 		}
 		for _, c := range cases {
@@ -286,4 +293,38 @@ func TestSignObjectRefusesFieldsWithoutTextKeysOfTheirOwn(t *testing.T) {
 
 func sameObject(a, b Object) bool {
 	return bytes.Equal(a.Key, b.Key) && bytes.Equal(a.TBS, b.TBS) && bytes.Equal(a.Signature, b.Signature)
+}
+
+// alg is read before the signature (macula#104): a tbs that does not decode to
+// a map naming alg, or whose alg is not the verifier's profile's, is refused
+// on that cheap read, so a signature that would not verify never names the
+// refusal and no signature verification is spent on it. Carried and held.
+func TestAnObjectTBSAndAlgAreRefusedBeforeTheSignature(t *testing.T) {
+	forEachProfile(t, func(t *testing.T, p profile.Profile, keys bindingKeys) {
+		other := append([]byte{0x63}, append([]byte("alg"), objectCBORText(sigAlg(otherProfile(p)))...)...)
+		unregistered := append([]byte{0x63}, append([]byte("alg"), objectCBORText("ML-DSA-65")...)...)
+		cases := []struct {
+			name string
+			tbs  []byte
+			want error
+		}{
+			{"a tbs that is not a map", []byte{0x82, 0x01, 0x02}, ErrObjectMalformed},
+			{"a tbs without alg", append([]byte{0xa1, 0x64}, append([]byte("type"), 0x01)...), ErrObjectMalformed},
+			{"alg naming the other profile", append([]byte{0xa1}, other...), ErrObjectAlgMismatch},
+			{"alg naming no registered verifier", append([]byte{0xa1}, unregistered...), ErrObjectAlgUnsupported},
+		}
+		for _, c := range cases {
+			raw := rawObject(t, keys.identity, c.tbs)
+			object, err := ParseObject(raw)
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			bad := cbor.Bytes(flippedAt(object.Signature, 10))
+			_, err = VerifyObject(objectLabel, objectWith(raw, "signature", bad), p)
+			checkRefusal(t, c.name+", carried, under a bad signature", err, c.want)
+			held := cbor.Map([]cbor.MapEntry{{Key: cbor.Text("tbs"), Val: cbor.Bytes(c.tbs)}, {Key: cbor.Text("signature"), Val: bad}})
+			_, err = VerifyHeldObject(objectLabel, held, keys.identity.PublicKey(), p)
+			checkRefusal(t, c.name+", held, under a bad signature", err, c.want)
+		}
+	})
 }

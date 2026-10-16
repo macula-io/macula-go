@@ -58,7 +58,9 @@ func TestAKeyOperationSaysWhetherTheBinaryHasMLDSA(t *testing.T) {
 // CI runs this test both ways.
 func TestAVerifierSaysWhetherTheBinaryHasMLDSA(t *testing.T) {
 	carried := make([]byte, mldsaPublicKeySize)
-	tbs := cbor.Encode(cbor.Map(nil))
+	// The tbs names pq_pure's alg, so a signed object passes the read that comes
+	// before the signature (macula#104) and reaches the signature check.
+	tbs := cbor.Encode(cbor.Map([]cbor.MapEntry{textEntry("alg", sigAlg(profile.PQPure))}))
 	signature := make([]byte, SignatureSize(profile.PQPure))
 	signed := SignedTBS{TBS: tbs, Signature: signature}
 	_, tlsErr := VerifyTLSBinding(signed, carried, profile.PQPure, []byte("a leaf"), 0)
