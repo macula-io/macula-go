@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0-rc.4] - 2026-10-16
+
 ### Changed
 
 - **Serve and Subscribe return the station's verdict** (#32, macula#12), as
