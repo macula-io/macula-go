@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0-rc.5] - 2026-10-16
+
 ### Security
 
 - **A signed object naming a foreign algorithm is refused before any
