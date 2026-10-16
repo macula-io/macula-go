@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 
 	"github.com/macula-io/macula-go/stationlink"
@@ -30,12 +31,20 @@ type Subscription struct {
 
 	mu      sync.Mutex
 	onLinks map[*stationlink.Link]*stationlink.Subscription
-	ended   bool
-	dropped uint64
-	refused uint64
+	// attaching is the links a SUBSCRIBE awaits its verdict on.
+	attaching map[*stationlink.Link]bool
+	ended     bool
+	dropped   uint64
+	refused   uint64
 }
 
-// Subscribe subscribes the node to topic in realm on every link. A sealed
+// Subscribe subscribes the node to topic in realm on every link, and on every
+// link the pool dials later. It returns once one station acknowledges the
+// subscription (macula#12), and fails when none does, leaving no
+// subscription: the error joins each link's, in which errors.As finds a
+// *stationlink.RefusedError when a station refused it and a
+// *stationlink.UnacknowledgedError when one did not answer within 30 seconds.
+// With no link up it is ErrNoLink. A sealed
 // event arrives once with Unopened "no_group" and no payload (subscribe
 // under its group with SubscribeGroup to open it), and a clear event under a
 // Required group this node holds is refused and counted.
@@ -45,26 +54,62 @@ func (p *Pool) Subscribe(realm [32]byte, topic string) (*Subscription, error) {
 
 func (p *Pool) subscribe(realm [32]byte, topic, prefix string) (*Subscription, error) {
 	sub := &Subscription{pool: p, realm: realm, topic: topic, events: make(chan stationlink.Event, subscriptionBuffer),
-		group: prefix, onLinks: map[*stationlink.Link]*stationlink.Subscription{}}
+		group: prefix, onLinks: map[*stationlink.Link]*stationlink.Subscription{}, attaching: map[*stationlink.Link]bool{}}
 	sub.ctx, sub.cancel = context.WithCancel(p.ctx)
 	if prefix != "" {
 		sub.opening = make(chan stationlink.Event, subscriptionBuffer)
 	}
+	if p.isClosed() {
+		sub.cancel()
+		return nil, ErrClosed
+	}
+	if sub.opening != nil {
+		go sub.open()
+	}
+	// The pool learns of sub only after the first round, so a link that
+	// comes up meanwhile is attached below, never by a replay whose attempt
+	// the round would read as its own.
+	links := p.links()
+	if err := sub.firstAttached(links); err != nil {
+		_ = sub.end()
+		return nil, err
+	}
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
-		sub.cancel()
+		_ = sub.end()
 		return nil, ErrClosed
 	}
 	p.subs[sub] = struct{}{}
 	p.mu.Unlock()
-	if sub.opening != nil {
-		go sub.open()
-	}
 	for _, link := range p.links() {
-		sub.attach(link)
+		if !slices.Contains(links, link) {
+			go func() { _ = sub.attach(link) }()
+		}
 	}
 	return sub, nil
+}
+
+// firstAttached subscribes on every link at once and returns once one station
+// acknowledges the subscription, or with every link's error when none does,
+// ErrNoLink when no link is up. The links still unanswered then go on.
+func (s *Subscription) firstAttached(links []*stationlink.Link) error {
+	if len(links) == 0 {
+		return ErrNoLink
+	}
+	results := make(chan error, len(links))
+	for _, link := range links {
+		go func() { results <- s.attach(link) }()
+	}
+	var errs []error
+	for range links {
+		err := <-results
+		if err == nil {
+			return nil
+		}
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // Events delivers the subscription's events; it closes when the subscription
@@ -119,21 +164,31 @@ func (s *Subscription) end() error {
 }
 
 // attach subscribes on link, once, and forwards what it hears until the link's
-// subscription ends.
-func (s *Subscription) attach(link *stationlink.Link) {
+// subscription ends. It returns the link's verdict on the subscription; a
+// link it is already attached or attaching to is nil.
+func (s *Subscription) attach(link *stationlink.Link) error {
 	s.mu.Lock()
-	if s.ended || s.onLinks[link] != nil {
+	if s.ended || s.onLinks[link] != nil || s.attaching[link] {
 		s.mu.Unlock()
-		return
+		return nil
 	}
+	s.attaching[link] = true
+	s.mu.Unlock()
 	linkSub, err := link.Subscribe(s.realm, s.topic)
+	s.mu.Lock()
+	delete(s.attaching, link)
 	if err != nil {
 		s.mu.Unlock()
-		return
+		return err
+	}
+	if s.ended {
+		s.mu.Unlock()
+		return linkSub.Unsubscribe()
 	}
 	s.onLinks[link] = linkSub
 	s.mu.Unlock()
 	go s.forward(link, linkSub)
+	return nil
 }
 
 func (s *Subscription) forward(link *stationlink.Link, linkSub *stationlink.Subscription) {

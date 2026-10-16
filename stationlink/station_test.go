@@ -21,6 +21,7 @@ import (
 	"github.com/macula-io/macula-go/handshake"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
+	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/transport"
 )
 
@@ -41,6 +42,12 @@ type testStation struct {
 
 	// refuse makes the HELLO a refusal with this code.
 	refuse handshake.RefusalCode
+
+	// verdict answers each ADVERTISE, UNADVERTISE, SUBSCRIBE and UNSUBSCRIBE
+	// as a wire 1.0 station does, with a REGISTER_ACK (WIRE_1_0.md section
+	// 3.5): nil accepts every one; otherwise it names the refusal reason, empty
+	// to accept, and silent to send no ack at all.
+	verdict func(kind string) (reason string, silent bool)
 
 	mu       sync.Mutex
 	floor    handshake.Floor // the station's handshake floor per client, nil for none
@@ -219,8 +226,89 @@ func (s *testStation) handshaken(ctx context.Context, conn *quic.Conn) bool {
 			close(s.received)
 			return true
 		}
+		s.acknowledgeRegistration(writer, frame)
 		s.received <- frame
 	}
+}
+
+// acknowledgeRegistration answers a registration frame with the REGISTER_ACK
+// the station's verdict gives it; any other frame needs no ack.
+func (s *testStation) acknowledgeRegistration(writer *frameWriter, raw []byte) {
+	v, err := cbor.Decode(raw)
+	if err != nil {
+		return
+	}
+	ack, isRegistration := registrationOf(s.t, v, s.profile)
+	if !isRegistration {
+		return
+	}
+	s.mu.Lock()
+	verdict := s.verdict
+	s.mu.Unlock()
+	ack.Accepted = true
+	if verdict != nil {
+		reason, silent := verdict(ack.Kind)
+		if silent {
+			return
+		}
+		ack.Accepted, ack.Reason = reason == "", reason
+	}
+	answer, err := frame.RegisterAckFrame(ack)
+	if err != nil {
+		s.t.Errorf("station: a REGISTER_ACK it cannot build: %v", err)
+		return
+	}
+	_ = writer.write(cbor.Encode(answer), MaxFrameBytes)
+}
+
+// registrationOf is the REGISTER_ACK a registration frame is answered with,
+// before its verdict: its kind, realm and name, and the record version of an
+// advertise kind or the subscriber of a subscribe kind.
+func registrationOf(t *testing.T, v cbor.Value, p profile.Profile) (frame.RegisterAck, bool) {
+	kind, _ := fieldOfTest(v, "frame_type").AsText()
+	var ack frame.RegisterAck
+	switch kind {
+	case "advertise", "unadvertise":
+		name := map[string]string{"advertise": "advertisement", "unadvertise": "withdrawal"}[kind]
+		wire, _ := fieldOfTest(v, name).AsBytes()
+		verified, err := record.Verify(wire, p, time.Now().UnixMilli())
+		if err != nil {
+			t.Errorf("station: a %s whose record does not verify: %v", kind, err)
+			return ack, false
+		}
+		r := verified.Record()
+		if kind == "advertise" {
+			ad, err := record.ReadProcedureAdvertisement(r)
+			if err != nil {
+				t.Errorf("station: an advertisement that does not read: %v", err)
+				return ack, false
+			}
+			return frame.RegisterAck{Kind: kind, Realm: ad.RealmID, Name: ad.Procedure, RecordVersion: r.Version}, true
+		}
+		tombstone, err := record.ReadTombstone(r)
+		if err != nil {
+			t.Errorf("station: a withdrawal that does not read: %v", err)
+			return ack, false
+		}
+		return frame.RegisterAck{Kind: kind, Realm: tombstone.RealmID, Name: tombstone.Procedure,
+			RecordVersion: tombstone.WithdrawnVersion}, true
+	case "subscribe", "unsubscribe":
+		realm, _ := fieldOfTest(v, "realm").AsBytes()
+		topic, _ := fieldOfTest(v, "topic").AsBytes()
+		subscriber, _ := fieldOfTest(v, "subscriber").AsBytes()
+		ack = frame.RegisterAck{Kind: kind, Name: string(topic)}
+		copy(ack.Realm[:], realm)
+		copy(ack.Subscriber[:], subscriber)
+		return ack, true
+	}
+	return ack, false
+}
+
+// judge sets the station's verdict on registrations from now on.
+func (s *testStation) judge(verdict func(kind string) (reason string, silent bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.verdict = verdict
 }
 
 // refusedHello is a HELLO refusing with code, as a station sends it.

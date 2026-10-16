@@ -1,6 +1,6 @@
 /*
- * macula.h: the C ABI over macula-go's macula 12 API, shared by every
- * binding that is not written in Go (.NET, Python, PHP, TypeScript).
+ * macula.h: the C ABI over macula-go's API (wire 1.0, macula 15), shared by
+ * every binding that is not written in Go (.NET, Python, PHP, TypeScript).
  *
  * Built from macula-go's own module:
  *   go build -buildmode=c-shared  -o libmacula.so ./cabi   (or .dylib / .dll)
@@ -135,7 +135,7 @@ uint8_t *macula_ownership_proof_message(const uint8_t identity[32], const uint8_
                                         int64_t timestamp_ms, const uint8_t nonce[16], const char *fields_json,
                                         size_t *out_len, char **err_out);
 
-/* ---- UCANs (macula 12, D7) --------------------------------------------- */
+/* ---- UCANs (D7) -------------------------------------------------------- */
 /* Since macula-go v0.17.0. */
 
 /* key's token for the node audience_node_id, granting caps_json (a JSON array
@@ -202,6 +202,8 @@ char *macula_pool_providers(macula_handle pool, const uint8_t realm[32], const c
 /* ttl_ms 0: the default (10 minutes). */
 void macula_pool_publish(macula_handle pool, const uint8_t realm[32], const char *topic, const char *payload_json,
                          int64_t ttl_ms, char **err_out);
+/* Returns once a station acknowledges the subscription (since v0.27.0-rc.4, macula#12), within 30 seconds: when none
+   does, the error kind refused with the station's reason, or unacknowledged (CONTRACT.md "Errors"). */
 macula_handle macula_pool_subscribe(macula_handle pool, const uint8_t realm[32], const char *topic, char **err_out);
 /* Sealed groups (since v0.27.0-rc.3; see CONTRACT.md "Sealed groups"). options_json:
    {"prefix", "ucan"?, "distributor"?}; "distributor" (hex node id) is required for a ~<node_id> group. Each joins the
@@ -223,7 +225,9 @@ void macula_subscription_stop(macula_handle subscription);
 /* ---- Serving ----------------------------------------------------------- */
 
 /* procedure is "~<own node_id hex>/<name>" (the node's own namespace) or
- * "<org>/<name>" under an org that delegated it to this node. */
+ * "<org>/<name>" under an org that delegated it to this node. Each serve returns once a station acknowledges the
+ * advertisement (since v0.27.0-rc.4, macula#12), within 30 seconds: when none does, the error kind refused with the
+ * station's reason, or unacknowledged (CONTRACT.md "Errors"). */
 macula_handle macula_pool_serve(macula_handle pool, const uint8_t realm[32], const char *procedure, char **err_out);
 macula_handle macula_pool_serve_stream(macula_handle pool, const uint8_t realm[32], const char *procedure,
                                        int32_t mode, char **err_out);

@@ -81,6 +81,8 @@ type Station struct {
 	// it counted.
 	relayed int
 	stopped bool
+	// verdict judges each registration (Judge), nil accepting every one.
+	verdict func(kind string) (reason string, silent bool)
 }
 
 type routeKey struct {
@@ -666,10 +668,46 @@ func (s *Station) advertised(c *conn, v cbor.Value) {
 			return
 		}
 	}
+	ack, answered := s.judged(ack)
+	if ack.Accepted {
+		s.mu.Lock()
+		s.routes[routeKey{ad.RealmID, ad.Procedure}] = c
+		s.mu.Unlock()
+	}
+	if answered {
+		s.acknowledge(c, ack)
+	}
+}
+
+// Judge sets how the station answers each ADVERTISE, UNADVERTISE, SUBSCRIBE
+// and UNSUBSCRIBE it would accept from now on: verdict gets the frame's kind
+// and returns a refusal reason (one WIRE_1_0.md section 3.5 names), empty to
+// accept, or silent to send no REGISTER_ACK at all. A refused or unanswered
+// registration changes nothing at the station. nil accepts every one again.
+func (s *Station) Judge(verdict func(kind string) (reason string, silent bool)) {
 	s.mu.Lock()
-	s.routes[routeKey{ad.RealmID, ad.Procedure}] = c
+	defer s.mu.Unlock()
+	s.verdict = verdict
+}
+
+// judged is ack, which the station would accept, as its verdict answers it,
+// and whether any ack is sent: an unanswered one reads as not accepted, so it
+// changes nothing at the station.
+func (s *Station) judged(ack frame.RegisterAck) (frame.RegisterAck, bool) {
+	s.mu.Lock()
+	verdict := s.verdict
 	s.mu.Unlock()
-	s.acknowledge(c, ack)
+	if verdict == nil {
+		return ack, true
+	}
+	reason, silent := verdict(ack.Kind)
+	switch {
+	case silent:
+		ack.Accepted = false
+	case reason != "":
+		ack.Accepted, ack.Reason = false, reason
+	}
+	return ack, !silent
 }
 
 // acknowledge sends c the REGISTER_ACK ack.
@@ -700,10 +738,15 @@ func (s *Station) unadvertised(c *conn, v cbor.Value) {
 		s.acknowledge(c, ack)
 		return
 	}
-	s.mu.Lock()
-	delete(s.routes, routeKey{tombstone.RealmID, tombstone.Procedure})
-	s.mu.Unlock()
-	s.acknowledge(c, ack)
+	ack, answered := s.judged(ack)
+	if ack.Accepted {
+		s.mu.Lock()
+		delete(s.routes, routeKey{tombstone.RealmID, tombstone.Procedure})
+		s.mu.Unlock()
+	}
+	if answered {
+		s.acknowledge(c, ack)
+	}
 }
 
 func (s *Station) subscribed(c *conn, v cbor.Value, on bool) {
@@ -714,15 +757,22 @@ func (s *Station) subscribed(c *conn, v cbor.Value, on bool) {
 	copy(realm[:], realmBytes)
 	copy(subscriber[:], subscriberBytes)
 	kind := "unsubscribe"
-	s.mu.Lock()
 	if on {
 		kind = "subscribe"
+	}
+	ack, answered := s.judged(frame.RegisterAck{Kind: kind, Realm: realm, Name: string(topic), Subscriber: subscriber, Accepted: true})
+	s.mu.Lock()
+	switch {
+	case !ack.Accepted:
+	case on:
 		c.topics[routeKey{realm, string(topic)}] = true
-	} else {
+	default:
 		delete(c.topics, routeKey{realm, string(topic)})
 	}
 	s.mu.Unlock()
-	s.acknowledge(c, frame.RegisterAck{Kind: kind, Realm: realm, Name: string(topic), Subscriber: subscriber, Accepted: true})
+	if answered {
+		s.acknowledge(c, ack)
+	}
 }
 
 // published delivers a verified publication as an EVENT to every connection

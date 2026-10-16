@@ -120,8 +120,10 @@ type Link struct {
 	unsubscribe  func()
 	unrouted     map[string]uint64
 	refusals     map[string]uint64
+	awaiting     map[registration]chan frame.RegisterAck
 	pending      map[[16]byte]*pendingCall
 	subs         map[topicKey][]*Subscription
+	subscribing  map[topicKey]*pendingSubscribe
 	dedup        *EventDedup
 	served       map[servedKey]*Served
 	streams      map[*Stream]struct{}
@@ -252,7 +254,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		conn: dialed.Conn, stream: stream, writer: writer, profile: cfg.Target.Profile, key: cfg.IdentityKey,
 		station: station, stationCap: capabilities,
 		pongs:       make(chan [16]byte, 1),
-		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, refusals: map[string]uint64{}, pending: map[[16]byte]*pendingCall{},
+		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, refusals: map[string]uint64{}, awaiting: map[registration]chan frame.RegisterAck{}, subscribing: map[topicKey]*pendingSubscribe{}, pending: map[[16]byte]*pendingCall{},
 		subs: map[topicKey][]*Subscription{}, dedup: dedup, self: self, seq: seq,
 		served: map[servedKey]*Served{}, streams: map[*Stream]struct{}{}, openWait: streamOpenWait, admission: admission, share: share,
 		keyring: cfg.Keyring, kemAdvertise: cfg.KEMAdvertise,
@@ -470,13 +472,18 @@ func (l *Link) received(payload []byte) error {
 	return nil
 }
 
-// registerAcked reads the station's REGISTER_ACK: a refusal is counted by its
-// reason, an ack of a kind this library does not know is ignored, and a
+// registerAcked reads the station's REGISTER_ACK: it answers the Serve or
+// Subscribe waiting on its registration (register.go), a refusal is counted by
+// its reason, an ack of a kind this library does not know is ignored, and a
 // malformed one ends the link.
 func (l *Link) registerAcked(v cbor.Value) error {
 	ack, known, err := frame.ReadRegisterAck(v)
-	if err != nil || !known || ack.Accepted {
+	if err != nil || !known {
 		return err
+	}
+	l.acknowledged(ack)
+	if ack.Accepted {
+		return nil
 	}
 	l.mu.Lock()
 	l.refusals[ack.Reason]++

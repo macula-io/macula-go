@@ -116,6 +116,14 @@ func classify(ctx context.Context, err error) *abiError {
 	case errors.Is(err, group.ErrInvalidGroup):
 		return newError(kindInvalidArgument, "%v", err)
 	}
+	var registerRefused *stationlink.RefusedError
+	var unacknowledged *stationlink.UnacknowledgedError
+	switch {
+	case errors.As(err, &registerRefused):
+		return registrationVerdict(err, registerRefused.Kind, registerRefused.Station, registerRefused.Reason)
+	case errors.As(err, &unacknowledged):
+		return registrationVerdict(err, unacknowledged.Kind, unacknowledged.Station, "unacknowledged")
+	}
 	var provider *stationlink.ProviderError
 	var relay *stationlink.RelayError
 	var confidentiality *stationlink.ConfidentialityError
@@ -164,6 +172,14 @@ func classify(ctx context.Context, err error) *abiError {
 		return newError(kindNoProvider, "%v", err)
 	}
 	return newError(kindFailed, "%v", err)
+}
+
+// registrationVerdict is a serve or subscribe no station accepted (macula#12):
+// the station's refusal reason, or unacknowledged when none answered, the
+// registration (advertise or subscribe) and the station's node_id in hex.
+func registrationVerdict(err error, registration string, station [32]byte, reason string) *abiError {
+	return &abiError{kind: kindRefused, message: err.Error(), fields: map[string]any{
+		"reason": reason, "registration": registration, "station": hex.EncodeToString(station[:])}}
 }
 
 // failures is each sharer's failure in a joined ErrContentUnavailable.

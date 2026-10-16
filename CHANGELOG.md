@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Serve and Subscribe return the station's verdict** (#32, macula#12), as
+  macula 15's advertise and subscribe do. `stationlink.Serve` and `Subscribe`
+  return once the station's REGISTER_ACK answers their ADVERTISE or SUBSCRIBE,
+  matched on kind, realm, name and the record version or this node as
+  subscriber, within 30 seconds (and Serve's ctx): a refusal is a
+  `*stationlink.RefusedError` with the station's reason, no answer a
+  `*stationlink.UnacknowledgedError` (the link withdraws it with UNADVERTISE or
+  UNSUBSCRIBE), and neither leaves anything served or subscribed. An
+  advertisement goes into the DHT only once a station accepted it. A second
+  subscription to a topic whose SUBSCRIBE is unanswered shares its verdict.
+  Renewals wait for no ack; their refusals still count in `RegisterRefusals`.
+- **The pool returns on the first acceptance**: `pool.Serve` and
+  `pool.Subscribe` register on every link at once, return once one station
+  accepts, and fail, holding nothing, when none does (the joined error carries
+  each link's). A station that refused is not asked again until its link is
+  dialed again. `pool.Subscribe` with no link up is now `ErrNoLink`, as
+  `pool.Serve` already was.
+- **The C ABI reports it**: `macula_pool_serve*` and `macula_pool_subscribe*`
+  fail with error kind `refused` and fields `reason` (the station's, or
+  `unacknowledged`), `registration` (`advertise` or `subscribe`) and `station`
+  (CONTRACT.md "Errors"). `cabi/macula.h` no longer calls the ABI macula 12's
+  (#37).
+- **teststation's `Judge`** sets how a test station answers registrations:
+  refuse with a reason, or send no ack.
+
 ### Added
 
 - **The sealed group interop runs TypeScript too**: `GROUPS_PEER=ts

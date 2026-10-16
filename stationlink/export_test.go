@@ -24,3 +24,11 @@ func SetStreamOpenWait(d time.Duration) func() {
 	streamOpenWait = d
 	return func() { streamOpenWait = old }
 }
+
+// SetRegisterAckTimeout sets how long Serve and Subscribe wait for the
+// station's REGISTER_ACK, for a test.
+func SetRegisterAckTimeout(d time.Duration) func() {
+	old := registerAckTimeout
+	registerAckTimeout = d
+	return func() { registerAckTimeout = old }
+}

@@ -156,7 +156,7 @@ func (p *Pool) replay(link *stationlink.Link) {
 	}
 	p.mu.Unlock()
 	for _, sub := range subs {
-		sub.attach(link)
+		go func() { _ = sub.attach(link) }()
 	}
 	for _, s := range served {
 		s.attach(link)

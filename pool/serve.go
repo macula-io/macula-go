@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -60,9 +61,13 @@ type Served struct {
 }
 
 // Serve serves o on every link that is up, and on every link that comes up
-// after. It succeeds when one link serves it; each link advertises it naming
-// its own station, and renews and puts it in the DHT as stationlink.Serve
-// does.
+// after. It returns once one station acknowledges it (macula#12), and fails
+// when none does, leaving nothing served: the error joins each link's, in
+// which errors.As finds a *stationlink.RefusedError when a station refused it
+// and a *stationlink.UnacknowledgedError when one did not answer. Each link
+// advertises it naming its own station, and renews and puts it in the DHT as
+// stationlink.Serve does; a station that refused it is not asked again until
+// its link is dialed again.
 func (p *Pool) Serve(ctx context.Context, o Offer) (*Served, error) {
 	realmKey, err := p.realmKeyFor(o.Realm, o.Procedure)
 	if err != nil {
@@ -83,26 +88,94 @@ func (p *Pool) Serve(ctx context.Context, o Offer) (*Served, error) {
 	if len(links) == 0 {
 		return nil, ErrNoLink
 	}
-	var errs []error
-	for _, link := range links {
-		if err := s.serveOn(ctx, link); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	if len(errs) == len(links) {
-		return nil, errors.Join(errs...)
+	// The pool learns of s only after the first round, so a link that comes
+	// up meanwhile is served below, never by a replay whose attempt the round
+	// would read as its own.
+	if err := s.firstServed(ctx, links); err != nil {
+		_ = s.Stop()
+		return nil, err
 	}
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
+		_ = s.Stop()
 		return nil, ErrClosed
 	}
 	p.served[s] = struct{}{}
 	p.mu.Unlock()
 	for _, link := range p.links() {
-		s.attach(link)
+		if !slices.Contains(links, link) {
+			s.attach(link)
+		}
 	}
 	return s, nil
+}
+
+// serveWithin bounds serving on one link: the DHT lookups, then the
+// station's REGISTER_ACK, which comes within 30 seconds.
+const serveWithin = time.Minute
+
+type linkServed struct {
+	link *stationlink.Link
+	err  error
+}
+
+// firstServed serves the offer on every link at once and returns once one
+// station accepts it, or with every link's error when none does: a station's
+// refusal is a *stationlink.RefusedError, no answer a
+// *stationlink.UnacknowledgedError. The links still unanswered then go on
+// within serveWithin, unbound from ctx, and a link that fails other than by
+// its station's refusal is tried again as attach does.
+func (s *Served) firstServed(ctx context.Context, links []*stationlink.Link) error {
+	detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), serveWithin)
+	release := context.AfterFunc(ctx, cancel)
+	defer release()
+	results := make(chan linkServed, len(links))
+	var wg sync.WaitGroup
+	for _, link := range links {
+		wg.Go(func() { results <- linkServed{link, s.serveOn(detached, link)} })
+	}
+	go func() {
+		wg.Wait()
+		cancel()
+	}()
+	var failed []linkServed
+	for range links {
+		r := <-results
+		if r.err != nil {
+			failed = append(failed, r)
+			continue
+		}
+		go s.retryFailed(failed, results, len(links)-len(failed)-1)
+		return nil
+	}
+	errs := make([]error, len(failed))
+	for i, r := range failed {
+		errs[i] = r.err
+	}
+	return errors.Join(errs...)
+}
+
+// retryFailed tries the offer again on each link that failed, or fails among
+// the remaining results, other than by its station's refusal.
+func (s *Served) retryFailed(failed []linkServed, results <-chan linkServed, remaining int) {
+	for range remaining {
+		if r := <-results; r.err != nil {
+			failed = append(failed, r)
+		}
+	}
+	for _, r := range failed {
+		if !refused(r.err) {
+			s.attach(r.link)
+		}
+	}
+}
+
+// refused reports whether err is a station's refusal, which serving again on
+// the same link would only repeat.
+func refused(err error) bool {
+	var refusal *stationlink.RefusedError
+	return errors.As(err, &refusal)
 }
 
 // serveOn serves the offer on link, once, and serves it again after
@@ -133,14 +206,15 @@ func (s *Served) serveOn(ctx context.Context, link *stationlink.Link) error {
 }
 
 // attach serves the offer on a link the pool dialed, retrying every
-// RespawnDelay while the link lives and the offer is not served there.
+// RespawnDelay while the link lives and the offer is not served there, unless
+// its station refuses it.
 func (s *Served) attach(link *stationlink.Link) {
 	go func() {
 		for {
-			ctx, cancel := context.WithTimeout(s.pool.ctx, stationlink.DefaultCallTimeout)
+			ctx, cancel := context.WithTimeout(s.pool.ctx, serveWithin)
 			err := s.serveOn(ctx, link)
 			cancel()
-			if err == nil {
+			if err == nil || refused(err) {
 				return
 			}
 			select {

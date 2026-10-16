@@ -97,7 +97,7 @@ the call. The string is a JSON object:
 | `unavailable` | every sharer failed to give the content | `failures`: a list of strings |
 | `answered` | a pending call was answered already | |
 | `closed` | the pool, subscription, served procedure or stream has ended, including a call in flight when its own pool closes | |
-| `refused` | the network refused it (an advertisement, an admission, a key) | |
+| `refused` | the network refused it (an advertisement, an admission, a key) | for `macula_pool_serve*` and `macula_pool_subscribe*` (since v0.27.0-rc.4): `reason`, the station's (`too_many_providers`, `advertiser_quota`, `name_too_long`, `record_refused`, `not_authorized`, `too_many_realms`, `refused`) or `unacknowledged` when no station answered within 30 seconds; `registration` (`advertise` or `subscribe`); `station`, its node_id in hex |
 | `confidentiality` | a call or stream that could not be kept confidential (since v0.18.0; see "Confidentiality") | `reason`, `named`, `found` (key ids as hex, or null) |
 | `not_settled` | a stream's seal report asked for before it settled, or of a stream that ended first (since v0.19.0; see "The seal report") | |
 | `not_a_caller` | a seal report asked of a served stream (since v0.19.0) | |

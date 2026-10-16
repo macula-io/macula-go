@@ -1,6 +1,8 @@
 package stationlink
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -11,8 +13,8 @@ import (
 
 // PubSub, as macula 12's link does it. A PUBLISH carries a publication signed
 // with the link's identity key; SUBSCRIBE and UNSUBSCRIBE are control frames
-// naming the realm, the topic (as bytes) and this node as subscriber, with no
-// acknowledgement; an EVENT carries a publication that is verified before it is
+// naming the realm, the topic (as bytes) and this node as subscriber, each
+// answered with a REGISTER_ACK (register.go); an EVENT carries a publication that is verified before it is
 // delivered, and delivered once however many copies arrive, until it expires.
 
 // eventBuffer is how many events a subscription holds that its reader has not
@@ -158,22 +160,72 @@ func (l *Link) PublishSigned(p SignedPublication) error {
 	return l.writer.write(p.encoded, MaxFrameBytes)
 }
 
-// Subscribe subscribes to topic in realm: the first subscription to a realm
-// and topic on the link sends SUBSCRIBE.
+// Subscribe subscribes to topic in realm. The first subscription to a realm
+// and topic on the link sends SUBSCRIBE and returns once the station
+// acknowledges it (macula#12), within 30 seconds: a refusal is a
+// *RefusedError, no answer an *UnacknowledgedError (and the link sends
+// UNSUBSCRIBE, so a late acceptance does not linger), and either leaves no
+// subscription. A subscription made while that SUBSCRIBE awaits its answer
+// returns the same verdict; one made after it was accepted returns at once.
 func (l *Link) Subscribe(realm [32]byte, topic string) (*Subscription, error) {
 	sub := &Subscription{link: l, key: topicKey{realm: realm, topic: topic}, events: make(chan Event, eventBuffer)}
 	l.mu.Lock()
 	first := len(l.subs[sub.key]) == 0
 	l.subs[sub.key] = append(l.subs[sub.key], sub)
-	l.mu.Unlock()
-	if !first {
-		return sub, nil
+	pending := l.subscribing[sub.key]
+	if first {
+		pending = &pendingSubscribe{done: make(chan struct{})}
+		l.subscribing[sub.key] = pending
 	}
-	if err := l.sendTopicFrame(frame.SubscribeFrame, sub.key); err != nil {
-		l.dropSubscription(sub)
-		return nil, err
+	l.mu.Unlock()
+	switch {
+	case first:
+		l.subscribeAnswered(sub.key, pending, l.subscribed(sub.key))
+	case pending != nil:
+		<-pending.done
+	}
+	if pending != nil && pending.err != nil {
+		return nil, pending.err
 	}
 	return sub, nil
+}
+
+// pendingSubscribe is a SUBSCRIBE awaiting its REGISTER_ACK; done closes once
+// err holds the verdict.
+type pendingSubscribe struct {
+	done chan struct{}
+	err  error
+}
+
+// subscribed sends SUBSCRIBE for key, naming this node as subscriber, and
+// waits for the station's verdict.
+func (l *Link) subscribed(key topicKey) error {
+	r := registration{kind: "subscribe", realm: key.realm, name: key.topic, subscriber: l.self}
+	answer := l.expect(r)
+	if err := l.sendTopicFrame(frame.SubscribeFrame, key); err != nil {
+		l.forget(r, answer)
+		return err
+	}
+	return l.verdict(context.Background(), r, answer)
+}
+
+// subscribeAnswered settles a SUBSCRIBE's verdict. One that does not hold
+// drops every subscription to key, each of which waited on it, and an
+// unanswered one is withdrawn first, while later subscribers still wait, so no
+// UNSUBSCRIBE follows a SUBSCRIBE of theirs.
+func (l *Link) subscribeAnswered(key topicKey, pending *pendingSubscribe, err error) {
+	var silent *UnacknowledgedError
+	if errors.As(err, &silent) {
+		_ = l.sendTopicFrame(frame.UnsubscribeFrame, key)
+	}
+	l.mu.Lock()
+	pending.err = err
+	delete(l.subscribing, key)
+	if err != nil {
+		delete(l.subs, key)
+	}
+	l.mu.Unlock()
+	close(pending.done)
 }
 
 func (l *Link) sendTopicFrame(build func([]byte, [32]byte, [32]byte) (cbor.Value, error), key topicKey) error {

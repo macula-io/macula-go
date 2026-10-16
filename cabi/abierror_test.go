@@ -110,3 +110,25 @@ func TestNoProviderAndForeignCancellations(t *testing.T) {
 		t.Errorf("a call whose own context is live, failing with context.Canceled: %s, want anything but cancelled", got)
 	}
 }
+
+// A station's verdict on a serve or subscribe (macula#12) is refused, with
+// the station's reason and node_id, or unacknowledged when none answered; a
+// refusal wins over silence when the pool joins both.
+func TestARegistrationVerdictIsRefused(t *testing.T) {
+	station := [32]byte{0xAB}
+	refusedBy := &stationlink.RefusedError{Kind: "advertise", Name: "mcl-echo/echo", Station: station, Reason: "too_many_providers"}
+	silent := &stationlink.UnacknowledgedError{Kind: "subscribe", Name: "t", Station: [32]byte{0xCD}}
+	for _, c := range []struct {
+		err                     error
+		reason, kind, stationID string
+	}{
+		{refusedBy, "too_many_providers", "advertise", fmt.Sprintf("%x", station)},
+		{silent, "unacknowledged", "subscribe", fmt.Sprintf("%x", [32]byte{0xCD})},
+		{errors.Join(silent, refusedBy), "too_many_providers", "advertise", fmt.Sprintf("%x", station)},
+	} {
+		got := errorJSON(t, classify(nil, c.err))
+		if got["kind"] != "refused" || got["reason"] != c.reason || got["registration"] != c.kind || got["station"] != c.stationID {
+			t.Errorf("%v: %v", c.err, got)
+		}
+	}
+}

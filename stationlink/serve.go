@@ -174,8 +174,12 @@ type Served struct {
 // the advertisement with this node's identity key, naming the connected
 // station as the serving station and living no longer than the records it
 // carries nor 5 minutes, and checks its authorization, against o.RealmKey for
-// an org procedure, before sending it in an ADVERTISE and putting it in the
-// DHT. The advertisement is renewed at half its lifetime.
+// an org procedure, before sending it in an ADVERTISE. It returns once the
+// station acknowledges the ADVERTISE (macula#12), within 30 seconds and ctx,
+// and puts the advertisement in the DHT once it is accepted: a refusal is a
+// *RefusedError and no answer an *UnacknowledgedError, and neither leaves the
+// procedure served. The advertisement is renewed at half its lifetime; a
+// renewal waits for no ack, and a refused one is counted in RegisterRefusals.
 func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 	own := record.InOwnNamespace(o.Procedure)
 	if (o.Handler == nil) == (o.Stream == nil || o.Stream.Handler == nil) || (!own && len(o.RealmKey) == 0) || !validPolicy(o.Policy) {
@@ -206,12 +210,39 @@ func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 	}
 	l.served[s.key] = s
 	l.mu.Unlock()
-	if err := l.announce(ctx, wire); err != nil {
+	if err := l.registered(ctx, advertisement, o, wire); err != nil {
 		s.end(err)
 		return nil, err
 	}
 	go s.renew()
 	return s, nil
+}
+
+// registered sends the first advertisement of o in an ADVERTISE and waits for
+// the station's REGISTER_ACK, then puts it in the DHT: a refused one is put
+// nowhere. One the station did not answer, or that could not be put, is
+// withdrawn with an UNADVERTISE, so a late acceptance does not route CALLs to
+// a procedure no longer served.
+func (l *Link) registered(ctx context.Context, advertisement record.Record, o Offer, wire []byte) error {
+	r := registration{kind: "advertise", realm: o.Realm, name: o.Procedure, version: advertisement.Version}
+	answer := l.expect(r)
+	if err := l.sendControl(frame.AdvertiseFrame(wire)); err != nil {
+		l.forget(r, answer)
+		return err
+	}
+	err := l.verdict(ctx, r, answer)
+	if err == nil {
+		err = l.PutRecord(ctx, wire)
+	}
+	var refused *RefusedError
+	select {
+	case <-l.done:
+	default:
+		if err != nil && !errors.As(err, &refused) {
+			_ = l.withdraw(advertisement)
+		}
+	}
+	return err
 }
 
 // advertisement is o's signed procedure_advertisement and its wire form,
@@ -351,15 +382,7 @@ func (s *Served) Stop() error {
 	s.mu.Lock()
 	latest := s.latest
 	s.mu.Unlock()
-	tombstone, err := record.NewTombstone(latest, record.ReasonShutdown, record.TombstoneOptions{})
-	if err != nil {
-		return err
-	}
-	signed, err := record.Sign(tombstone, s.link.key)
-	if err != nil {
-		return err
-	}
-	wire, err := record.Encode(signed)
+	wire, err := s.link.tombstone(latest)
 	if err != nil {
 		return err
 	}
@@ -369,6 +392,30 @@ func (s *Served) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultCallTimeout)
 	defer cancel()
 	return s.link.PutRecord(ctx, wire)
+}
+
+// tombstone is the wire form of advertisement's withdrawal, signed by this
+// node.
+func (l *Link) tombstone(advertisement record.Record) ([]byte, error) {
+	tombstone, err := record.NewTombstone(advertisement, record.ReasonShutdown, record.TombstoneOptions{})
+	if err != nil {
+		return nil, err
+	}
+	signed, err := record.Sign(tombstone, l.key)
+	if err != nil {
+		return nil, err
+	}
+	return record.Encode(signed)
+}
+
+// withdraw sends the station an UNADVERTISE of an advertisement it was sent
+// but the DHT never was.
+func (l *Link) withdraw(advertisement record.Record) error {
+	wire, err := l.tombstone(advertisement)
+	if err != nil {
+		return err
+	}
+	return l.sendControl(frame.UnadvertiseFrame(wire))
 }
 
 // announce sends an advertisement to the station in an ADVERTISE, which routes
