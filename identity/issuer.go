@@ -74,13 +74,16 @@ type StatementIssuer struct {
 }
 
 // statedBinding is a CONNECT binding the issuer holds, with its newest
-// statement, and its key while it is the current binding.
+// statement, and its key while it is the current binding. statedAt is the
+// clock's time at that statement, which schedules the next; issuedAt is the
+// newest issued_at of any statement pushed for the binding, never lowered.
 type statedBinding struct {
 	key       *NodeKey
 	binding   SignedTBS
 	statement SignedTBS
 	boundAt   int64
 	statedAt  int64
+	issuedAt  int64
 	notAfter  int64
 }
 
@@ -132,7 +135,23 @@ func (i *StatementIssuer) ConnectMaterial() (ConnectMaterial, error) {
 	if !current.inForce(now) {
 		return ConnectMaterial{}, errors.Join(ErrNoConnectMaterial, workErr)
 	}
-	return ConnectMaterial{Key: current.key, Binding: current.binding.clone(), Status: current.statement.clone()}, nil
+	status, err := i.dialStatement(current, now)
+	if err != nil {
+		return ConnectMaterial{}, errors.Join(ErrNoConnectMaterial, workErr, err)
+	}
+	return ConnectMaterial{Key: current.key, Binding: current.binding.clone(), Status: status}, nil
+}
+
+// dialStatement is the statement a new dial carries for held at now: its
+// newest, or, when that was issued after now by more than a verifier's
+// tolerance because the clock stepped back, one issued at now. A new
+// connection has no earlier statement to be newer than, and statements pushed
+// on connections stay newer than this one, so it is never pushed.
+func (i *StatementIssuer) dialStatement(held *statedBinding, now int64) (SignedTBS, error) {
+	if held.issuedAt-toleranceMs <= now {
+		return held.statement.clone(), nil
+	}
+	return StatusStatement(i.identity, held.binding, now, now+StatementValid.Milliseconds())
 }
 
 // RotationFailures is how many CONNECT key rotations have failed since the
@@ -267,7 +286,10 @@ func (i *StatementIssuer) dropExpired(now int64) {
 }
 
 // reissue issues a statement at now for each binding whose not_after has not
-// passed, and hands each subscriber its own copy. It carries on past a failure
+// passed, and hands each subscriber its own copy. A peer drops a statement that
+// is not newer than the last it accepted on a connection, so a statement is
+// issued after the binding's last, a millisecond after it when the clock has
+// stepped back, as macula_statement_issuer does. It carries on past a failure
 // and returns every error it met.
 func (i *StatementIssuer) reissue(now int64) error {
 	var errs []error
@@ -275,12 +297,13 @@ func (i *StatementIssuer) reissue(now int64) error {
 		if held.notAfter < now {
 			continue
 		}
-		statement, err := StatusStatement(i.identity, held.binding, now, now+StatementValid.Milliseconds())
+		issuedAt := max(now, held.issuedAt+1)
+		statement, err := StatusStatement(i.identity, held.binding, issuedAt, issuedAt+StatementValid.Milliseconds())
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		held.statement, held.statedAt = statement, now
+		held.statement, held.statedAt, held.issuedAt = statement, now, issuedAt
 		for _, sub := range i.subscribers[hash] {
 			sub.deliver(statement.clone())
 		}
@@ -319,7 +342,7 @@ func (i *StatementIssuer) rotateConnect(now int64) error {
 		previous.key = nil
 	}
 	hash := sha512.Sum384(binding.TBS)
-	i.bindings[hash] = &statedBinding{key: key, binding: binding, statement: statement, boundAt: now, statedAt: now, notAfter: notAfter}
+	i.bindings[hash] = &statedBinding{key: key, binding: binding, statement: statement, boundAt: now, statedAt: now, issuedAt: now, notAfter: notAfter}
 	i.current = hash
 	return nil
 }

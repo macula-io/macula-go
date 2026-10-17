@@ -415,5 +415,9 @@ func TestARotationThatKeepsFailingIsCountedAndEscalatesBeforeTheBindingExpires(t
 	if _, err := VerifyConnectBinding(material.Binding, identity.PublicKey(), profile.PQPure, material.Key.PublicKey(), inMargin); err != nil {
 		t.Fatalf("the CONNECT binding inside the margin: %v", err)
 	}
-	checkStatementAt(t, material.Status, material.Binding, identity, inMargin)
+	// The tick and the dial both reissue in the same millisecond, so the dial's
+	// statement is issued a millisecond after the tick's (macula-architecture#22).
+	if expiresAt, err := VerifyStatus(material.Status, material.Binding, identity.PublicKey(), profile.PQPure, inMargin); err != nil || expiresAt != inMargin+1+hourMs {
+		t.Fatalf("the statement inside the margin verifies as (%d, %v), want it issued a millisecond on and valid an hour", expiresAt, err)
+	}
 }

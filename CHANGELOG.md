@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A STATUS statement pushed for a binding is always newer than the one
+  before it** (macula-architecture#22), as macula 15.5.0's
+  `macula_statement_issuer` issues them: at the clock's time, or a millisecond
+  after the binding's last statement when the clock has stepped back. A 15.5.0
+  peer drops a statement that is not newer than the last it accepted on a
+  connection (`status_not_newer`), so before this a backward clock step of 15
+  minutes or more had one to three honest statements refused. A step of an
+  hour or more still ends the connection when the last accepted statement
+  lapses, as it does for macula's own issuer. A new dial after a step carries
+  a statement issued at the clock's time, which verifies there and is never
+  pushed on an existing connection.
+
 ## [0.27.0-rc.5] - 2026-10-16
 
 ### Security
