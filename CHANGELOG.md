@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0-rc.8] - 2026-10-17
+
 ### Fixed
 
 - **A content fetch gives a sharer 2 s for its root answer**, not the 15 s
