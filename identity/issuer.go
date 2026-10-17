@@ -75,8 +75,9 @@ type StatementIssuer struct {
 
 // statedBinding is a CONNECT binding the issuer holds, with its newest
 // statement, and its key while it is the current binding. statedAt is the
-// clock's time at that statement, which schedules the next; issuedAt is the
-// newest issued_at of any statement pushed for the binding, never lowered.
+// clock's time at that statement, which schedules the next; issuedAt is that
+// statement's issued_at, lowered to the clock when the clock stepped back past
+// the tolerance.
 type statedBinding struct {
 	key       *NodeKey
 	binding   SignedTBS
@@ -145,8 +146,7 @@ func (i *StatementIssuer) ConnectMaterial() (ConnectMaterial, error) {
 // dialStatement is the statement a new dial carries for held at now: its
 // newest, or, when that was issued after now by more than a verifier's
 // tolerance because the clock stepped back, one issued at now. A new
-// connection has no earlier statement to be newer than, and statements pushed
-// on connections stay newer than this one, so it is never pushed.
+// connection has no earlier statement to be newer than, so it is never pushed.
 func (i *StatementIssuer) dialStatement(held *statedBinding, now int64) (SignedTBS, error) {
 	if held.issuedAt-toleranceMs <= now {
 		return held.statement.clone(), nil
@@ -289,15 +289,17 @@ func (i *StatementIssuer) dropExpired(now int64) {
 // passed, and hands each subscriber its own copy. A peer drops a statement that
 // is not newer than the last it accepted on a connection, so a statement is
 // issued after the binding's last, a millisecond after it when the clock has
-// stepped back, as macula_statement_issuer does. It carries on past a failure
-// and returns every error it met.
+// stepped back, as macula_statement_issuer does. A peer also closes a link on
+// a statement issued more than a verifier's tolerance after its clock, so once
+// a millisecond after the last is that far ahead, the statement is issued at
+// now instead. It carries on past a failure and returns every error it met.
 func (i *StatementIssuer) reissue(now int64) error {
 	var errs []error
 	for hash, held := range i.bindings {
 		if held.notAfter < now {
 			continue
 		}
-		issuedAt := max(now, held.issuedAt+1)
+		issuedAt := later(held.issuedAt, now)
 		statement, err := StatusStatement(i.identity, held.binding, issuedAt, issuedAt+StatementValid.Milliseconds())
 		if err != nil {
 			errs = append(errs, err)
@@ -309,6 +311,16 @@ func (i *StatementIssuer) reissue(now int64) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// later is when a statement following one issued at previous is issued at
+// now: a millisecond after previous while that is within a verifier's
+// tolerance of now, and now once it is not.
+func later(previous, now int64) int64 {
+	if previous+1 <= now+toleranceMs {
+		return max(now, previous+1)
+	}
+	return now
 }
 
 // deliver puts statement in the channel in place of any statement not yet

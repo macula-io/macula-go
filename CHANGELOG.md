@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A STATUS statement pushed after the clock stepped back past the
+  tolerance is issued at the clock** (macula-architecture#22), as macula
+  15.6.0's `macula_statement_issuer` does (macula#110). rc.6 issued it a
+  millisecond after the binding's last statement, which after a backward step
+  of more than 5 minutes is dated ahead of a correct clock by more than the
+  tolerance, and a peer closes the link on it: an open link died at the
+  first tick after a step of more than 20 minutes, and a link dialed with the
+  last statement more than 20 minutes ahead of its clock died at its first
+  reissue. A millisecond
+  after the last is still used while it is within the tolerance of the clock.
+  A connection that accepted the later statement drops the one at the clock
+  as not newer and stays up.
+
 ## [0.27.0-rc.6] - 2026-10-17
 
 ### Fixed
