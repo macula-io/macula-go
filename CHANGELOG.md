@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0-rc.7] - 2026-10-17
+
 ### Fixed
 
 - **A STATUS statement pushed after the clock stepped back past the
