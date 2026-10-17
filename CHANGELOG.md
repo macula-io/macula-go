@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-20
+
+The wire 1.0 release, for the fleet's flag day (20 Oct 2026, 16:00 UTC): from
+then on every live station speaks wire 1.0 (macula 15) and nothing older, and
+v0.26.0 can no longer connect. The code is v0.27.0-rc.8's; the entries for
+rc.1 to rc.8 below are what changed since v0.26.0. Do not upgrade before the
+flag day: a wire 1.0 client cannot reach a station still on wire 14.
+
 ## [0.27.0-rc.8] - 2026-10-17
 
 ### Fixed

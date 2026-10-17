@@ -20,13 +20,14 @@
 
 ---
 
-> **Status, 2026-10-13:** master speaks **wire 1.0** (macula 15) and nothing
-> older: a station before wire 1.0 does not accept it, and v0.26.0 stays the
-> release for the 14.x fleet. Handshake, calls, streaming RPC,
-> publish/subscribe, the DHT, serving procedures (under an org or in a node's
-> own namespace) and node-served content work as before, now on the wire 1.0
-> envelope, handshake and records, held to macula's wire 1.0 conformance
-> vectors in every `go test`. Calls and streams are sealed end to end (scheme
+> **Status, 2026-10-20:** v0.27.0 speaks **wire 1.0** (macula 15) and nothing
+> older: a station before wire 1.0 does not accept it. The fleet moves to wire
+> 1.0 on 20 Oct 2026 at 16:00 UTC; until then v0.26.0 is the release for the
+> 14.x fleet, and from then on it can no longer connect. Handshake, calls,
+> streaming RPC, publish/subscribe, the DHT, serving procedures (under an org
+> or in a node's own namespace) and node-served content work as before, now on
+> the wire 1.0 envelope, handshake and records, held to macula's wire 1.0
+> conformance vectors in every `go test`. Calls and streams are sealed end to end (scheme
 > 1), checked both ways against macula 15.6.0 from hex.pm in `pq_pure`
 > and `pq_hybrid`.
 
