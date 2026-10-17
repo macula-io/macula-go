@@ -14,7 +14,7 @@ main([Lib, Host, Port, Station, Realm | Command]) ->
     Tmp = string:trim(os:cmd("mktemp -d")),
     ok = application:load(macula),
     ok = application:set_env(macula, crypto_profile, pq_hybrid),
-    ok = application:set_env(macula, node_identity_path, filename:join(Tmp, "node_identity")),
+    ok = application:set_env(macula, identity_dir, Tmp),
     {ok, _} = application:ensure_all_started(macula),
     {ok, Pool} = macula:connect([#{host => list_to_binary(Host), port => list_to_integer(Port),
                                    expected_node_id => binary:decode_hex(list_to_binary(Station))}], #{}),

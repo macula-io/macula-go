@@ -171,7 +171,7 @@ MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/sealed.sh p
 ```
 
 `MACULA_BUILD` may also be a rebar3 project that depends on macula from hex
-(`{deps, [{macula, "15.0.0-rc.2"}]}`), compiled in the same image: the script
+(`{deps, [{macula, "15.6.0"}]}`), compiled in the same image: the script
 reads `_build/default/lib/macula` and its dependencies beside it.
 
 The Erlang caller also calls with `confidential => off` by direct dial.
@@ -180,15 +180,13 @@ target), where macula-go's pool refuses it; macula 13.0.1 refuses it too, as
 `{error, {confidentiality, off_needs_explicit_target}}`. With
 `MACULA_OFF_REFUSED=1` the script requires exactly that refusal.
 
-Last run (2026-09-27, `macula-ci-otp@sha256:aff1d39b...`):
-
-- macula 13.0.1 from hex (tag v13.0.1 = 92137b94), compiled as a rebar3
-  dependency, with `MACULA_OFF_REFUSED=1`: both profiles, both ways,
-  `sealed call` and `sealed stream` answered, `clear call` refused
-  `sealed_required`, `off by direct dial` refused
-  `off_needs_explicit_target`, exit 0.
-- macula v13.0.0: the same, except `off by direct dial` sealed (exit 1 under
-  `MACULA_OFF_REFUSED=1`, as it must be).
+Last run (2026-10-17, `macula-ci-otp@sha256:aff1d39b...`, macula 15.6.0 from
+hex as a rebar3 dependency, `MACULA_OFF_REFUSED=1`): both profiles, both ways,
+`sealed call` and `sealed stream` answered, `clear call` refused
+`sealed_required`, `off by direct dial` refused `off_needs_explicit_target`,
+exit 0; in CI too (run 38990591182 at v0.27.0-rc.7). macula v13.0.0, before
+13.0.1's refusal, seals `off by direct dial` and exits 1 under
+`MACULA_OFF_REFUSED=1`, as it must.
 
 CI runs the Go leg on every PR and master push, and on a `v*` tag before the release
 is published (`.github/workflows/sealed-interop.yml`): macula from hex at the version
@@ -251,7 +249,7 @@ MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh p
 MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh pq_pure
 ```
 
-Last run (2026-10-14, `macula-ci-otp@sha256:aff1d39b...`, macula 15.0.0-rc.2
+Last run (2026-10-17, `macula-ci-otp@sha256:aff1d39b...`, macula 15.6.0
 from hex as a rebar3 dependency): both profiles, both members opened the
 other's event under one epoch, the removed node was refused `not_a_member`,
 exit 0.

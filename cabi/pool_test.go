@@ -363,6 +363,12 @@ func TestContentIsSharedAndFetched(t *testing.T) {
 	if _, err := parseContentOptions(`{"paralel": 2}`); kindOf(err) != kindInvalidArgument {
 		t.Fatalf("a misspelt content option: %v", err)
 	}
+	if o, err := parseContentOptions(`{"root_timeout_ms": 1500}`); err != nil || o.RootTimeout != 1500*time.Millisecond {
+		t.Fatalf("root_timeout_ms: %v, %v", o.RootTimeout, err)
+	}
+	if _, err := parseContentOptions(`{"root_timeout_ms": -1}`); kindOf(err) != kindInvalidArgument {
+		t.Fatalf("a negative root_timeout_ms: %v", err)
+	}
 }
 
 func TestRecordsAreFoundOrNotFound(t *testing.T) {

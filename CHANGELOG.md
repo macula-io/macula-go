@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A content fetch gives a sharer 2 s for its root answer**, not the 15 s
+  chunk deadline (#26), as macula's `root_timeout_ms` does (macula#82). A
+  sharer that accepts the root ask and never answers held a fetch for 15 s
+  before the next sharer was tried; it now holds it for
+  `ContentOptions.RootTimeout` (`DefaultRootTimeout`, 2 s), the stream open
+  and its answer together. Chunks keep `ChunkTimeout` (15 s). The C ABI takes
+  it as `root_timeout_ms` in `macula_pool_get_content`'s options. No wire
+  change.
+
+### Changed
+
+- **Wire 1.0 vectors pinned to macula v15.6.0** (`testdata/wire_1_0`,
+  1f9e283). The one new vector, `frames.store_refresh`, passes.
+- **The sealed and groups interop run against macula 15.6.0** from hex,
+  both ways, both profiles (`sealed-interop.yml` default, `scripts/interop/README.md`).
+- **`erlang_content.escript` sets `identity_dir`**, not the removed
+  `node_identity_path` (#24, macula#76), which a macula with #76 refuses to
+  start on.
+
 ## [0.27.0-rc.7] - 2026-10-17
 
 ### Fixed

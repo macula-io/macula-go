@@ -309,7 +309,8 @@ void macula_pool_share_content(macula_handle pool, const uint8_t realm[32], cons
                                char **err_out);
 void macula_pool_unshare_content(macula_handle pool, const uint8_t realm[32], const uint8_t mcid[50],
                                  int64_t timeout_ms, macula_handle cancel, char **err_out);
-/* options_json (NULL for defaults): {"max_bytes","max_chunks","parallel","chunk_timeout_ms"}. */
+/* options_json (NULL for defaults): {"max_bytes","max_chunks","parallel","root_timeout_ms","chunk_timeout_ms"}.
+   root_timeout_ms (2000) bounds the root ask to one sharer; chunk_timeout_ms (15000) each chunk ask. */
 uint8_t *macula_pool_get_content(macula_handle pool, const uint8_t realm[32], const uint8_t mcid[50],
                                  const char *options_json, int64_t timeout_ms, macula_handle cancel, size_t *out_len,
                                  char **err_out);

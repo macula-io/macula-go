@@ -46,6 +46,7 @@ const (
 	DefaultMaxContentBytes = 256 << 20
 	DefaultMaxChunks       = 16_384
 	DefaultParallel        = 4
+	DefaultRootTimeout     = 2 * time.Second
 	DefaultChunkTimeout    = 15 * time.Second
 )
 
@@ -67,9 +68,13 @@ var (
 
 // ContentOptions bound a fetch; a zero field takes its default.
 type ContentOptions struct {
-	MaxBytes     uint64
-	MaxChunks    int
-	Parallel     int
+	MaxBytes  uint64
+	MaxChunks int
+	Parallel  int
+	// RootTimeout bounds the root ask to one sharer, the stream open and its
+	// answer together, so a sharer that never answers holds a fetch that long
+	// before the next is tried; ChunkTimeout bounds each chunk ask.
+	RootTimeout  time.Duration
 	ChunkTimeout time.Duration
 }
 
@@ -82,6 +87,9 @@ func (o ContentOptions) withDefaults() ContentOptions {
 	}
 	if o.Parallel <= 0 {
 		o.Parallel = DefaultParallel
+	}
+	if o.RootTimeout <= 0 {
+		o.RootTimeout = DefaultRootTimeout
 	}
 	if o.ChunkTimeout <= 0 {
 		o.ChunkTimeout = DefaultChunkTimeout
@@ -432,7 +440,7 @@ func (p *Pool) fetchFrom(ctx context.Context, realm [32]byte, s sharer, mcid man
 	if err != nil {
 		return nil, err
 	}
-	kind, body, err := fetchOne(ctx, link, realm, s, mcid, "root", o.ChunkTimeout)
+	kind, body, err := fetchOne(ctx, link, realm, s, mcid, "root", o.RootTimeout)
 	if err != nil {
 		return nil, err
 	}

@@ -27,7 +27,7 @@
 > own namespace) and node-served content work as before, now on the wire 1.0
 > envelope, handshake and records, held to macula's wire 1.0 conformance
 > vectors in every `go test`. Calls and streams are sealed end to end (scheme
-> 1), checked both ways against macula 15.0.0-rc.2 from hex.pm in `pq_pure`
+> 1), checked both ways against macula 15.6.0 from hex.pm in `pq_pure`
 > and `pq_hybrid`.
 
 ## What is this?
@@ -257,7 +257,7 @@ can publish one, so check `Sealed` before taking an event as the group's. Epoch 
 only and erased once no event under them can be accepted. A plain
 `Subscribe` gets a group's events unopened, as `no_group`. Held to macula's
 `e2e_seal_v1_group_keys` vectors (the pull's payloads byte for byte, the org
-grants' verdicts) and checked both ways against macula 15.0.0-rc.2
+grants' verdicts) and checked both ways against macula 15.6.0
 (`scripts/interop/groups.sh`).
 
 `KEMAdvertise` is off by default. Switch it on only once every station runs

@@ -20,6 +20,7 @@ type contentOptions struct {
 	MaxBytes       uint64 `json:"max_bytes"`
 	MaxChunks      int    `json:"max_chunks"`
 	Parallel       int    `json:"parallel"`
+	RootTimeoutMs  int64  `json:"root_timeout_ms"`
 	ChunkTimeoutMs int64  `json:"chunk_timeout_ms"`
 }
 
@@ -30,10 +31,11 @@ func parseContentOptions(text string) (pool.ContentOptions, error) {
 			return pool.ContentOptions{}, err
 		}
 	}
-	if o.MaxChunks < 0 || o.Parallel < 0 || o.ChunkTimeoutMs < 0 {
+	if o.MaxChunks < 0 || o.Parallel < 0 || o.RootTimeoutMs < 0 || o.ChunkTimeoutMs < 0 {
 		return pool.ContentOptions{}, invalidArgument("a negative content option")
 	}
 	return pool.ContentOptions{MaxBytes: o.MaxBytes, MaxChunks: o.MaxChunks, Parallel: o.Parallel,
+		RootTimeout:  time.Duration(o.RootTimeoutMs) * time.Millisecond,
 		ChunkTimeout: time.Duration(o.ChunkTimeoutMs) * time.Millisecond}, nil
 }
 
