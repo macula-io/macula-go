@@ -20,8 +20,8 @@
 
 ---
 
-> **Status, 2026-10-20:** v0.27.0 speaks **wire 1.0** (macula 15) and nothing
-> older: a station before wire 1.0 does not accept it. The fleet moves to wire
+> **Status, 2026-10-20:** v0.28.0 speaks **wire 1.0** (macula 15) and nothing
+> older, and admits a realm member on an endorsement of at most 24 hours: a station before wire 1.0 does not accept it. The fleet moves to wire
 > 1.0 on 20 Oct 2026 at 16:00 UTC; until then v0.26.0 is the release for the
 > 14.x fleet, and from then on it can no longer connect. Handshake, calls,
 > streaming RPC, publish/subscribe, the DHT, serving procedures (under an org

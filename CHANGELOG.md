@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-20
+
+A revoked realm member's endorsement stops admitting it within 24 hours, as
+macula 16's does. 0.27.0 below was never tagged: the tags stop at
+v0.27.0-rc.8, so this release follows rc.8 directly, and its code is rc.8's
+plus the change below.
+
 ### Security (breaking)
 
 - **A realm member endorsement admits its member for at most 24 hours, as
