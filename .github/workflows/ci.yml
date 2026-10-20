@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  # release.yml runs this on the commit it releases and publishes only
+  # when it is green (mcl-om#34).
+  workflow_call:
   push:
     branches: [master]
   pull_request:

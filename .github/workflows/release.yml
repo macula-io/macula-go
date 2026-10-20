@@ -21,8 +21,13 @@ jobs:
   sealed-interop:
     uses: ./.github/workflows/sealed-interop.yml
 
+  # NOTHING IS RELEASED WHILE ITS OWN TESTS ARE RED: ci.yml on this
+  # commit, and the release waits on it (mcl-om#34).
+  tests:
+    uses: ./.github/workflows/ci.yml
+
   publish:
-    needs: [libmacula, sealed-interop]
+    needs: [libmacula, sealed-interop, tests]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
