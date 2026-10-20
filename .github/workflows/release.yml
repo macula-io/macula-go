@@ -26,8 +26,19 @@ jobs:
   tests:
     uses: ./.github/workflows/ci.yml
 
+  # The release guard: the tag must be on main (or its release branch). Go
+  # needs no version check, the tag itself is the version (versions: none).
+  release-guard:
+    name: The release guard
+    permissions:
+      contents: read
+    uses: macula-io/macula-ci-images/.github/workflows/release-guard.yml@b4c41abb404c32215a2823b7f19ac65b732e1dfe
+    with:
+      require-tag: true
+      versions: none
+
   publish:
-    needs: [libmacula, sealed-interop, tests]
+    needs: [libmacula, sealed-interop, tests, release-guard]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
