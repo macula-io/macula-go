@@ -37,8 +37,9 @@ const (
 	// created_at and expires_at, 5 minutes.
 	ClockToleranceMs = 5 * minuteMs
 	// MaxEndorsementWindowMs is the longest a realm member endorsement admits
-	// its member, 30 days.
-	MaxEndorsementWindowMs = 30 * dayMs
+	// its member, 24 hours (macula#118): an endorsement issued under the old
+	// 30-day cap admits nobody.
+	MaxEndorsementWindowMs = 24 * hourMs
 
 	maxProtocolInt    = 1 << 53
 	maxPayloadNesting = 63

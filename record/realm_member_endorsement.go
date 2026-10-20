@@ -28,7 +28,7 @@ var (
 	ErrEndorsementExpired = errors.New("record: the endorsement's window has ended")
 	// ErrEndorsementWindowTooLong is an endorsement whose window is longer
 	// than MaxEndorsementWindowMs.
-	ErrEndorsementWindowTooLong = errors.New("record: the endorsement's window is over 30 days")
+	ErrEndorsementWindowTooLong = errors.New("record: the endorsement's window is over 24 hours")
 	// ErrEndorsementWindowReversed is an endorsement whose window ends before
 	// it starts.
 	ErrEndorsementWindowReversed = errors.New("record: the endorsement's window ends before it starts")

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security (breaking)
+
+- **A realm member endorsement admits its member for at most 24 hours, as
+  macula's does (macula#118).** `record.MaxEndorsementWindowMs` drops from 30
+  days to 24 hours, so `VerifyRealmMemberEndorsement` refuses an endorsement
+  issued under the old 30-day cap as `ErrEndorsementWindowTooLong`: a revoked
+  member's old endorsement admits nobody where the realm's tombstone never
+  arrives. `record/testdata/realm_member_endorsement_v1.json` is macula's
+  regenerated vectors (`window_over_24_hours` and `window_of_30_days`, both
+  refused).
+
 ## [0.27.0] - 2026-10-20
 
 The wire 1.0 release, for the fleet's flag day (20 Oct 2026, 16:00 UTC): from

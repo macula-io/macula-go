@@ -17,9 +17,9 @@ import (
 
 // realmMemberEndorsementVectors is macula's
 // test/vectors/realm_member_endorsement_v1.json (sha256
-// 9989f9cd7d154af25b959ea6c7b068be8818175e6792f16d12cf1992f7163a4f), copied
+// bc05afa078b0dbd1c57af37bdb9128217a1c24317088f1c8c3dbe62e6bd08218), copied
 // into testdata by scripts/interop/copy_realm_member_endorsement_vectors.sh:
-// endorsements a realm key signed, thirteen per profile, each with the member
+// endorsements a realm key signed, fourteen per profile, each with the member
 // and the time macula_hyparview_endorsement:verify_endorsement/4 checked it for
 // and its verdict, the endorsed roles or the refusal's name. Signing is
 // randomized, so the committed file is the vector.
@@ -81,8 +81,8 @@ func TestRealmMemberEndorsementVectors(t *testing.T) {
 			})
 		}
 	}
-	if cases != 26 {
-		t.Errorf("%d cases, want 13 per profile", cases)
+	if cases != 28 {
+		t.Errorf("%d cases, want 14 per profile", cases)
 	}
 }
 
@@ -144,7 +144,7 @@ func id32(t *testing.T, s string) [32]byte {
 	return id
 }
 
-// A window from -2^63 to 2^63-1 is far over 30 days. Its length overflows
+// A window from -2^63 to 2^63-1 is far over 24 hours. Its length overflows
 // int64, so it must be refused by its own name rather than wrap to a negative
 // length and admit at every time, as macula's bignum arithmetic refuses it.
 func TestAWindowWhoseLengthOverflowsIsTooLong(t *testing.T) {
