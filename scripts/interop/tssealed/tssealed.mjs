@@ -50,32 +50,33 @@ async function serve(pool, hold) {
   return 0;
 }
 
-async function call(pool, provider) {
-  const vault = own(provider, "vault");
-  const watch = own(provider, "watch");
+// The vault call, retried while no provider is up yet.
+async function reportedCall(pool, vault) {
   let reported;
   for (let i = 0; i < 150; i++) {
     reported = await pool.callReport(realm, vault, { n: 1 }, { confidential: "required", timeoutMs: 10_000 }).catch((e) => e);
     if (!(reported instanceof MaculaError && reported.kind === "no_provider")) break;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  const called = reported instanceof Error ? reported : reported.result;
-  console.log(`sealed call: ${called instanceof Error ? `${called.name} ${called.message}` : JSON.stringify(called)}`);
-  let ok = called === `kept by ${peer}`;
-  const callReport = reported instanceof Error ? null : reported.report;
-  console.log(`call report: ${JSON.stringify(callReport)}`);
-  ok = ok && sealedTo(callReport, provider);
+  return reported;
+}
 
+// One stream event applied to what the caller has seen so far; true ends the read.
+function applyStreamEvent(event, seen) {
+  if (event.kind === "data") seen.chunk = text(event.body);
+  if (event.kind === "reply") seen.reply = event.payload;
+  return event.kind === "end" && event.role === "both";
+}
+
+// Opens the watch stream, reads up to its reply, and keeps the report.
+async function runStream(pool, watch) {
   const stream = await pool.openStream(realm, watch, StreamMode.Server, {}, { confidential: "required", timeoutMs: 10_000 });
-  let chunk = null;
-  let reply = null;
+  const seen = { chunk: null, reply: null };
   let streamReport = null;
   try {
-    for (let i = 0; i < 4 && reply === null; i++) {
+    for (let i = 0; i < 4 && seen.reply === null; i++) {
       const event = await stream.recv({ timeoutMs: 10_000 });
-      if (event.kind === "data") chunk = text(event.body);
-      if (event.kind === "reply") reply = event.payload;
-      if (event.kind === "end" && event.role === "both") break;
+      if (applyStreamEvent(event, seen)) break;
     }
     // Settled on the provider's first chunk opened under the stream's key, and
     // kept after the end.
@@ -85,15 +86,39 @@ async function call(pool, provider) {
   } finally {
     await stream.free();
   }
-  console.log(`sealed stream: chunk ${JSON.stringify(chunk)}, reply ${JSON.stringify(reply)}`);
-  console.log(`stream report: ${JSON.stringify(streamReport)}`);
-  ok = ok && chunk === `chunk from ${peer}` && reply === `streamed by ${peer}` && sealedTo(streamReport, provider);
+  return { ...seen, streamReport };
+}
 
-  // Off is refused, never ignored: a clear call is an explicit target's, and
-  // @macula-io/ts offers none.
+// What the stream must have delivered, sealed to that provider.
+function streamOk(chunk, reply, streamReport, provider) {
+  return chunk === `chunk from ${peer}` && reply === `streamed by ${peer}` && sealedTo(streamReport, provider);
+}
+
+// Off is refused, never ignored: a clear call is an explicit target's, and
+// @macula-io/ts offers none.
+async function offRefused(pool, vault) {
   const off = await pool.call(realm, vault, { n: 1 }, { confidential: "off", timeoutMs: 10_000 }).catch((e) => e);
   console.log(`off: ${off instanceof MaculaError ? `refused ${off.kind}` : JSON.stringify(off)}`);
-  ok = ok && off instanceof MaculaError && off.kind === "invalid_argument";
+  return off instanceof MaculaError && off.kind === "invalid_argument";
+}
+
+async function call(pool, provider) {
+  const vault = own(provider, "vault");
+  const watch = own(provider, "watch");
+  const reported = await reportedCall(pool, vault);
+  const called = reported instanceof Error ? reported : reported.result;
+  console.log(`sealed call: ${called instanceof Error ? `${called.name} ${called.message}` : JSON.stringify(called)}`);
+  let ok = called === `kept by ${peer}`;
+  const callReport = reported instanceof Error ? null : reported.report;
+  console.log(`call report: ${JSON.stringify(callReport)}`);
+  ok = ok && sealedTo(callReport, provider);
+
+  const { chunk, reply, streamReport } = await runStream(pool, watch);
+  console.log(`sealed stream: chunk ${JSON.stringify(chunk)}, reply ${JSON.stringify(reply)}`);
+  console.log(`stream report: ${JSON.stringify(streamReport)}`);
+  ok = ok && streamOk(chunk, reply, streamReport, provider);
+
+  ok = ok && await offRefused(pool, vault);
   return ok ? 0 : 1;
 }
 

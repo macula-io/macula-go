@@ -5,5 +5,11 @@
   "description": "@macula-io/ts's side of scripts/interop/sealed.sh",
   "dependencies": {
     "@macula-io/ts": "0.25.0"
+  },
+  "devDependencies": {
+    "eslint": "^10.13.0"
+  },
+  "scripts": {
+    "lint": "eslint tssealed.mjs"
   }
 }
