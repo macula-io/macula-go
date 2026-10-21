@@ -118,7 +118,10 @@ async function call(pool, provider) {
   console.log(`stream report: ${JSON.stringify(streamReport)}`);
   ok = ok && streamOk(chunk, reply, streamReport, provider);
 
-  ok = ok && await offRefused(pool, vault);
+  // Evaluated outside the && so its line is printed even when the call or
+  // the stream already failed: on a failing run that line is the evidence.
+  const offOk = await offRefused(pool, vault);
+  ok = ok && offOk;
   return ok ? 0 : 1;
 }
 
