@@ -133,3 +133,20 @@ jobs:
     permissions:
       contents: read
     uses: macula-io/macula-ci-images/.github/workflows/doc-snippets-go.yml@9ee9724a6a5124602a37ae7378dd9b3b85447879
+
+  # A known-vulnerable dependency this module can reach fails the build
+  # (macula-codebase-checks#11). govulncheck reads the call graph, so a
+  # vulnerable module nothing calls is named in the log and is not a finding.
+  #
+  # WHERE THE GATE ACTUALLY IS: a Go module publishes by being tagged, and the
+  # proxy serves the tag the moment it is pushed, so nothing here can refuse it.
+  # The gate is this scan on main before the tag is cut; release.yml runs it on
+  # the tagged commit too, and a red run there is a detection to act on, not a
+  # refusal. Do not describe it as one.
+  advisories:
+    name: Dependency advisories
+    permissions:
+      contents: read
+    uses: macula-io/macula-ci-images/.github/workflows/dependency-advisories.yml@dbc9533eb409c2118f45110613160060cc582f5d
+    with:
+      ecosystem: go
