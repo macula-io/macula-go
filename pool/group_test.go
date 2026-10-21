@@ -96,8 +96,15 @@ func TestAGroupsEventsTravelSealedAndOpenForMembers(t *testing.T) {
 		t.Fatalf("a subscriber with no group: unopened %q, payload %v", unopened.Unopened, unopened.Payload)
 	}
 
-	// The member holds the group: a clear publish under it is refused, and a
-	// clear event under its Required prefix is not delivered.
+	checkClearUnderHeldGroup(t, w, member, outsider, topic, sub, plain)
+}
+
+// checkClearUnderHeldGroup: the member holds the group, so a clear publish
+// under it is refused, and a clear event under its Required prefix is not
+// delivered.
+func checkClearUnderHeldGroup(t *testing.T, w *groupWorld, member, outsider *Pool, topic string,
+	sub, plain *Subscription) {
+	t.Helper()
 	clear := stationlink.Publication{Realm: w.realm.ID, Topic: topic, Payload: cbor.Text("in the clear")}
 	var held *GroupHeldError
 	if err := member.Publish(clear); !errors.As(err, &held) || held.Prefix != groupPrefix {

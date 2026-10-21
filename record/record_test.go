@@ -499,6 +499,49 @@ func TestANodeRecordNamingAnotherNodeIsRefused(t *testing.T) {
 // payload is read before the signer it names.
 func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 	keys := keysFor(t)
+	for _, c := range newPayloadRefusalFixtures(keys).cases() {
+		now := nowMs()
+		fields := recordFields(t, c.recordType, cbor.Map(c.payload), now, c.lifetimeMs)
+		_, err := Verify(signedByHand(t, label, fields, keys.node), profile.PQPure, now)
+		if c.want == nil {
+			if err != nil {
+				t.Errorf("%s: %v, want it verified", c.name, err)
+			}
+			continue
+		}
+		wantRefusal(t, c.name, err, c.want)
+	}
+}
+
+// payloadRefusalCase is one payload its type's rules do or do not allow, and
+// the refusal Verify reaches on it: nil where the type allows it.
+type payloadRefusalCase struct {
+	name       string
+	recordType Type
+	payload    []cbor.MapEntry
+	lifetimeMs int64
+	want       error
+}
+
+// payloadRefusalFixtures are the payloads the cases vary: one each type allows,
+// and the variants that reach past its rules.
+type payloadRefusalFixtures struct {
+	now                    int64
+	advertisement          []cbor.MapEntry
+	unknownKey             []cbor.MapEntry
+	announcement           []cbor.MapEntry
+	advertisementTombstone []cbor.MapEntry
+	endorsementTombstone   []cbor.MapEntry
+	appTombstone           []cbor.MapEntry
+	authorizationTombstone []cbor.MapEntry
+	authorization          []cbor.MapEntry
+	app                    []cbor.MapEntry
+	contentID              func(tag byte) []byte
+	withdrawing            func(withdrawn Type, slot ...cbor.MapEntry) []cbor.MapEntry
+	appServices            func(services ...cbor.Value) []cbor.MapEntry
+}
+
+func newPayloadRefusalFixtures(keys testKeys) payloadRefusalFixtures {
 	nodeID := keys.node.KeyID()
 	entriesOf := func(v cbor.Value) []cbor.MapEntry {
 		entries, _ := v.AsMap()
@@ -509,75 +552,111 @@ func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 		id[0], id[1] = tag, 0x55
 		return id
 	}
-	advertisement := entriesOf(advertisementPayload(nodeID))
-	unknownKey := withEntry(advertisement, "session_token_hint", cbor.Text("h"))
-	announcement := entriesOf(contentAnnouncementPayload(nodeID))
 	withdrawing := func(withdrawn Type, slot ...cbor.MapEntry) []cbor.MapEntry {
 		return append([]cbor.MapEntry{uintEntry("withdrawn_type", uint64(withdrawn)),
 			bytesEntry("withdrawn_version", make([]byte, 16)), textEntry("reason", "revoked")}, slot...)
 	}
-	advertisementTombstone := withdrawing(TypeProcedureAdvertisement, bytesEntry("realm_id", idBytes(0x11)), textEntry("procedure", "acme/echo_v1"))
-	endorsementTombstone := withdrawing(TypeRealmMemberEndorsement, bytesEntry("realm_id", idBytes(0x11)), bytesEntry("member_node", idBytes(2)))
+	advertisement := entriesOf(advertisementPayload(nodeID))
 	app := appPayload(identity.KeyIDOf(keys.node.PublicKey(), profile.PQPure))
-	appServices := func(services ...cbor.Value) []cbor.MapEntry {
-		return withEntry(app, "services", cbor.List(services))
+	now := nowMs()
+	return payloadRefusalFixtures{
+		now:           now,
+		advertisement: advertisement,
+		unknownKey:    withEntry(advertisement, "session_token_hint", cbor.Text("h")),
+		announcement:  entriesOf(contentAnnouncementPayload(nodeID)),
+		advertisementTombstone: withdrawing(TypeProcedureAdvertisement, bytesEntry("realm_id", idBytes(0x11)),
+			textEntry("procedure", "acme/echo_v1")),
+		endorsementTombstone: withdrawing(TypeRealmMemberEndorsement, bytesEntry("realm_id", idBytes(0x11)),
+			bytesEntry("member_node", idBytes(2))),
+		app: app,
+		appTombstone: withdrawing(TypeAppRecord, bytesEntry("realm_id", idBytes(0x11)), textEntry("org_name", "acme"),
+			textEntry("app_name", "weather")),
+		authorization: stationAuthorizationPayload(now),
+		authorizationTombstone: withdrawing(TypeStationAuthorization, bytesEntry("realm_id", idBytes(0x11)),
+			bytesEntry("station_node", idBytes(0x77))),
+		contentID:   contentID,
+		withdrawing: withdrawing,
+		appServices: func(services ...cbor.Value) []cbor.MapEntry {
+			return withEntry(app, "services", cbor.List(services))
+		},
 	}
-	appTombstone := withdrawing(TypeAppRecord, bytesEntry("realm_id", idBytes(0x11)), textEntry("org_name", "acme"),
-		textEntry("app_name", "weather"))
-	authorization := stationAuthorizationPayload(nowMs())
-	authorizationTombstone := withdrawing(TypeStationAuthorization, bytesEntry("realm_id", idBytes(0x11)),
-		bytesEntry("station_node", idBytes(0x77)))
-	for _, c := range []struct {
-		name       string
-		recordType Type
-		payload    []cbor.MapEntry
-		lifetimeMs int64
-		want       error
-	}{
-		{"an advertisement", TypeProcedureAdvertisement, advertisement, 5 * testMinute, nil},
+}
+
+// cases is every payload, each type's own rules met in turn.
+func (f payloadRefusalFixtures) cases() []payloadRefusalCase {
+	cases := advertisementRefusalCases(f)
+	cases = append(cases, announcementRefusalCases(f)...)
+	cases = append(cases, tombstoneRefusalCases(f)...)
+	cases = append(cases, stationAuthorizationRefusalCases(f)...)
+	cases = append(cases, appRecordRefusalCases(f)...)
+	return append(cases, firstFaultRefusalCases(f)...)
+}
+
+func advertisementRefusalCases(f payloadRefusalFixtures) []payloadRefusalCase {
+	return []payloadRefusalCase{
+		{"an advertisement", TypeProcedureAdvertisement, f.advertisement, 5 * testMinute, nil},
 		{"an advertisement with an authorization map", TypeProcedureAdvertisement,
-			withEntry(advertisement, "authorization", cbor.Map([]cbor.MapEntry{uintEntry("anything", 1)})), 5 * testMinute, nil},
+			withEntry(f.advertisement, "authorization", cbor.Map([]cbor.MapEntry{uintEntry("anything", 1)})), 5 * testMinute, nil},
 		{"an authorization that is not a map", TypeProcedureAdvertisement,
-			withEntry(advertisement, "authorization", cbor.List([]cbor.Value{cbor.Uint64(1)})), 5 * testMinute, ErrMalformed},
-		{"a fifth key that is not authorization", TypeProcedureAdvertisement, unknownKey, 5 * testMinute, ErrMalformed},
-		{"an advertisement without serving_stations", TypeProcedureAdvertisement, withoutEntry(advertisement, "serving_stations"), 5 * testMinute, ErrMalformed},
+			withEntry(f.advertisement, "authorization", cbor.List([]cbor.Value{cbor.Uint64(1)})), 5 * testMinute, ErrMalformed},
+		{"a fifth key that is not authorization", TypeProcedureAdvertisement, f.unknownKey, 5 * testMinute, ErrMalformed},
+		{"an advertisement without serving_stations", TypeProcedureAdvertisement, withoutEntry(f.advertisement, "serving_stations"), 5 * testMinute, ErrMalformed},
 		{"an advertisement naming serving_station, one", TypeProcedureAdvertisement,
-			append(withoutEntry(advertisement, "serving_stations"), bytesEntry("serving_station", idBytes(0x77))), 5 * testMinute, ErrMalformed},
-		{"serving_stations of no station", TypeProcedureAdvertisement, withEntry(advertisement, "serving_stations", cbor.List(nil)), 5 * testMinute, ErrMalformed},
-		{"serving_stations descending", TypeProcedureAdvertisement, withEntry(advertisement, "serving_stations",
+			append(withoutEntry(f.advertisement, "serving_stations"), bytesEntry("serving_station", idBytes(0x77))), 5 * testMinute, ErrMalformed},
+		{"serving_stations of no station", TypeProcedureAdvertisement, withEntry(f.advertisement, "serving_stations", cbor.List(nil)), 5 * testMinute, ErrMalformed},
+		{"serving_stations descending", TypeProcedureAdvertisement, withEntry(f.advertisement, "serving_stations",
 			cbor.List([]cbor.Value{cbor.Bytes(idBytes(9)), cbor.Bytes(idBytes(3))})), 5 * testMinute, ErrMalformed},
-		{"serving_stations naming one twice", TypeProcedureAdvertisement, withEntry(advertisement, "serving_stations",
+		{"serving_stations naming one twice", TypeProcedureAdvertisement, withEntry(f.advertisement, "serving_stations",
 			cbor.List([]cbor.Value{cbor.Bytes(idBytes(3)), cbor.Bytes(idBytes(3))})), 5 * testMinute, ErrMalformed},
-		{"a serving station of 31 bytes", TypeProcedureAdvertisement, withEntry(advertisement, "serving_stations",
+		{"a serving station of 31 bytes", TypeProcedureAdvertisement, withEntry(f.advertisement, "serving_stations",
 			cbor.List([]cbor.Value{cbor.Bytes(make([]byte, 31))})), 5 * testMinute, ErrMalformed},
-		{"a realm_id of 31 bytes", TypeProcedureAdvertisement, withEntry(advertisement, "realm_id", cbor.Bytes(make([]byte, 31))), 5 * testMinute, ErrMalformed},
-		{"a procedure as bytes", TypeProcedureAdvertisement, withEntry(advertisement, "procedure", cbor.Bytes([]byte("acme/x"))), 5 * testMinute, ErrMalformed},
-		{"a content announcement", TypeContentAnnouncement, announcement, testHour, nil},
-		{"a content id with tag 1", TypeContentAnnouncement, withEntry(announcement, "mcid", cbor.Bytes(contentID(1))), testHour, ErrMcidTagUnknown},
-		{"an announcement without realm_id", TypeContentAnnouncement, withoutEntry(announcement, "realm_id"), testHour, ErrMalformed},
-		{"an announcement without serving_station", TypeContentAnnouncement, withoutEntry(announcement, "serving_station"), testHour, ErrMalformed},
-		{"a serving_station of 31 bytes", TypeContentAnnouncement, withEntry(announcement, "serving_station", cbor.Bytes(make([]byte, 31))), testHour, ErrMalformed},
-		{"an announcement without procedure", TypeContentAnnouncement, withoutEntry(announcement, "procedure"), testHour, ErrMalformed},
-		{"an empty procedure", TypeContentAnnouncement, withEntry(announcement, "procedure", cbor.Text("")), testHour, ErrMalformed},
-		{"a procedure as bytes", TypeContentAnnouncement, withEntry(announcement, "procedure", cbor.Bytes([]byte("~x/content_v1"))), testHour, ErrMalformed},
-		{"a tombstone of an advertisement", TypeTombstone, advertisementTombstone, 5 * testMinute, nil},
-		{"a tombstone with a detail", TypeTombstone, withEntry(advertisementTombstone, "detail", cbor.Text("to beam01")), 5 * testMinute, nil},
-		{"a tombstone missing a slot field", TypeTombstone, withoutEntry(advertisementTombstone, "procedure"), 5 * testMinute, ErrMalformed},
+		{"a realm_id of 31 bytes", TypeProcedureAdvertisement, withEntry(f.advertisement, "realm_id", cbor.Bytes(make([]byte, 31))), 5 * testMinute, ErrMalformed},
+		{"a procedure as bytes", TypeProcedureAdvertisement, withEntry(f.advertisement, "procedure", cbor.Bytes([]byte("acme/x"))), 5 * testMinute, ErrMalformed},
+	}
+}
+
+func announcementRefusalCases(f payloadRefusalFixtures) []payloadRefusalCase {
+	return []payloadRefusalCase{
+		{"a content announcement", TypeContentAnnouncement, f.announcement, testHour, nil},
+		{"a content id with tag 1", TypeContentAnnouncement, withEntry(f.announcement, "mcid", cbor.Bytes(f.contentID(1))), testHour, ErrMcidTagUnknown},
+		{"an announcement without realm_id", TypeContentAnnouncement, withoutEntry(f.announcement, "realm_id"), testHour, ErrMalformed},
+		{"an announcement without serving_station", TypeContentAnnouncement, withoutEntry(f.announcement, "serving_station"), testHour, ErrMalformed},
+		{"a serving_station of 31 bytes", TypeContentAnnouncement, withEntry(f.announcement, "serving_station", cbor.Bytes(make([]byte, 31))), testHour, ErrMalformed},
+		{"an announcement without procedure", TypeContentAnnouncement, withoutEntry(f.announcement, "procedure"), testHour, ErrMalformed},
+		{"an empty procedure", TypeContentAnnouncement, withEntry(f.announcement, "procedure", cbor.Text("")), testHour, ErrMalformed},
+		{"a procedure as bytes", TypeContentAnnouncement, withEntry(f.announcement, "procedure", cbor.Bytes([]byte("~x/content_v1"))), testHour, ErrMalformed},
+	}
+}
+
+func tombstoneRefusalCases(f payloadRefusalFixtures) []payloadRefusalCase {
+	return []payloadRefusalCase{
+		{"a tombstone of an advertisement", TypeTombstone, f.advertisementTombstone, 5 * testMinute, nil},
+		{"a tombstone with a detail", TypeTombstone, withEntry(f.advertisementTombstone, "detail", cbor.Text("to beam01")), 5 * testMinute, nil},
+		{"a tombstone missing a slot field", TypeTombstone, withoutEntry(f.advertisementTombstone, "procedure"), 5 * testMinute, ErrMalformed},
 		{"a tombstone with an extra slot field", TypeTombstone,
-			withEntry(advertisementTombstone, "member_node", cbor.Bytes(idBytes(2))), 5 * testMinute, ErrMalformed},
-		{"a reason macula does not define", TypeTombstone, withEntry(advertisementTombstone, "reason", cbor.Text("retired")), 5 * testMinute, ErrMalformed},
-		{"a detail that is not text", TypeTombstone, withEntry(advertisementTombstone, "detail", cbor.Bytes([]byte("not text"))), 5 * testMinute, ErrMalformed},
+			withEntry(f.advertisementTombstone, "member_node", cbor.Bytes(idBytes(2))), 5 * testMinute, ErrMalformed},
+		{"a reason macula does not define", TypeTombstone, withEntry(f.advertisementTombstone, "reason", cbor.Text("retired")), 5 * testMinute, ErrMalformed},
+		{"a detail that is not text", TypeTombstone, withEntry(f.advertisementTombstone, "detail", cbor.Bytes([]byte("not text"))), 5 * testMinute, ErrMalformed},
 		{"a withdrawn_version of 15 bytes", TypeTombstone,
-			withEntry(advertisementTombstone, "withdrawn_version", cbor.Bytes(make([]byte, 15))), 5 * testMinute, ErrMalformed},
-		{"a tombstone without withdrawn_version", TypeTombstone, withoutEntry(advertisementTombstone, "withdrawn_version"), 5 * testMinute, ErrMalformed},
-		{"a tombstone withdrawing a tombstone", TypeTombstone, withdrawing(TypeTombstone), 10 * testMinute, ErrMalformed},
-		{"a tombstone of a tag a 1.0 custodian does not know, without a subject", TypeTombstone, withdrawing(0x07), 10 * testMinute, ErrSubjectMissing},
+			withEntry(f.advertisementTombstone, "withdrawn_version", cbor.Bytes(make([]byte, 15))), 5 * testMinute, ErrMalformed},
+		{"a tombstone without withdrawn_version", TypeTombstone, withoutEntry(f.advertisementTombstone, "withdrawn_version"), 5 * testMinute, ErrMalformed},
+		{"a tombstone withdrawing a tombstone", TypeTombstone, f.withdrawing(TypeTombstone), 10 * testMinute, ErrMalformed},
+		{"a tombstone of a tag a 1.0 custodian does not know, without a subject", TypeTombstone, f.withdrawing(0x07), 10 * testMinute, ErrSubjectMissing},
 		{"a tombstone of a tag a 1.0 custodian does not know", TypeTombstone,
-			withdrawing(0x07, bytesEntry("subject", []byte("s"))), 10 * testMinute, ErrTypeUnknown},
-		{"a tombstone of a realm member endorsement", TypeTombstone, endorsementTombstone, testHour, nil},
-		{"an endorsement tombstone without member_node", TypeTombstone, withoutEntry(endorsementTombstone, "member_node"), testHour, ErrMalformed},
+			f.withdrawing(0x07, bytesEntry("subject", []byte("s"))), 10 * testMinute, ErrTypeUnknown},
+		{"a tombstone of a realm member endorsement", TypeTombstone, f.endorsementTombstone, testHour, nil},
+		{"an endorsement tombstone without member_node", TypeTombstone, withoutEntry(f.endorsementTombstone, "member_node"), testHour, ErrMalformed},
 		{"an endorsement tombstone with a member_node of 31 bytes", TypeTombstone,
-			withEntry(endorsementTombstone, "member_node", cbor.Bytes(make([]byte, 31))), testHour, ErrMalformed},
+			withEntry(f.endorsementTombstone, "member_node", cbor.Bytes(make([]byte, 31))), testHour, ErrMalformed},
+		{"a tombstone of a station authorization", TypeTombstone, f.authorizationTombstone, 40 * testMinute, nil},
+		{"a tombstone of an app record", TypeTombstone, f.appTombstone, 30 * testMinute, nil},
+		{"an app tombstone without app_name", TypeTombstone, withoutEntry(f.appTombstone, "app_name"), 30 * testMinute, ErrMalformed},
+	}
+}
+
+func stationAuthorizationRefusalCases(f payloadRefusalFixtures) []payloadRefusalCase {
+	authorization := f.authorization
+	return []payloadRefusalCase{
 		{"a station authorization", TypeStationAuthorization, authorization, 30 * testMinute, nil},
 		{"a station authorization requiring an attestation", TypeStationAuthorization, append(slices.Clone(authorization),
 			uintEntry("attestation_required", 1), bytesEntry("attestation_key_id", idBytes(0x66))), 30 * testMinute, nil},
@@ -600,10 +679,15 @@ func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 		{"no roles", TypeStationAuthorization, withEntry(authorization, "roles", cbor.List(nil)), 30 * testMinute, nil},
 		{"a window reversed", TypeStationAuthorization, withEntry(authorization, "valid_until", cbor.Int(1)), 30 * testMinute, ErrMalformed},
 		{"a window over 30 minutes", TypeStationAuthorization, withEntry(authorization, "valid_until",
-			cbor.Uint64(uint64(nowMs()+30*testMinute+testMinute))), 30 * testMinute, ErrMalformed},
-		{"a tombstone of a station authorization", TypeTombstone, authorizationTombstone, 40 * testMinute, nil},
+			cbor.Uint64(uint64(f.now+30*testMinute+testMinute))), 30 * testMinute, ErrMalformed},
+	}
+}
+
+func appRecordRefusalCases(f payloadRefusalFixtures) []payloadRefusalCase {
+	app := f.app
+	return []payloadRefusalCase{
 		{"an app record", TypeAppRecord, app, 30 * testMinute, nil},
-		{"an app record with no services", TypeAppRecord, appServices(), 30 * testMinute, nil},
+		{"an app record with no services", TypeAppRecord, f.appServices(), 30 * testMinute, nil},
 		{"an app record of the org _", TypeAppRecord, withEntry(app, "org_name", cbor.Text("_")), 30 * testMinute, ErrMalformed},
 		{"an app record of a node's namespace", TypeAppRecord, withEntry(app, "org_name", cbor.Text("~ab")), 30 * testMinute, ErrMalformed},
 		{"an org name with a slash", TypeAppRecord, withEntry(app, "org_name", cbor.Text("ac/me")), 30 * testMinute, ErrMalformed},
@@ -611,12 +695,12 @@ func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 		{"an app name of 65 bytes", TypeAppRecord, withEntry(app, "app_name", cbor.Text(strings.Repeat("w", 65))), 30 * testMinute, ErrMalformed},
 		{"an app name of 64 bytes", TypeAppRecord, withEntry(app, "app_name", cbor.Text(strings.Repeat("w", 64))), 30 * testMinute, nil},
 		{"an empty version", TypeAppRecord, withEntry(app, "version", cbor.Text("")), 30 * testMinute, ErrMalformed},
-		{"a service listing another org's procedure", TypeAppRecord, appServices(appService("forecast", "other/get_forecast_v1")), 30 * testMinute, ErrMalformed},
-		{"a service listing a node's procedure", TypeAppRecord, appServices(appService("forecast", "~ab/get_forecast_v1")), 30 * testMinute, ErrMalformed},
-		{"a service listing a procedure with no namespace", TypeAppRecord, appServices(appService("forecast", "get_forecast_v1")), 30 * testMinute, ErrMalformed},
-		{"two services of one name", TypeAppRecord, appServices(appService("forecast"), appService("forecast")), 30 * testMinute, ErrMalformed},
-		{"a service with an empty name", TypeAppRecord, appServices(appService("")), 30 * testMinute, ErrMalformed},
-		{"a service with a third key", TypeAppRecord, appServices(cbor.Map([]cbor.MapEntry{textEntry("name", "forecast"),
+		{"a service listing another org's procedure", TypeAppRecord, f.appServices(appService("forecast", "other/get_forecast_v1")), 30 * testMinute, ErrMalformed},
+		{"a service listing a node's procedure", TypeAppRecord, f.appServices(appService("forecast", "~ab/get_forecast_v1")), 30 * testMinute, ErrMalformed},
+		{"a service listing a procedure with no namespace", TypeAppRecord, f.appServices(appService("forecast", "get_forecast_v1")), 30 * testMinute, ErrMalformed},
+		{"two services of one name", TypeAppRecord, f.appServices(appService("forecast"), appService("forecast")), 30 * testMinute, ErrMalformed},
+		{"a service with an empty name", TypeAppRecord, f.appServices(appService("")), 30 * testMinute, ErrMalformed},
+		{"a service with a third key", TypeAppRecord, f.appServices(cbor.Map([]cbor.MapEntry{textEntry("name", "forecast"),
 			valueEntry("procedures", cbor.List(nil)), textEntry("port", "1")})), 30 * testMinute, ErrMalformed},
 		{"an app record with an eighth field", TypeAppRecord, withEntry(app, "homepage", cbor.Text("h")), 30 * testMinute, ErrMalformed},
 		{"an authorization with a second key", TypeAppRecord, withEntry(app, "authorization", cbor.Map([]cbor.MapEntry{
@@ -624,24 +708,18 @@ func TestAPayloadItsTypeDoesNotAllowIsMalformed(t *testing.T) {
 		{"an org directory as text", TypeAppRecord, withEntry(app, "authorization", cbor.Map([]cbor.MapEntry{
 			textEntry("org_directory", "directory")})), 30 * testMinute, ErrMalformed},
 		{"an app record naming another org key", TypeAppRecord, withEntry(app, "org_key", cbor.Bytes(idBytes(9))), 30 * testMinute, ErrKeyIDMismatch},
-		{"a tombstone of an app record", TypeTombstone, appTombstone, 30 * testMinute, nil},
-		{"an app tombstone without app_name", TypeTombstone, withoutEntry(appTombstone, "app_name"), 30 * testMinute, ErrMalformed},
+	}
+}
+
+// firstFaultRefusalCases are a payload fault beside a lifetime, signer or
+// clock fault, to hold the order verify/3 reads them in.
+func firstFaultRefusalCases(f payloadRefusalFixtures) []payloadRefusalCase {
+	return []payloadRefusalCase{
 		{"a signer that is not its key", TypeProcedureAdvertisement,
-			withEntry(advertisement, "advertiser_node", cbor.Bytes(idBytes(9))), 5 * testMinute, ErrKeyIDMismatch},
-		{"a payload fault and a lifetime fault", TypeProcedureAdvertisement, unknownKey, 5*testMinute + 1, ErrLifetimeTooLong},
+			withEntry(f.advertisement, "advertiser_node", cbor.Bytes(idBytes(9))), 5 * testMinute, ErrKeyIDMismatch},
+		{"a payload fault and a lifetime fault", TypeProcedureAdvertisement, f.unknownKey, 5*testMinute + 1, ErrLifetimeTooLong},
 		{"a payload fault and a signer that is not its key", TypeProcedureAdvertisement,
-			withEntry(unknownKey, "advertiser_node", cbor.Bytes(idBytes(9))), 5 * testMinute, ErrMalformed},
-	} {
-		now := nowMs()
-		fields := recordFields(t, c.recordType, cbor.Map(c.payload), now, c.lifetimeMs)
-		_, err := Verify(signedByHand(t, label, fields, keys.node), profile.PQPure, now)
-		if c.want == nil {
-			if err != nil {
-				t.Errorf("%s: %v, want it verified", c.name, err)
-			}
-			continue
-		}
-		wantRefusal(t, c.name, err, c.want)
+			withEntry(f.unknownKey, "advertiser_node", cbor.Bytes(idBytes(9))), 5 * testMinute, ErrMalformed},
 	}
 }
 

@@ -25,24 +25,30 @@ func TestTheWireOneFrameVectors(t *testing.T) {
 	}
 	for _, c := range f.Cases {
 		t.Run(c.ID, func(t *testing.T) {
-			v := vectorFrame(t, c.Text("frame"))
-			envelope, err := ReadEnvelope(v)
-			if err == nil {
-				err = readFrameFields(t, c, envelope)
-			}
-			switch c.Outcome() {
-			case "accept":
-				if err != nil {
-					t.Fatalf("%v, want it accepted", err)
-				}
-			case "refuse":
-				if c.Reason() != "malformed_frame" || !errors.Is(err, ErrMalformedFrame) {
-					t.Fatalf("%v, want %s", err, c.Reason())
-				}
-			default:
-				t.Fatalf("outcome %q has no check here", c.Outcome())
-			}
+			checkFrameVector(t, c)
 		})
+	}
+}
+
+// checkFrameVector holds one frame vector to the envelope rules and, where the
+// frame's own reader needs no context, to that reader as well.
+func checkFrameVector(t *testing.T, c wire10vectors.Case) {
+	t.Helper()
+	envelope, err := ReadEnvelope(vectorFrame(t, c.Text("frame")))
+	if err == nil {
+		err = readFrameFields(t, c, envelope)
+	}
+	switch c.Outcome() {
+	case "accept":
+		if err != nil {
+			t.Fatalf("%v, want it accepted", err)
+		}
+	case "refuse":
+		if c.Reason() != "malformed_frame" || !errors.Is(err, ErrMalformedFrame) {
+			t.Fatalf("%v, want %s", err, c.Reason())
+		}
+	default:
+		t.Fatalf("outcome %q has no check here", c.Outcome())
 	}
 }
 

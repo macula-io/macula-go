@@ -102,38 +102,17 @@ func hexID(what, text string) ([32]byte, error) {
 // up, within the options' timeout (30 s by default) or until base ends. Its
 // error is already classified against its own deadline.
 func connect(base context.Context, key *identity.NodeKey, seedsJSON, optionsJSON string) (*livePool, error) {
-	var seeds []connectSeed
-	if err := decodeStrict("seeds", seedsJSON, &seeds); err != nil {
+	seeds, opts, err := decodeConnectOptions(seedsJSON, optionsJSON)
+	if err != nil {
 		return nil, err
 	}
-	var opts connectOptions
-	if optionsJSON != "" {
-		if err := decodeStrict("options", optionsJSON, &opts); err != nil {
-			return nil, err
-		}
+	poolSeeds, err := poolSeedsOf(seeds)
+	if err != nil {
+		return nil, err
 	}
-	if opts.KEMAdvertise != 0 && opts.KEMAdvertise != 1 {
-		return nil, invalidArgument("kem_advertise is 0 or 1, not %d", opts.KEMAdvertise)
-	}
-	poolSeeds := make([]pool.Seed, len(seeds))
-	for i, s := range seeds {
-		id, err := hexID("a seed's node_id", s.NodeID)
-		if err != nil {
-			return nil, err
-		}
-		poolSeeds[i] = pool.Seed{Host: s.Host, Port: s.Port, NodeID: id}
-	}
-	trust := map[[32]byte][]byte{}
-	for realmHex, keyHex := range opts.RealmTrust {
-		realm, err := hexID("a realm id", realmHex)
-		if err != nil {
-			return nil, err
-		}
-		realmKey, err := hex.DecodeString(keyHex)
-		if err != nil {
-			return nil, invalidArgument("a realm key is not hex: %v", err)
-		}
-		trust[realm] = realmKey
+	trust, err := realmTrust(opts.RealmTrust)
+	if err != nil {
+		return nil, err
 	}
 	timeoutMs := opts.TimeoutMs
 	if timeoutMs == 0 {
@@ -156,6 +135,53 @@ func connect(base context.Context, key *identity.NodeKey, seedsJSON, optionsJSON
 	}
 	lp.pool = p
 	return lp, nil
+}
+
+// decodeConnectOptions reads what the ABI passed for a pool, and refuses an
+// option outside its range.
+func decodeConnectOptions(seedsJSON, optionsJSON string) ([]connectSeed, connectOptions, error) {
+	var seeds []connectSeed
+	if err := decodeStrict("seeds", seedsJSON, &seeds); err != nil {
+		return nil, connectOptions{}, err
+	}
+	var opts connectOptions
+	if optionsJSON != "" {
+		if err := decodeStrict("options", optionsJSON, &opts); err != nil {
+			return nil, connectOptions{}, err
+		}
+	}
+	if opts.KEMAdvertise != 0 && opts.KEMAdvertise != 1 {
+		return nil, connectOptions{}, invalidArgument("kem_advertise is 0 or 1, not %d", opts.KEMAdvertise)
+	}
+	return seeds, opts, nil
+}
+
+func poolSeedsOf(seeds []connectSeed) ([]pool.Seed, error) {
+	out := make([]pool.Seed, len(seeds))
+	for i, s := range seeds {
+		id, err := hexID("a seed's node_id", s.NodeID)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = pool.Seed{Host: s.Host, Port: s.Port, NodeID: id}
+	}
+	return out, nil
+}
+
+func realmTrust(trust map[string]string) (map[[32]byte][]byte, error) {
+	out := map[[32]byte][]byte{}
+	for realmHex, keyHex := range trust {
+		realm, err := hexID("a realm id", realmHex)
+		if err != nil {
+			return nil, err
+		}
+		realmKey, err := hex.DecodeString(keyHex)
+		if err != nil {
+			return nil, invalidArgument("a realm key is not hex: %v", err)
+		}
+		out[realm] = realmKey
+	}
+	return out, nil
 }
 
 func (lp *livePool) linkEvent(e pool.LinkEvent) {

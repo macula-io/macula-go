@@ -181,6 +181,43 @@ func countRefusal(err error) {
 	}
 }
 
+// exchangeHandshake runs OPENER, CHALLENGE, CONNECT and HELLO on the control
+// stream, and returns the station's statement as its HELLO carried it.
+func exchangeHandshake(dialed transport.Dialed, cfg Config, reader frameReader, writer *frameWriter) (handshake.Station, identity.ConnectMaterial, uint64, error) {
+	if err := writer.write(handshake.Opener(handshake.Supported(cfg.Target.Profile)), HandshakeFrameBytes); err != nil {
+		return handshake.Station{}, identity.ConnectMaterial{}, 0, fmt.Errorf("stationlink: send OPENER: %w", err)
+	}
+	challenge, err := reader.read(HandshakeFrameBytes)
+	if err != nil {
+		return handshake.Station{}, identity.ConnectMaterial{}, 0, fmt.Errorf("stationlink: read CHALLENGE: %w", err)
+	}
+	material, err := cfg.Issuer.ConnectMaterial()
+	if err != nil {
+		return handshake.Station{}, identity.ConnectMaterial{}, 0, err
+	}
+	connect, station, err := handshake.AnswerChallenge(challenge, handshake.ClientSession{
+		Profile: cfg.Target.Profile, ExpectedNodeID: cfg.Target.ExpectedNodeID, Leaf: dialed.Leaf,
+		IdentityKey: cfg.IdentityKey.PublicKey(), ConnectKey: material.Key, ConnectBinding: material.Binding,
+		ConnectStatus: material.Status, NowMs: time.Now().UnixMilli(), MemberEndorsement: cfg.MemberEndorsement,
+		Floor: floors.of, Export: exporterOf(dialed.Conn),
+	})
+	if err != nil {
+		return handshake.Station{}, identity.ConnectMaterial{}, 0, err
+	}
+	if err := writer.write(connect, HandshakeFrameBytes); err != nil {
+		return handshake.Station{}, identity.ConnectMaterial{}, 0, fmt.Errorf("stationlink: send CONNECT: %w", err)
+	}
+	hello, err := reader.read(HandshakeFrameBytes)
+	if err != nil {
+		return handshake.Station{}, identity.ConnectMaterial{}, 0, fmt.Errorf("stationlink: read HELLO: %w", err)
+	}
+	capabilities, err := handshake.ReadHello(hello, station)
+	if err != nil {
+		return handshake.Station{}, identity.ConnectMaterial{}, 0, err
+	}
+	return station, material, capabilities, nil
+}
+
 // handshaken runs the client's side of the handshake on a new control stream.
 func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link, error) {
 	stream, err := dialed.Conn.OpenStreamSync(ctx)
@@ -191,34 +228,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		_ = stream.SetReadDeadline(deadline)
 	}
 	reader, writer := frameReader{r: stream}, &frameWriter{w: stream}
-	if err := writer.write(handshake.Opener(handshake.Supported(cfg.Target.Profile)), HandshakeFrameBytes); err != nil {
-		return nil, fmt.Errorf("stationlink: send OPENER: %w", err)
-	}
-	challenge, err := reader.read(HandshakeFrameBytes)
-	if err != nil {
-		return nil, fmt.Errorf("stationlink: read CHALLENGE: %w", err)
-	}
-	material, err := cfg.Issuer.ConnectMaterial()
-	if err != nil {
-		return nil, err
-	}
-	connect, station, err := handshake.AnswerChallenge(challenge, handshake.ClientSession{
-		Profile: cfg.Target.Profile, ExpectedNodeID: cfg.Target.ExpectedNodeID, Leaf: dialed.Leaf,
-		IdentityKey: cfg.IdentityKey.PublicKey(), ConnectKey: material.Key, ConnectBinding: material.Binding,
-		ConnectStatus: material.Status, NowMs: time.Now().UnixMilli(), MemberEndorsement: cfg.MemberEndorsement,
-		Floor: floors.of, Export: exporterOf(dialed.Conn),
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := writer.write(connect, HandshakeFrameBytes); err != nil {
-		return nil, fmt.Errorf("stationlink: send CONNECT: %w", err)
-	}
-	hello, err := reader.read(HandshakeFrameBytes)
-	if err != nil {
-		return nil, fmt.Errorf("stationlink: read HELLO: %w", err)
-	}
-	capabilities, err := handshake.ReadHello(hello, station)
+	station, material, capabilities, err := exchangeHandshake(dialed, cfg, reader, writer)
 	if err != nil {
 		return nil, err
 	}
@@ -230,22 +240,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 	if err != nil {
 		return nil, err
 	}
-	seq := cfg.PublicationSeq
-	if seq == nil {
-		seq = &PublicationSeq{}
-	}
-	admission := cfg.Admission
-	if admission == nil {
-		admission = NewAdmission(DefaultAdmissionLimits())
-	}
-	share := cfg.Share
-	if share == "" {
-		share = net.JoinHostPort(cfg.Target.Host, strconv.Itoa(int(cfg.Target.Port)))
-	}
-	dedup := cfg.Dedup
-	if dedup == nil {
-		dedup = NewEventDedup()
-	}
+	seq, admission, dedup, share := linkDefaults(cfg)
 	statements, unsubscribe, err := cfg.Issuer.Subscribe(sha512.Sum384(material.Binding.TBS))
 	if err != nil {
 		return nil, err
@@ -562,4 +557,25 @@ func fieldOf(v cbor.Value, name string) cbor.Value {
 		}
 	}
 	return cbor.Null()
+}
+
+// linkDefaults is the parts of a link its config may leave out, defaulted.
+func linkDefaults(cfg Config) (seq *PublicationSeq, admission *Admission, dedup *EventDedup, share string) {
+	seq = cfg.PublicationSeq
+	if seq == nil {
+		seq = &PublicationSeq{}
+	}
+	admission = cfg.Admission
+	if admission == nil {
+		admission = NewAdmission(DefaultAdmissionLimits())
+	}
+	share = cfg.Share
+	if share == "" {
+		share = net.JoinHostPort(cfg.Target.Host, strconv.Itoa(int(cfg.Target.Port)))
+	}
+	dedup = cfg.Dedup
+	if dedup == nil {
+		dedup = NewEventDedup()
+	}
+	return seq, admission, dedup, share
 }

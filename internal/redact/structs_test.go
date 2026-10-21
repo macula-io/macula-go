@@ -49,21 +49,34 @@ func TestNoCredentialCarrierPrintsItsCredential(t *testing.T) {
 	for name, c := range carriers {
 		ptr := reflect.New(reflect.TypeOf(c))
 		ptr.Elem().Set(reflect.ValueOf(c))
-		for _, v := range []any{c, ptr.Interface(), struct{ Inner any }{c}} {
-			for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x"} {
-				out := fmt.Sprintf(verb, v)
-				if leaks(out) {
-					t.Errorf("%s with %s printed its credential: %s", name, verb, out)
-				}
-			}
-		}
+		assertNoFormatPrintsACredential(t, name, c, ptr.Interface())
 		if out := fmt.Sprintf("%+v", c); !strings.Contains(out, fmt.Sprintf("<grant, %d bytes>", len(grant))) {
 			t.Errorf("%s does not name its grant: %s", name, out)
 		}
-		for _, v := range []any{c, ptr.Interface()} {
-			if out := jsonLog(v); leaks(out) || !strings.Contains(out, "<grant, ") {
-				t.Errorf("%s through slog's JSON handler: %s", name, out)
+		assertSlogJSONNamesTheGrant(t, name, c, ptr.Interface())
+	}
+}
+
+// assertNoFormatPrintsACredential checks no fmt verb, through the carrier, a
+// pointer to it, or a struct wrapping it, writes the credential in any form.
+func assertNoFormatPrintsACredential(t *testing.T, name string, carrier, ptr any) {
+	t.Helper()
+	for _, v := range []any{carrier, ptr, struct{ Inner any }{carrier}} {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x"} {
+			if out := fmt.Sprintf(verb, v); leaks(out) {
+				t.Errorf("%s with %s printed its credential: %s", name, verb, out)
 			}
+		}
+	}
+}
+
+// assertSlogJSONNamesTheGrant checks slog's JSON handler, which marshals rather
+// than formats, prints no credential and still names the grant.
+func assertSlogJSONNamesTheGrant(t *testing.T, name string, carrier, ptr any) {
+	t.Helper()
+	for _, v := range []any{carrier, ptr} {
+		if out := jsonLog(v); leaks(out) || !strings.Contains(out, "<grant, ") {
+			t.Errorf("%s through slog's JSON handler: %s", name, out)
 		}
 	}
 }

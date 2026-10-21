@@ -63,33 +63,11 @@ func (ss *streamSeal) sealed(fields frame.StreamFields, seq uint64) (frame.Strea
 	if !ss.caller && seq >= maxSealedProviderFrames {
 		return nil, ErrSealedFramesExhausted
 	}
-	var frameType string
-	var plain []byte
-	switch f := fields.(type) {
-	case frame.StreamDataFields:
-		frameType = "stream_data"
-		if f.Encoding == frame.Raw {
-			b, ok := f.Body.AsBytes()
-			if !ok {
-				return nil, frame.ErrOutOfRange
-			}
-			plain = b
-		} else {
-			if err := frame.CheckPayload(f.Body); err != nil {
-				return nil, err
-			}
-			plain = cbor.Encode(f.Body)
-		}
-	case frame.StreamReplyFields:
-		frameType = "stream_reply"
-		if err := frame.CheckPayload(f.Payload); err != nil {
-			return nil, err
-		}
-		plain = cbor.Encode(f.Payload)
-	case frame.StreamErrorFields:
-		frameType = "stream_error"
-		plain = seal.ErrorPlain(f.Code, f.Message)
-	default:
+	frameType, plain, err := sealable(fields)
+	if err != nil {
+		return nil, err
+	}
+	if frameType == "" {
 		return fields, nil
 	}
 	var nonce [seal.NonceSize]byte
@@ -232,4 +210,46 @@ func (s *Stream) unsealed(v frame.VerifiedStreamFrame) (frame.VerifiedStreamFram
 		return v, &StreamError{Code: v.Code, Message: v.Message}
 	}
 	return v, errClearOnSealed
+}
+
+// refuseUnsealed handles a frame that does not unseal: a peer that refused
+// this stream's seal is resealed to once, and told; anything else is a
+// malformed frame.
+func (s *Stream) refuseUnsealed(err error) {
+	var refused *StreamError
+	if !errors.As(err, &refused) {
+		s.fail("malformed_frame", err)
+		return
+	}
+	if refused.Code == codeSealedRefused && s.resealed(refused) {
+		return
+	}
+	s.peerFinished(refused)
+}
+
+// sealable is the frame type and plaintext a field's seal covers: a body,
+// payload, or code and message. A frame type of "" is one that goes as it is.
+func sealable(fields frame.StreamFields) (string, []byte, error) {
+	switch f := fields.(type) {
+	case frame.StreamDataFields:
+		if f.Encoding == frame.Raw {
+			b, ok := f.Body.AsBytes()
+			if !ok {
+				return "", nil, frame.ErrOutOfRange
+			}
+			return "stream_data", b, nil
+		}
+		if err := frame.CheckPayload(f.Body); err != nil {
+			return "", nil, err
+		}
+		return "stream_data", cbor.Encode(f.Body), nil
+	case frame.StreamReplyFields:
+		if err := frame.CheckPayload(f.Payload); err != nil {
+			return "", nil, err
+		}
+		return "stream_reply", cbor.Encode(f.Payload), nil
+	case frame.StreamErrorFields:
+		return "stream_error", seal.ErrorPlain(f.Code, f.Message), nil
+	}
+	return "", nil, nil
 }

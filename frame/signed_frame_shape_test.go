@@ -24,78 +24,115 @@ func frameWithout(v cbor.Value, name string) cbor.Value {
 // kind, a retry budget of 2^53, and the other frame kind's routing field are each
 // refused as malformed. A stream frame carries no routing field.
 func TestAFrameAroundASignedObjectIsReadAsAReceivedFrameIs(t *testing.T) {
-	keys := requestKeysFor(t)
-	request := verifiedCall(t, keys)
-	open := streamOpenOf(t, keys, Bidi, idOf(7))
-	call := must[cbor.Value](t)(SignCall(callSpec(keys), keys.caller))
-	result := must[cbor.Value](t)(SignResult(request, cbor.Uint64(1), nil, keys.provider))
-	relay := must[cbor.Value](t)(SignRelayError(RelayErrorSpec{FrameType: frameTypeError, Request: request, Code: "unknown_next_peer"},
-		keys.station))
-	providerData := must[cbor.Value](t)(SignProviderStream(streamChunk(0), open, keys.provider))
-	callerData := must[cbor.Value](t)(SignCallerStream(streamChunk(0), open, keys.caller))
-	verifyRequest := func(v cbor.Value) error {
-		_, err := VerifyRequest(onWire(t, v), profile.PQPure)
-		return err
-	}
-	verifyReply := func(v cbor.Value) error {
-		_, err := VerifyReply(onWire(t, v), request, profile.PQPure)
-		return err
-	}
-	verifyRelayError := func(v cbor.Value) error {
-		_, err := VerifyRelayError(onWire(t, v), request, profile.PQPure, keys.station.KeyID())
-		return err
-	}
-	verifyProviderStream := func(v cbor.Value) error {
-		_, _, err := verifyProvider(t, v, streamStateOf(t, open))
-		return err
-	}
-	verifyCallerStream := func(v cbor.Value) error {
-		_, _, err := verifyCaller(t, v, streamStateOf(t, open))
-		return err
-	}
-	route, otherVersion := cbor.Bytes([]byte{1, 2}), cbor.Uint64(ProtocolVersion+1)
-	type frameCase struct {
-		name   string
-		frame  cbor.Value
-		verify func(cbor.Value) error
-	}
-
-	for _, c := range []frameCase{
-		{"a CALL with a source route and a retry budget of 2^53 - 1",
-			frameWith(frameWith(call, "source_route", route), "retry_budget", cbor.Uint64(maxProtocolInt-1)), verifyRequest},
-		{"a RESULT with a reverse source route", frameWith(result, "source_route_reverse", route), verifyReply},
-		{"a relay ERROR with a partial source route", frameWith(relay, "source_route_partial", route), verifyRelayError},
-		{"a provider's STREAM_DATA", providerData, verifyProviderStream},
-		{"a caller's STREAM_DATA", callerData, verifyCallerStream},
-	} {
+	verifiers := signedFrameVerifiersFor(t)
+	for _, c := range verifiers.acceptedCases() {
 		if err := c.verify(c.frame); err != nil {
 			t.Errorf("%s: %v, want it verified", c.name, err)
 		}
 	}
-	for _, c := range []frameCase{
-		{"a CALL of another version", frameWith(call, "version", otherVersion), verifyRequest},
-		{"a CALL without its version", frameWithout(call, "version"), verifyRequest},
-		{"a CALL with a null source route", frameWith(call, "source_route", cbor.Null()), verifyRequest},
-		{"a CALL with a source route as text", frameWith(call, "source_route", cbor.Text("a route")), verifyRequest},
-		{"a CALL with a null retry budget", frameWith(call, "retry_budget", cbor.Null()), verifyRequest},
-		{"a CALL with a retry budget of 2^53", frameWith(call, "retry_budget", cbor.Uint64(maxProtocolInt)), verifyRequest},
-		{"a CALL with a reply's reverse source route", frameWith(call, "source_route_reverse", route), verifyRequest},
-		{"a RESULT of another version", frameWith(result, "version", otherVersion), verifyReply},
-		{"a RESULT without its version", frameWithout(result, "version"), verifyReply},
-		{"a RESULT with a null reverse source route", frameWith(result, "source_route_reverse", cbor.Null()), verifyReply},
-		{"a RESULT with a relay error's partial source route", frameWith(result, "source_route_partial", route), verifyReply},
-		{"a relay ERROR of another version", frameWith(relay, "version", otherVersion), verifyRelayError},
-		{"a relay ERROR without its version", frameWithout(relay, "version"), verifyRelayError},
-		{"a relay ERROR with a partial source route as text", frameWith(relay, "source_route_partial", cbor.Text("a route")), verifyRelayError},
-		{"a relay ERROR with a request's source route", frameWith(relay, "source_route", route), verifyRelayError},
-		{"a provider's STREAM_DATA of another version", frameWith(providerData, "version", otherVersion), verifyProviderStream},
-		{"a provider's STREAM_DATA without its version", frameWithout(providerData, "version"), verifyProviderStream},
-		{"a provider's STREAM_DATA with a partial source route", frameWith(providerData, "source_route_partial", route), verifyProviderStream},
-		{"a caller's STREAM_DATA of another version", frameWith(callerData, "version", otherVersion), verifyCallerStream},
-		{"a caller's STREAM_DATA without its version", frameWithout(callerData, "version"), verifyCallerStream},
-		{"a caller's STREAM_DATA with a source route", frameWith(callerData, "source_route", route), verifyCallerStream},
-	} {
+	for _, c := range verifiers.refusedCases() {
 		wantRefusal(t, c.name, c.verify(c.frame), ErrMalformedFrame)
+	}
+}
+
+// signedFrameCase is a frame and the verifier its kind is held to.
+type signedFrameCase struct {
+	name   string
+	frame  cbor.Value
+	verify func(cbor.Value) error
+}
+
+// signedFrameVerifiers holds one signed frame of each kind and the verifier
+// each kind is read by, all over the same request and stream.
+type signedFrameVerifiers struct {
+	call, result, relay, providerData, callerData cbor.Value
+	verify                                        signedFrameVerify
+}
+
+// signedFrameVerify is the five frame verifiers, each closed over the signed
+// objects it needs.
+type signedFrameVerify struct {
+	call, reply, relayError, providerStream, callerStream func(cbor.Value) error
+}
+
+func signedFrameVerifiersFor(t *testing.T) signedFrameVerifiers {
+	t.Helper()
+	keys := requestKeysFor(t)
+	request := verifiedCall(t, keys)
+	open := streamOpenOf(t, keys, Bidi, idOf(7))
+	station := keys.station.KeyID()
+	verify := signedFrameVerify{
+		call: func(v cbor.Value) error {
+			_, err := VerifyRequest(onWire(t, v), profile.PQPure)
+			return err
+		},
+		reply: func(v cbor.Value) error {
+			_, err := VerifyReply(onWire(t, v), request, profile.PQPure)
+			return err
+		},
+		relayError: func(v cbor.Value) error {
+			_, err := VerifyRelayError(onWire(t, v), request, profile.PQPure, station)
+			return err
+		},
+		providerStream: func(v cbor.Value) error {
+			_, _, err := verifyProvider(t, v, streamStateOf(t, open))
+			return err
+		},
+		callerStream: func(v cbor.Value) error {
+			_, _, err := verifyCaller(t, v, streamStateOf(t, open))
+			return err
+		},
+	}
+	return signedFrameVerifiers{
+		call:         must[cbor.Value](t)(SignCall(callSpec(keys), keys.caller)),
+		result:       must[cbor.Value](t)(SignResult(request, cbor.Uint64(1), nil, keys.provider)),
+		relay:        must[cbor.Value](t)(SignRelayError(RelayErrorSpec{FrameType: frameTypeError, Request: request, Code: "unknown_next_peer"}, keys.station)),
+		providerData: must[cbor.Value](t)(SignProviderStream(streamChunk(0), open, keys.provider)),
+		callerData:   must[cbor.Value](t)(SignCallerStream(streamChunk(0), open, keys.caller)),
+		verify:       verify,
+	}
+}
+
+// acceptedCases are the frames that verify: the routing fields their kind
+// carries, and a retry budget of 2^53 - 1.
+func (f signedFrameVerifiers) acceptedCases() []signedFrameCase {
+	route := cbor.Bytes([]byte{1, 2})
+	return []signedFrameCase{
+		{"a CALL with a source route and a retry budget of 2^53 - 1",
+			frameWith(frameWith(f.call, "source_route", route), "retry_budget", cbor.Uint64(maxProtocolInt-1)), f.verify.call},
+		{"a RESULT with a reverse source route", frameWith(f.result, "source_route_reverse", route), f.verify.reply},
+		{"a relay ERROR with a partial source route", frameWith(f.relay, "source_route_partial", route), f.verify.relayError},
+		{"a provider's STREAM_DATA", f.providerData, f.verify.providerStream},
+		{"a caller's STREAM_DATA", f.callerData, f.verify.callerStream},
+	}
+}
+
+// refusedCases are the frames whose version, routing field or retry budget
+// each rule refuses as malformed.
+func (f signedFrameVerifiers) refusedCases() []signedFrameCase {
+	route, otherVersion := cbor.Bytes([]byte{1, 2}), cbor.Uint64(ProtocolVersion+1)
+	return []signedFrameCase{
+		{"a CALL of another version", frameWith(f.call, "version", otherVersion), f.verify.call},
+		{"a CALL without its version", frameWithout(f.call, "version"), f.verify.call},
+		{"a CALL with a null source route", frameWith(f.call, "source_route", cbor.Null()), f.verify.call},
+		{"a CALL with a source route as text", frameWith(f.call, "source_route", cbor.Text("a route")), f.verify.call},
+		{"a CALL with a null retry budget", frameWith(f.call, "retry_budget", cbor.Null()), f.verify.call},
+		{"a CALL with a retry budget of 2^53", frameWith(f.call, "retry_budget", cbor.Uint64(maxProtocolInt)), f.verify.call},
+		{"a CALL with a reply's reverse source route", frameWith(f.call, "source_route_reverse", route), f.verify.call},
+		{"a RESULT of another version", frameWith(f.result, "version", otherVersion), f.verify.reply},
+		{"a RESULT without its version", frameWithout(f.result, "version"), f.verify.reply},
+		{"a RESULT with a null reverse source route", frameWith(f.result, "source_route_reverse", cbor.Null()), f.verify.reply},
+		{"a RESULT with a relay error's partial source route", frameWith(f.result, "source_route_partial", route), f.verify.reply},
+		{"a relay ERROR of another version", frameWith(f.relay, "version", otherVersion), f.verify.relayError},
+		{"a relay ERROR without its version", frameWithout(f.relay, "version"), f.verify.relayError},
+		{"a relay ERROR with a partial source route as text", frameWith(f.relay, "source_route_partial", cbor.Text("a route")), f.verify.relayError},
+		{"a relay ERROR with a request's source route", frameWith(f.relay, "source_route", route), f.verify.relayError},
+		{"a provider's STREAM_DATA of another version", frameWith(f.providerData, "version", otherVersion), f.verify.providerStream},
+		{"a provider's STREAM_DATA without its version", frameWithout(f.providerData, "version"), f.verify.providerStream},
+		{"a provider's STREAM_DATA with a partial source route", frameWith(f.providerData, "source_route_partial", route), f.verify.providerStream},
+		{"a caller's STREAM_DATA of another version", frameWith(f.callerData, "version", otherVersion), f.verify.callerStream},
+		{"a caller's STREAM_DATA without its version", frameWithout(f.callerData, "version"), f.verify.callerStream},
+		{"a caller's STREAM_DATA with a source route", frameWith(f.callerData, "source_route", route), f.verify.callerStream},
 	}
 }
 

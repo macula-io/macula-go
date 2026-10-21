@@ -471,6 +471,23 @@ func (p *Pool) fetchFrom(ctx context.Context, realm [32]byte, s sharer, mcid man
 // fetchChunks fetches every chunk of m, o.Parallel at a time, each checked
 // against its own content id, then the whole against m.
 func fetchChunks(ctx context.Context, link *stationlink.Link, realm [32]byte, s sharer, m manifest.Manifest, o ContentOptions) ([]byte, error) {
+	parts, err := fetchParts(ctx, link, realm, s, m, o)
+	if err != nil {
+		return nil, err
+	}
+	whole := make([]byte, 0, m.Size)
+	for _, part := range parts {
+		whole = append(whole, part...)
+	}
+	if err := manifest.Verify(m, whole); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrContentMismatch, err)
+	}
+	return whole, nil
+}
+
+// fetchParts fetches every chunk of m, o.Parallel at a time, and stops the
+// rest at the first refusal.
+func fetchParts(ctx context.Context, link *stationlink.Link, realm [32]byte, s sharer, m manifest.Manifest, o ContentOptions) ([][]byte, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	parts := make([][]byte, m.ChunkCount)
@@ -482,14 +499,7 @@ func fetchChunks(ctx context.Context, link *stationlink.Link, realm [32]byte, s 
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				chunkMcid, _ := manifest.ChunkMcid(m, i)
-				_, body, err := fetchOne(ctx, link, realm, s, chunkMcid, "block", o.ChunkTimeout)
-				b, _ := wireBytes(body, "bytes")
-				switch {
-				case err != nil:
-				case manifest.BlockMcid(b) != chunkMcid:
-					err = fmt.Errorf("%w: chunk %d", ErrContentMismatch, i)
-				}
+				b, err := fetchChunk(ctx, link, realm, s, m, i, o.ChunkTimeout)
 				if err != nil {
 					errs <- err
 					cancel()
@@ -499,32 +509,44 @@ func fetchChunks(ctx context.Context, link *stationlink.Link, realm [32]byte, s 
 			}
 		}()
 	}
-	for i := range m.ChunkCount {
-		select {
-		case next <- i:
-		case <-ctx.Done():
-		}
-		if ctx.Err() != nil {
-			break
-		}
-	}
-	close(next)
+	feedChunks(ctx, next, m.ChunkCount)
 	wg.Wait()
 	close(errs)
 	if err := <-errs; err != nil {
 		return nil, err
 	}
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	whole := make([]byte, 0, m.Size)
-	for _, part := range parts {
-		whole = append(whole, part...)
+	return parts, nil
+}
+
+// feedChunks hands out chunk indexes until they run out or ctx ends.
+func feedChunks(ctx context.Context, next chan<- int, count int) {
+	defer close(next)
+	for i := range count {
+		select {
+		case next <- i:
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			return
+		}
 	}
-	if err := manifest.Verify(m, whole); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrContentMismatch, err)
+}
+
+// fetchChunk is one chunk's body, checked against its own content id.
+func fetchChunk(ctx context.Context, link *stationlink.Link, realm [32]byte, s sharer, m manifest.Manifest, i int, timeout time.Duration) ([]byte, error) {
+	chunkMcid, _ := manifest.ChunkMcid(m, i)
+	_, body, err := fetchOne(ctx, link, realm, s, chunkMcid, "block", timeout)
+	b, _ := wireBytes(body, "bytes")
+	switch {
+	case err != nil:
+		return nil, err
+	case manifest.BlockMcid(b) != chunkMcid:
+		return nil, fmt.Errorf("%w: chunk %d", ErrContentMismatch, i)
 	}
-	return whole, nil
+	return b, nil
 }
 
 // fetchOne asks a sharer for want of mcid on a stream of its own and reads its

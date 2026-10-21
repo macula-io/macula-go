@@ -363,6 +363,21 @@ func chunkInfoToWire(c ChunkInfo) cbor.Value {
 // refused. Nothing is allocated from the size or count it claims: only the
 // chunks it lists, which the frame bounds, are read.
 func FromWire(v cbor.Value) (Manifest, error) {
+	m, err := manifestFields(v)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if m.Chunks, err = chunksFromWire(v); err != nil {
+		return Manifest{}, err
+	}
+	if err := CheckWhole(m); err != nil {
+		return Manifest{}, fmt.Errorf("manifest: from_wire: %w", err)
+	}
+	return m, nil
+}
+
+// manifestFields reads every field of a manifest but its chunks.
+func manifestFields(v cbor.Value) (Manifest, error) {
 	mcidB, err := getBytesExact(v, "mcid", len(Mcid{}))
 	if err != nil {
 		return Manifest{}, err
@@ -405,32 +420,32 @@ func FromWire(v cbor.Value) (Manifest, error) {
 	var rootHash Hash
 	copy(rootHash[:], rootHashB)
 
+	return Manifest{
+		Mcid: mcid, Version: uint32(version), Name: name, Size: size, Created: created,
+		ChunkSize: int(chunkSize), ChunkCount: int(chunkCount),
+		HashAlgorithm: algorithm, RootHash: rootHash,
+	}, nil
+}
+
+// chunksFromWire reads the chunks a manifest lists, and nothing beyond them.
+func chunksFromWire(v cbor.Value) ([]ChunkInfo, error) {
 	chunksVal, ok := v.Get("chunks")
 	if !ok {
-		return Manifest{}, fmt.Errorf("manifest: from_wire: missing field \"chunks\"")
+		return nil, fmt.Errorf("manifest: from_wire: missing field \"chunks\"")
 	}
 	chunkItems, ok := chunksVal.AsList()
 	if !ok {
-		return Manifest{}, fmt.Errorf("manifest: from_wire: field \"chunks\" has the wrong type")
+		return nil, fmt.Errorf("manifest: from_wire: field \"chunks\" has the wrong type")
 	}
 	chunks := make([]ChunkInfo, len(chunkItems))
 	for i, item := range chunkItems {
 		c, err := chunkInfoFromWire(item)
 		if err != nil {
-			return Manifest{}, err
+			return nil, err
 		}
 		chunks[i] = c
 	}
-
-	m := Manifest{
-		Mcid: mcid, Version: uint32(version), Name: name, Size: size, Created: created,
-		ChunkSize: int(chunkSize), ChunkCount: int(chunkCount),
-		HashAlgorithm: algorithm, RootHash: rootHash, Chunks: chunks,
-	}
-	if err := CheckWhole(m); err != nil {
-		return Manifest{}, fmt.Errorf("manifest: from_wire: %w", err)
-	}
-	return m, nil
+	return chunks, nil
 }
 
 // wireAlgorithm reads a manifest's hash_algorithm the way macula_manifest's

@@ -123,55 +123,75 @@ func TestASealedCallEndToEnd(t *testing.T) {
 func TestSealedStreamsEndToEnd(t *testing.T) {
 	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
 		t.Run(string(p), func(t *testing.T) {
-			w := newSealedWorld(t, p, "sealed streams")
-			w.serve(t, stationlink.Offer{Procedure: "mcl-vault/watch", Stream: &stationlink.StreamOffer{Mode: frame.Bidi,
-				Handler: func(ctx context.Context, s *stationlink.Stream) error {
-					if text, _ := s.Request().Payload.AsText(); text != "open sesame" {
-						return errors.New("the open's payload did not open")
-					}
-					event, err := s.Recv(ctx)
-					if err != nil {
-						return err
-					}
-					body, _ := event.Body.AsBytes()
-					if err := s.Send(append([]byte("echo "), body...)); err != nil {
-						return err
-					}
-					if err := s.SendValue(cbor.Map([]cbor.MapEntry{{Key: cbor.Text("n"), Val: cbor.Uint64(7)}})); err != nil {
-						return err
-					}
-					return s.Reply(cbor.Text("done"))
-				}}})
-			stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-vault/watch",
-				Target: w.provider.NodeID(), Mode: frame.Bidi, Payload: cbor.Text("open sesame"), SealTo: w.key()})
-			if err != nil {
-				t.Fatalf("OpenStream: %v", err)
-			}
-			if err := stream.Send([]byte("hello")); err != nil {
-				t.Fatal(err)
-			}
-			for _, want := range []string{"echo hello", "n=7", "reply done"} {
-				event, err := recv(t, stream)
-				if err != nil {
-					t.Fatalf("%s: %v", want, err)
-				}
-				switch want {
-				case "echo hello":
-					if body, _ := event.Body.AsBytes(); string(body) != want {
-						t.Errorf("the raw chunk: %q", body)
-					}
-				case "n=7":
-					n, _ := event.Body.Get("n")
-					if v, _ := n.AsInt64(); v != 7 {
-						t.Errorf("the structured chunk: %v", event.Body)
-					}
-				case "reply done":
-					if text, _ := event.Payload.AsText(); event.Kind != stationlink.StreamReply || text != "done" {
-						t.Errorf("the reply: %+v", event)
-					}
-				}
-			}
+			assertSealedStreamsSealBothWays(t, p)
 		})
+	}
+}
+
+// assertSealedStreamsSealBothWays opens a sealed bidi stream on a provider for
+// p and checks every mode seals: the open's payload and a raw chunk open at
+// the provider, and its raw chunk, structured value and reply open at the
+// caller.
+func assertSealedStreamsSealBothWays(t *testing.T, p profile.Profile) {
+	t.Helper()
+	w := newSealedWorld(t, p, "sealed streams")
+	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/watch", Stream: &stationlink.StreamOffer{Mode: frame.Bidi,
+		Handler: sealedWatchHandler}})
+	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-vault/watch",
+		Target: w.provider.NodeID(), Mode: frame.Bidi, Payload: cbor.Text("open sesame"), SealTo: w.key()})
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	if err := stream.Send([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	assertSealedWatchAnswers(t, stream)
+}
+
+// sealedWatchHandler is the provider's side: it refuses an open whose payload
+// did not open, then echoes a raw chunk, sends a structured one and replies.
+func sealedWatchHandler(ctx context.Context, s *stationlink.Stream) error {
+	if text, _ := s.Request().Payload.AsText(); text != "open sesame" {
+		return errors.New("the open's payload did not open")
+	}
+	event, err := s.Recv(ctx)
+	if err != nil {
+		return err
+	}
+	body, _ := event.Body.AsBytes()
+	if err := s.Send(append([]byte("echo "), body...)); err != nil {
+		return err
+	}
+	if err := s.SendValue(cbor.Map([]cbor.MapEntry{{Key: cbor.Text("n"), Val: cbor.Uint64(7)}})); err != nil {
+		return err
+	}
+	return s.Reply(cbor.Text("done"))
+}
+
+// assertSealedWatchAnswers reads the raw chunk, the structured chunk and the
+// reply the provider sent, each as it opened at the caller.
+func assertSealedWatchAnswers(t *testing.T, stream *stationlink.Stream) {
+	t.Helper()
+	for _, want := range []string{"echo hello", "n=7", "reply done"} {
+		event, err := recv(t, stream)
+		if err != nil {
+			t.Fatalf("%s: %v", want, err)
+		}
+		switch want {
+		case "echo hello":
+			if body, _ := event.Body.AsBytes(); string(body) != want {
+				t.Errorf("the raw chunk: %q", body)
+			}
+		case "n=7":
+			n, _ := event.Body.Get("n")
+			if v, _ := n.AsInt64(); v != 7 {
+				t.Errorf("the structured chunk: %v", event.Body)
+			}
+		case "reply done":
+			if text, _ := event.Payload.AsText(); event.Kind != stationlink.StreamReply || text != "done" {
+				t.Errorf("the reply: %+v", event)
+			}
+		}
 	}
 }
 
@@ -289,26 +309,9 @@ func TestASealedStreamOutlivesItsKey(t *testing.T) {
 	proceed := make(chan struct{})
 	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/long", Confidential: stationlink.ConfidentialRequired,
 		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: func(ctx context.Context, s *stationlink.Stream) error {
-			if err := s.Send([]byte("before")); err != nil {
-				return err
-			}
-			<-proceed
-			event, err := s.Recv(ctx)
-			if err != nil {
-				return err
-			}
-			body, _ := event.Body.AsBytes()
-			return s.Send(append([]byte("after "), body...))
+			return sendBeforeAndAfter(ctx, s, proceed)
 		}}})
-	clear, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-vault/long",
-		Target: w.provider.NodeID(), Mode: frame.Bidi, Payload: cbor.Map(nil), Clear: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var streamErr *stationlink.StreamError
-	if _, err := recv(t, clear); !errors.As(err, &streamErr) || streamErr.Code != "sealed_required" {
-		t.Errorf("a clear open to a required stream: %v", err)
-	}
+	assertAClearOpenToARequiredStreamIsRefused(t, w)
 
 	first := w.ring.CurrentID()
 	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-vault/long",
@@ -316,9 +319,7 @@ func TestASealedStreamOutlivesItsKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event, err := recv(t, stream); err != nil || string(must[[]byte](t)(bytesOf(event.Body))) != "before" {
-		t.Fatalf("before the rotation: %+v, %v", event, err)
-	}
+	assertRawChunkIs(t, stream, "before the rotation", "before")
 	// The key rotates at its first use past its lifetime (an advertisement
 	// renewal reads it every few minutes), and is forgotten 30 minutes on.
 	w.clock.advance(seal.KeyLifetime)
@@ -333,9 +334,53 @@ func TestASealedStreamOutlivesItsKey(t *testing.T) {
 	if err := stream.Send([]byte("rotation")); err != nil {
 		t.Fatal(err)
 	}
-	if event, err := recv(t, stream); err != nil || string(must[[]byte](t)(bytesOf(event.Body))) != "after rotation" {
-		t.Fatalf("after the rotation: %+v, %v", event, err)
+	assertRawChunkIs(t, stream, "after the rotation", "after rotation")
+	assertStreamHasEnded(t, stream)
+}
+
+// sendBeforeAndAfter sends "before", waits for proceed, then answers the
+// caller's chunk as "after <chunk>": a bidi stream that lives through a key
+// rotation.
+func sendBeforeAndAfter(ctx context.Context, s *stationlink.Stream, proceed <-chan struct{}) error {
+	if err := s.Send([]byte("before")); err != nil {
+		return err
 	}
+	<-proceed
+	event, err := s.Recv(ctx)
+	if err != nil {
+		return err
+	}
+	body, _ := event.Body.AsBytes()
+	return s.Send(append([]byte("after "), body...))
+}
+
+// assertAClearOpenToARequiredStreamIsRefused checks a clear open to a required
+// stream ends with sealed_required.
+func assertAClearOpenToARequiredStreamIsRefused(t *testing.T, w sealedWorld) {
+	t.Helper()
+	clear, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-vault/long",
+		Target: w.provider.NodeID(), Mode: frame.Bidi, Payload: cbor.Map(nil), Clear: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var streamErr *stationlink.StreamError
+	if _, err := recv(t, clear); !errors.As(err, &streamErr) || streamErr.Code != "sealed_required" {
+		t.Errorf("a clear open to a required stream: %v", err)
+	}
+}
+
+// assertRawChunkIs checks the next event on stream is the raw chunk want,
+// failing with where it was expected.
+func assertRawChunkIs(t *testing.T, stream *stationlink.Stream, when, want string) {
+	t.Helper()
+	if event, err := recv(t, stream); err != nil || string(must[[]byte](t)(bytesOf(event.Body))) != want {
+		t.Fatalf("%s: %+v, %v", when, event, err)
+	}
+}
+
+// assertStreamHasEnded checks the stream's next event is its end.
+func assertStreamHasEnded(t *testing.T, stream *stationlink.Stream) {
+	t.Helper()
 	if _, err := recv(t, stream); err != nil && !errors.Is(err, io.EOF) {
 		var ended *stationlink.StreamError
 		if !errors.As(err, &ended) {

@@ -22,33 +22,47 @@ func counted(name string, before map[string]uint64) uint64 {
 func TestALinkConnectsOnVersion5AndSignsNoFrame(t *testing.T) {
 	for _, p := range profiles {
 		t.Run(string(p), func(t *testing.T) {
-			before := HandshakeCounters()
-			s := startTestStationAs(t, p, "wire 1.0 station "+string(p))
-			link, err := dial(t, s, newClient(t, p))
-			if err != nil {
-				t.Fatalf("Dial: %v", err)
-			}
-			s.waitAccepted()
-			if link.HandshakeVersion() != 5 || s.client.Version != 5 {
-				t.Fatalf("versions: link %d, station %d, want 5", link.HandshakeVersion(), s.client.Version)
-			}
-			if counted("connections", before) != 1 {
-				t.Errorf("counters %v, want one connection", HandshakeCounters())
-			}
-			if floors.of(s.nodeID) != 5 {
-				t.Errorf("the floor for the station is %d, want 5 once a handshake completed", floors.of(s.nodeID))
-			}
-			if err := link.Close("client_stop"); err != nil {
-				t.Fatalf("Close: %v", err)
-			}
-			goodbye, err := frame.ReadControl(decodeFrame(t, s.next()))
-			if err != nil {
-				t.Fatalf("the GOODBYE: %v", err)
-			}
-			if reason, _ := frameField(goodbye, "reason").AsText(); reason != "client_stop" {
-				t.Errorf("GOODBYE reason %q", reason)
-			}
+			assertLinkConnectsOnVersion5(t, p)
 		})
+	}
+}
+
+// assertLinkConnectsOnVersion5 dials a station for p and checks the handshake
+// completes at version 5 on both sides: one connection counted, the station's
+// floor kept at 5, and the GOODBYE naming its reason and signing nothing.
+func assertLinkConnectsOnVersion5(t *testing.T, p profile.Profile) {
+	t.Helper()
+	before := HandshakeCounters()
+	s := startTestStationAs(t, p, "wire 1.0 station "+string(p))
+	link, err := dial(t, s, newClient(t, p))
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	s.waitAccepted()
+	if link.HandshakeVersion() != 5 || s.client.Version != 5 {
+		t.Fatalf("versions: link %d, station %d, want 5", link.HandshakeVersion(), s.client.Version)
+	}
+	if counted("connections", before) != 1 {
+		t.Errorf("counters %v, want one connection", HandshakeCounters())
+	}
+	if floors.of(s.nodeID) != 5 {
+		t.Errorf("the floor for the station is %d, want 5 once a handshake completed", floors.of(s.nodeID))
+	}
+	if err := link.Close("client_stop"); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	assertGoodbyeNames(t, s.next(), "client_stop")
+}
+
+// assertGoodbyeNames checks raw is a GOODBYE whose reason is want.
+func assertGoodbyeNames(t *testing.T, raw []byte, want string) {
+	t.Helper()
+	goodbye, err := frame.ReadControl(decodeFrame(t, raw))
+	if err != nil {
+		t.Fatalf("the GOODBYE: %v", err)
+	}
+	if reason, _ := frameField(goodbye, "reason").AsText(); reason != want {
+		t.Errorf("GOODBYE reason %q", reason)
 	}
 }
 

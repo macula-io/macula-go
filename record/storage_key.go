@@ -74,6 +74,19 @@ func ProcedureDelegationKey(orgKeyID, advertiser [32]byte) [32]byte {
 // derives it from the payload, the subject and the signer's key id.
 func slotKey(t int64, payload cbor.Value, subject []byte, hasSubject bool, r Record) ([32]byte, error) {
 	fields := slotReader{payload: payload, record: r, recordType: t}
+	key, err := slotOfType(t, &fields, subject, hasSubject)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	if fields.err != nil {
+		return [32]byte{}, fields.err
+	}
+	return key, nil
+}
+
+// slotOfType derives the storage key of one record type from the fields it
+// names.
+func slotOfType(t int64, fields *slotReader, subject []byte, hasSubject bool) ([32]byte, error) {
 	var key [32]byte
 	switch {
 	case t == int64(TypeNodeRecord):
@@ -115,9 +128,6 @@ func slotKey(t int64, payload cbor.Value, subject []byte, hasSubject bool, r Rec
 		return [32]byte{}, fmt.Errorf("%w: type %#02x", ErrSubjectMissing, t)
 	default:
 		return [32]byte{}, fmt.Errorf("%w: no storage key for type %#02x", ErrMalformed, t)
-	}
-	if fields.err != nil {
-		return [32]byte{}, fields.err
 	}
 	return key, nil
 }

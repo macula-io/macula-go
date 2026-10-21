@@ -71,71 +71,87 @@ func vectorObjects(t *testing.T) map[string][]byte {
 
 func TestTheWireOneReaderVectors(t *testing.T) {
 	for _, class := range []string{"verify", "check_order"} {
-		f, err := wire10vectors.Load(class)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, c := range f.Cases {
+		for _, c := range readWireOneCases(t, class) {
 			if role := c.ExpectText("role"); role != "" && role != "reader" {
 				continue
 			}
 			t.Run(c.ID, func(t *testing.T) {
-				wire, err := c.Hex("object")
-				if err != nil {
-					t.Fatal(err)
-				}
-				before := frame.WireCounters().ExtIgnored
-				_, err = Verify(wire, profile.Profile(c.Profile), c.Int("now_ms"))
-				switch c.Outcome() {
-				case "accept":
-					if err != nil {
-						t.Fatalf("%v, want it verified", err)
-					}
-					if c.ExpectText("count") == "wire_ext_ignored" && sum(frame.WireCounters().ExtIgnored) == sum(before) {
-						t.Errorf("wire_ext_ignored did not count")
-					}
-				case "refuse":
-					wantRefusalNamed(t, err, c.Reason())
-				default:
-					t.Fatalf("outcome %q has no check here", c.Outcome())
-				}
+				checkReaderVector(t, c)
 			})
 		}
+	}
+}
+
+// readWireOneCases is the cases of one wire 1.0 vector class.
+func readWireOneCases(t *testing.T, class string) []wire10vectors.Case {
+	t.Helper()
+	f, err := wire10vectors.Load(class)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f.Cases
+}
+
+// checkReaderVector holds Verify to one reader vector's verdict, and a counted
+// extension where the vector names one.
+func checkReaderVector(t *testing.T, c wire10vectors.Case) {
+	t.Helper()
+	wire, err := c.Hex("object")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := frame.WireCounters().ExtIgnored
+	_, err = Verify(wire, profile.Profile(c.Profile), c.Int("now_ms"))
+	switch c.Outcome() {
+	case "accept":
+		if err != nil {
+			t.Fatalf("%v, want it verified", err)
+		}
+		if c.ExpectText("count") == "wire_ext_ignored" && sum(frame.WireCounters().ExtIgnored) == sum(before) {
+			t.Errorf("wire_ext_ignored did not count")
+		}
+	case "refuse":
+		wantRefusalNamed(t, err, c.Reason())
+	default:
+		t.Fatalf("outcome %q has no check here", c.Outcome())
 	}
 }
 
 func TestTheWireOneCustodianVectors(t *testing.T) {
 	objects := vectorObjects(t)
 	for _, class := range []string{"custodian", "check_order"} {
-		f, err := wire10vectors.Load(class)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, c := range f.Cases {
+		for _, c := range readWireOneCases(t, class) {
 			if role := c.ExpectText("role"); class == "check_order" && role != "custodian" {
 				continue
 			}
 			t.Run(c.ID, func(t *testing.T) {
-				wire := objects[c.Text("object_of")]
-				if c.Text("object") != "" {
-					wire, _ = hex.DecodeString(c.Text("object"))
-				}
-				if wire == nil {
-					t.Fatalf("no object for %s", c.Text("object_of"))
-				}
-				_, err := CheckAsCustodian(wire, profile.Profile(c.Profile), c.Int("now_ms"))
-				switch c.Outcome() {
-				case "store":
-					if err != nil {
-						t.Fatalf("%v, want it stored", err)
-					}
-				case "refuse":
-					wantRefusalNamed(t, err, c.Reason())
-				default:
-					t.Fatalf("outcome %q has no check here", c.Outcome())
-				}
+				checkCustodianVector(t, objects, c)
 			})
 		}
+	}
+}
+
+// checkCustodianVector holds CheckAsCustodian to one custodian vector's
+// verdict, over the object the vector names or carries.
+func checkCustodianVector(t *testing.T, objects map[string][]byte, c wire10vectors.Case) {
+	t.Helper()
+	wire := objects[c.Text("object_of")]
+	if c.Text("object") != "" {
+		wire, _ = hex.DecodeString(c.Text("object"))
+	}
+	if wire == nil {
+		t.Fatalf("no object for %s", c.Text("object_of"))
+	}
+	_, err := CheckAsCustodian(wire, profile.Profile(c.Profile), c.Int("now_ms"))
+	switch c.Outcome() {
+	case "store":
+		if err != nil {
+			t.Fatalf("%v, want it stored", err)
+		}
+	case "refuse":
+		wantRefusalNamed(t, err, c.Reason())
+	default:
+		t.Fatalf("outcome %q has no check here", c.Outcome())
 	}
 }
 

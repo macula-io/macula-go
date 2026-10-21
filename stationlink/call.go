@@ -120,51 +120,18 @@ func (l *Link) Call(ctx context.Context, c Call) (cbor.Value, error) {
 	if err := l.stated(c.Target, c.SealTo, c.Clear); err != nil {
 		return cbor.Value{}, err
 	}
-	timeout := min(max(c.Timeout, 0), MaxCallTimeout)
-	if timeout == 0 {
-		timeout = DefaultCallTimeout
-	}
-	target := c.Target
-	if target == ([32]byte{}) {
-		target = l.station.NodeID
-	}
-	var id [16]byte
-	if _, err := rand.Read(id[:]); err != nil {
-		return cbor.Value{}, err
-	}
-	spec := frame.RequestSpec{
-		RequestID: id, Realm: c.Realm, Procedure: c.Procedure, Target: target,
-		Deadline: uint64(time.Now().Add(timeout).UnixMilli()), Payload: c.Payload, Token: c.Token, Proofs: c.Proofs,
-	}
-	var sealing *callSeal
-	if c.SealTo != nil {
-		s, err := l.sealRequest(&spec, seal.FrameCall, c.SealTo)
-		if err != nil {
-			return cbor.Value{}, err
-		}
-		sealing = s
-	}
-	signed, err := frame.SignCall(spec, l.key)
+	id, pending, wire, err := l.prepareCall(c)
 	if err != nil {
 		return cbor.Value{}, err
 	}
-	request, err := frame.VerifyRequest(signed, l.profile)
-	if err != nil {
-		return cbor.Value{}, err
-	}
-	pending := &pendingCall{request: request, seal: sealing, outcome: make(chan callOutcome, 1)}
 	l.mu.Lock()
 	l.pending[id] = pending
 	l.mu.Unlock()
-	defer func() {
-		l.mu.Lock()
-		delete(l.pending, id)
-		l.mu.Unlock()
-	}()
-	if err := l.writer.write(cbor.Encode(signed), MaxFrameBytes); err != nil {
+	defer l.forgetCall(id)
+	if err := l.writer.write(cbor.Encode(wire), MaxFrameBytes); err != nil {
 		return cbor.Value{}, err
 	}
-	timer := time.NewTimer(timeout)
+	timer := time.NewTimer(callTimeout(c.Timeout))
 	defer timer.Stop()
 	select {
 	case outcome := <-pending.outcome:
@@ -176,6 +143,56 @@ func (l *Link) Call(ctx context.Context, c Call) (cbor.Value, error) {
 	case <-l.done:
 		return cbor.Value{}, l.Err()
 	}
+}
+
+// callTimeout is a call's deadline, clamped to MaxCallTimeout and defaulted.
+func callTimeout(t time.Duration) time.Duration {
+	timeout := min(max(t, 0), MaxCallTimeout)
+	if timeout == 0 {
+		return DefaultCallTimeout
+	}
+	return timeout
+}
+
+// prepareCall signs c as a CALL and returns the request id, the pending entry
+// that waits for its reply, and the frame to send.
+func (l *Link) prepareCall(c Call) ([16]byte, *pendingCall, cbor.Value, error) {
+	target := c.Target
+	if target == ([32]byte{}) {
+		target = l.station.NodeID
+	}
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return id, nil, cbor.Value{}, err
+	}
+	spec := frame.RequestSpec{
+		RequestID: id, Realm: c.Realm, Procedure: c.Procedure, Target: target,
+		Deadline: uint64(time.Now().Add(callTimeout(c.Timeout)).UnixMilli()), Payload: c.Payload, Token: c.Token, Proofs: c.Proofs,
+	}
+	var sealing *callSeal
+	if c.SealTo != nil {
+		s, err := l.sealRequest(&spec, seal.FrameCall, c.SealTo)
+		if err != nil {
+			return id, nil, cbor.Value{}, err
+		}
+		sealing = s
+	}
+	signed, err := frame.SignCall(spec, l.key)
+	if err != nil {
+		return id, nil, cbor.Value{}, err
+	}
+	request, err := frame.VerifyRequest(signed, l.profile)
+	if err != nil {
+		return id, nil, cbor.Value{}, err
+	}
+	return id, &pendingCall{request: request, seal: sealing, outcome: make(chan callOutcome, 1)}, signed, nil
+}
+
+// forgetCall drops a call's pending entry once it is over.
+func (l *Link) forgetCall(id [16]byte) {
+	l.mu.Lock()
+	delete(l.pending, id)
+	l.mu.Unlock()
 }
 
 // replied matches a RESULT or ERROR to its pending call by the ids it claims,
@@ -211,30 +228,35 @@ func (l *Link) replied(v cbor.Value) {
 }
 
 func (l *Link) verifiedOutcome(v cbor.Value, pending *pendingCall) (callOutcome, error) {
-	request := pending.request
 	if _, isReply := v.Get("reply"); isReply {
-		reply, err := frame.VerifyReply(v, request, l.profile)
-		if err != nil {
-			return callOutcome{}, err
-		}
-		if pending.seal != nil {
-			return pending.seal.sealedOutcome(reply, request.RequestHash), nil
-		}
-		if reply.Sealed != nil {
-			// This node sealed nothing, so a sealed reply answers no request
-			// it made as the provider sealed it.
-			return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: codeSealedRefused}}, nil
-		}
-		if reply.FrameType == "result" {
-			return callOutcome{payload: reply.Payload}, nil
-		}
-		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: reply.Code, Detail: reply.Detail}}, nil
+		return l.verifiedReply(v, pending)
 	}
-	relayed, err := frame.VerifyRelayError(v, request, l.profile, l.station.NodeID)
+	relayed, err := frame.VerifyRelayError(v, pending.request, l.profile, l.station.NodeID)
 	if err != nil {
 		return callOutcome{}, err
 	}
 	return callOutcome{err: &RelayError{ReportedBy: relayed.ReportedBy, Code: relayed.Code}}, nil
+}
+
+// verifiedReply is a RESULT or ERROR, matched to the call's request and, when
+// the call was sealed, opened with the seal it was sent under.
+func (l *Link) verifiedReply(v cbor.Value, pending *pendingCall) (callOutcome, error) {
+	request := pending.request
+	reply, err := frame.VerifyReply(v, request, l.profile)
+	if err != nil {
+		return callOutcome{}, err
+	}
+	switch {
+	case pending.seal != nil:
+		return pending.seal.sealedOutcome(reply, request.RequestHash), nil
+	case reply.Sealed != nil:
+		// This node sealed nothing, so a sealed reply answers no request it
+		// made as the provider sealed it.
+		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: codeSealedRefused}}, nil
+	case reply.FrameType == "result":
+		return callOutcome{payload: reply.Payload}, nil
+	}
+	return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: reply.Code, Detail: reply.Detail}}, nil
 }
 
 // probe sends a liveness probe every livenessEvery and ends the link after two

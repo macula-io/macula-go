@@ -165,48 +165,72 @@ func TestAKeyedProviderNamesItsKEMKey(t *testing.T) {
 func TestASealedCallIsAnsweredSealed(t *testing.T) {
 	for _, p := range profiles {
 		t.Run(string(p), func(t *testing.T) {
-			link, s, fixture, ring := startSealedServing(t, p)
-			var sawSealed bool
-			serveEcho(t, link, fixture, func(_ context.Context, r Request) (cbor.Value, error) {
-				sawSealed = r.Sealed
-				if text, _ := r.Payload.AsText(); text == "fail" {
-					return cbor.Value{}, errors.New("refused by the handler")
-				}
-				if text, _ := r.Payload.AsText(); text == "boom" {
-					panic("boom")
-				}
-				return r.Payload, nil
-			})
-			s.nextControl(t)
-			pub := ring.Current().PublicKey()
-			deadline := time.Now().Add(5 * time.Second)
-			for _, c := range []struct {
-				name, procedure string
-				payload         cbor.Value
-				result          string
-				code            string
-				detail          string
-			}{
-				{"a result", servedProcedure, cbor.Text("hello"), "hello", "", ""},
-				{"a handler's error", servedProcedure, cbor.Text("fail"), "", codeHandlerError, "refused by the handler"},
-				{"a crash", servedProcedure, cbor.Text("boom"), "", codeHandlerCrashed, ""},
-				{"an unknown procedure", "mcl-echo/nothing_here", cbor.Text("x"), "", codeUnknownProcedure, ""},
-			} {
-				request, keys := s.sealedCall(t, link.NodeID(), c.procedure, c.payload, deadline, pub, [8]byte{})
-				reply, err := frame.VerifyReply(s.nextOther(t), request, p)
-				if err != nil {
-					t.Fatalf("%s: %v", c.name, err)
-				}
-				payload, code, detail := keys.opened(t, reply, request.RequestHash)
-				if text, _ := payload.AsText(); text != c.result || code != c.code || detail != c.detail {
-					t.Errorf("%s: opened %q, %q, %q", c.name, text, code, detail)
-				}
-			}
-			if !sawSealed {
-				t.Error("the handler was not told its request came sealed")
-			}
+			assertASealedCallIsAnsweredSealed(t, p)
 		})
 	}
+}
+
+// assertASealedCallIsAnsweredSealed serves on a keyed link for p and checks
+// each sealed CALL is opened and answered sealed, and that the handler was
+// told its request came sealed.
+func assertASealedCallIsAnsweredSealed(t *testing.T, p profile.Profile) {
+	t.Helper()
+	link, s, fixture, ring := startSealedServing(t, p)
+	var sawSealed bool
+	serveEcho(t, link, fixture, func(_ context.Context, r Request) (cbor.Value, error) {
+		return sealedEchoHandler(&sawSealed, r)
+	})
+	s.nextControl(t)
+	pub := ring.Current().PublicKey()
+	deadline := time.Now().Add(5 * time.Second)
+	for _, c := range sealedCallAnswers() {
+		request, keys := s.sealedCall(t, link.NodeID(), c.procedure, c.payload, deadline, pub, [8]byte{})
+		reply, err := frame.VerifyReply(s.nextOther(t), request, p)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		payload, code, detail := keys.opened(t, reply, request.RequestHash)
+		if text, _ := payload.AsText(); text != c.result || code != c.code || detail != c.detail {
+			t.Errorf("%s: opened %q, %q, %q", c.name, text, code, detail)
+		}
+	}
+	if !sawSealed {
+		t.Error("the handler was not told its request came sealed")
+	}
+}
+
+// sealedCallAnswer is one CALL a sealed provider answers, and what opening its
+// answer must give.
+type sealedCallAnswer struct {
+	name, procedure string
+	payload         cbor.Value
+	result          string
+	code            string
+	detail          string
+}
+
+// sealedCallAnswers is a result, a handler's error, a crash and an unknown
+// procedure, each answered sealed.
+func sealedCallAnswers() []sealedCallAnswer {
+	return []sealedCallAnswer{
+		{"a result", servedProcedure, cbor.Text("hello"), "hello", "", ""},
+		{"a handler's error", servedProcedure, cbor.Text("fail"), "", codeHandlerError, "refused by the handler"},
+		{"a crash", servedProcedure, cbor.Text("boom"), "", codeHandlerCrashed, ""},
+		{"an unknown procedure", "mcl-echo/nothing_here", cbor.Text("x"), "", codeUnknownProcedure, ""},
+	}
+}
+
+// sealedEchoHandler echoes the payload back, records whether the request came
+// sealed, and fails or crashes on the payloads that ask it to.
+func sealedEchoHandler(sawSealed *bool, r Request) (cbor.Value, error) {
+	*sawSealed = r.Sealed
+	if text, _ := r.Payload.AsText(); text == "fail" {
+		return cbor.Value{}, errors.New("refused by the handler")
+	}
+	if text, _ := r.Payload.AsText(); text == "boom" {
+		panic("boom")
+	}
+	return r.Payload, nil
 }
 
 // What a sealed ERROR says is sealed: an unknown procedure's answer and an

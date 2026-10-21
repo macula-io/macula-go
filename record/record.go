@@ -573,13 +573,27 @@ func readEnvelopeTBS(tbs cbor.Value) (Record, bool) {
 			fields[name] = e.Val
 		}
 	}
-	required := []string{"type", "alg", "version", "created_at", "expires_at", "schema", "lifetime_class", "payload"}
-	for _, name := range required {
+	for _, name := range tbsRequired {
 		if _, present := fields[name]; !present {
 			return Record{}, false
 		}
 	}
-	size := len(required)
+	r, ok := tbsRecord(fields)
+	if !ok {
+		return Record{}, false
+	}
+	optionals, ok := tbsOptionals(fields, &r)
+	if !ok {
+		return Record{}, false
+	}
+	return r, len(entries) == len(tbsRequired)+optionals
+}
+
+// tbsRequired are the fields every verified record's tbs carries.
+var tbsRequired = []string{"type", "alg", "version", "created_at", "expires_at", "schema", "lifetime_class", "payload"}
+
+// tbsRecord reads the tbs fields every record carries.
+func tbsRecord(fields map[string]cbor.Value) (Record, bool) {
 	t, isType := fields["type"].AsInt64()
 	alg, isAlg := fields["alg"].AsText()
 	version, isVersion := fields["version"].AsBytes()
@@ -594,26 +608,30 @@ func readEnvelopeTBS(tbs cbor.Value) (Record, bool) {
 	}
 	r := Record{Type: Type(t), CreatedAt: created, ExpiresAt: expires, Payload: fields["payload"], Alg: alg,
 		Schema: uint16(schema), LifetimeClass: uint8(min(class, 0xFF))}
-	if class > 0xFF {
-		r.LifetimeClass = 0xFF
-	}
 	copy(r.Version[:], version)
+	return r, true
+}
+
+// tbsOptionals reads the fields a record may carry, and returns how many it
+// found.
+func tbsOptionals(fields map[string]cbor.Value, r *Record) (int, bool) {
+	found := 0
 	if subject, has := fields["subject"]; has {
 		b, isBytes := subject.AsBytes()
 		if !isBytes || len(b) == 0 {
-			return Record{}, false
+			return 0, false
 		}
 		r.Subject = bytes.Clone(b)
-		size++
+		found++
 	}
 	if ext, has := fields["ext"]; has {
 		if frame.CheckExt(ext) != nil {
-			return Record{}, false
+			return 0, false
 		}
 		r.Ext = ext
-		size++
+		found++
 	}
-	return r, len(entries) == size
+	return found, true
 }
 
 func protocolUint(v cbor.Value) (uint64, bool) {

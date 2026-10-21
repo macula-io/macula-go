@@ -214,52 +214,89 @@ func Verify(payload cbor.Value, procedure string, realm [32]byte, p profile.Prof
 	if err != nil {
 		return Verified{}, ErrMissingProof
 	}
-	block, ok := payload.Get(Field)
-	if !ok {
-		return Verified{}, ErrMissingProof
-	}
-	if _, isMap := block.AsMap(); !isMap {
-		return Verified{}, ErrMissingProof
+	block, err := proofBlock(payload)
+	if err != nil {
+		return Verified{}, err
 	}
 	id, ok := decodeIdentity(block)
 	if !ok {
 		return Verified{}, ErrInvalidIdentity
 	}
-	proof, ok := block.Get("proof")
-	if _, isMap := proof.AsMap(); !ok || !isMap {
-		return Verified{}, ErrMissingProof
+	proof, err := blockProof(block)
+	if err != nil {
+		return Verified{}, err
 	}
-	if v, ok := proof.Get("v"); !ok || !isInt(v, Version) {
-		return Verified{}, ErrUnsupportedVersion
+	ts, err := proofStamp(proof, now)
+	if err != nil {
+		return Verified{}, err
 	}
-	tsValue, ok := proof.Get("timestamp")
-	if !ok {
-		return Verified{}, ErrMissingProof
-	}
-	ts, ok := tsValue.AsInt64()
-	if !ok {
-		return Verified{}, ErrMissingProof
-	}
-	if skew := now.UnixMilli() - ts; skew > MaxSkew.Milliseconds() || skew < -MaxSkew.Milliseconds() {
-		return Verified{}, ErrStaleProof
-	}
-	nonceBytes, okNonce := hexField(proof, "nonce")
-	signature, okSig := hexField(proof, "signature")
-	public, okPub := hexField(proof, "public")
-	if !okNonce || !okSig || !okPub || len(nonceBytes) != NonceSize {
-		return Verified{}, ErrBadSignature
+	nonce, signature, public, err := proofKeys(proof)
+	if err != nil {
+		return Verified{}, err
 	}
 	// The identity must derive from the carried key before the signature is
 	// spent on it.
 	if !identity.CarriedKeyWellFormed(public, p) || identity.NodeIDOf(public, p) != id {
 		return Verified{}, ErrBadSignature
 	}
-	var nonce [NonceSize]byte
-	copy(nonce[:], nonceBytes)
 	if !identity.Verify(Message(id, realm, procedure, uint64(ts), nonce, fields), signature, public, p) {
 		return Verified{}, ErrBadSignature
 	}
 	return Verified{Identity: id, Nonce: nonce}, nil
+}
+
+// proofBlock is the payload's asserted_by block, which must be a map.
+func proofBlock(payload cbor.Value) (cbor.Value, error) {
+	block, ok := payload.Get(Field)
+	if !ok {
+		return cbor.Value{}, ErrMissingProof
+	}
+	if _, isMap := block.AsMap(); !isMap {
+		return cbor.Value{}, ErrMissingProof
+	}
+	return block, nil
+}
+
+// blockProof is the block's proof, which must be a map.
+func blockProof(block cbor.Value) (cbor.Value, error) {
+	proof, ok := block.Get("proof")
+	if _, isMap := proof.AsMap(); !ok || !isMap {
+		return cbor.Value{}, ErrMissingProof
+	}
+	return proof, nil
+}
+
+// proofStamp is the proof's version and timestamp, which must be within
+// MaxSkew of now.
+func proofStamp(proof cbor.Value, now time.Time) (int64, error) {
+	if v, ok := proof.Get("v"); !ok || !isInt(v, Version) {
+		return 0, ErrUnsupportedVersion
+	}
+	tsValue, ok := proof.Get("timestamp")
+	if !ok {
+		return 0, ErrMissingProof
+	}
+	ts, ok := tsValue.AsInt64()
+	if !ok {
+		return 0, ErrMissingProof
+	}
+	if skew := now.UnixMilli() - ts; skew > MaxSkew.Milliseconds() || skew < -MaxSkew.Milliseconds() {
+		return 0, ErrStaleProof
+	}
+	return ts, nil
+}
+
+// proofKeys is the proof's nonce, signature and the public key it carries.
+func proofKeys(proof cbor.Value) ([NonceSize]byte, []byte, []byte, error) {
+	nonceBytes, okNonce := hexField(proof, "nonce")
+	signature, okSig := hexField(proof, "signature")
+	public, okPub := hexField(proof, "public")
+	if !okNonce || !okSig || !okPub || len(nonceBytes) != NonceSize {
+		return [NonceSize]byte{}, nil, nil, ErrBadSignature
+	}
+	var nonce [NonceSize]byte
+	copy(nonce[:], nonceBytes)
+	return nonce, signature, public, nil
 }
 
 func isInt(v cbor.Value, want int64) bool {

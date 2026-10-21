@@ -39,11 +39,24 @@ func TestDecodeCountsItemsAsTheReferenceDecoderDoes(t *testing.T) {
 	if MaxElements != 131072 {
 		t.Errorf("MaxElements is %d, want macula's element budget of 131,072", MaxElements)
 	}
-	cases := []struct {
-		name    string
-		input   []byte
-		refusal string
-	}{
+	for _, c := range elementBudgetCases() {
+		t.Run(c.name, func(t *testing.T) {
+			checkElementBudgetCase(t, c)
+		})
+	}
+}
+
+// elementBudgetCase is one input and the refusal the reference decoder
+// reaches on it: "" where it accepts, "refused" where the verdict alone is the
+// claim.
+type elementBudgetCase struct {
+	name    string
+	input   []byte
+	refusal string
+}
+
+func elementBudgetCases() []elementBudgetCase {
+	return []elementBudgetCase{
 		{"an array of 131,071 zeros, 131,072 items", zerosArray(131071, 131071), ""},
 		{"an array of 131,072 zeros, 131,073 items", zerosArray(131072, 131072), "too_many_elements"},
 		{"a map of 65,535 entries, 131,071 items", mapOfEntries(65535), ""},
@@ -70,23 +83,24 @@ func TestDecodeCountsItemsAsTheReferenceDecoderDoes(t *testing.T) {
 		{"the item past the budget is a byte string longer than the input", pastBudget(0x42, 0x00), "too_many_elements"},
 		{"the item past the budget is an empty array", pastBudget(0x80), "too_many_elements"},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			_, err := Decode(c.input)
-			switch c.refusal {
-			case "":
-				if err != nil {
-					t.Errorf("%v, but the reference accepts it", err)
-				}
-			case "refused":
-				if err == nil {
-					t.Error("accepted, but the reference refuses it")
-				}
-			default:
-				if want := referenceRefusals[c.refusal]; !errors.Is(err, want) {
-					t.Errorf("%v, but the reference refuses it as %s", err, c.refusal)
-				}
-			}
-		})
+}
+
+// checkElementBudgetCase holds Decode to the reference's verdict on one case.
+func checkElementBudgetCase(t *testing.T, c elementBudgetCase) {
+	t.Helper()
+	_, err := Decode(c.input)
+	switch c.refusal {
+	case "":
+		if err != nil {
+			t.Errorf("%v, but the reference accepts it", err)
+		}
+	case "refused":
+		if err == nil {
+			t.Error("accepted, but the reference refuses it")
+		}
+	default:
+		if want := referenceRefusals[c.refusal]; !errors.Is(err, want) {
+			t.Errorf("%v, but the reference refuses it as %s", err, c.refusal)
+		}
 	}
 }

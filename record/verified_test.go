@@ -24,39 +24,60 @@ func TestOnlyVerifyMakesAVerifiedRecord(t *testing.T) {
 		if strings.HasSuffix(file, "_test.go") {
 			continue
 		}
-		fileSet := token.NewFileSet()
-		parsed, err := parser.ParseFile(fileSet, file, nil, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", file, err)
-		}
-		for _, decl := range parsed.Decls {
-			if function, isFunction := decl.(*ast.FuncDecl); isFunction && function.Recv == nil && function.Name.Name == "Verify" {
-				continue
-			}
-			ast.Inspect(decl, func(node ast.Node) bool {
-				switch n := node.(type) {
-				case *ast.CompositeLit:
-					if namesVerified(n.Type) {
-						t.Errorf("%s builds a Verified outside Verify", fileSet.Position(n.Pos()))
-					}
-				case *ast.CallExpr:
-					if namesVerified(n.Fun) {
-						t.Errorf("%s converts a value to a Verified outside Verify", fileSet.Position(n.Pos()))
-					}
-				case *ast.AssignStmt:
-					for _, target := range n.Lhs {
-						if selector, isSelector := target.(*ast.SelectorExpr); isSelector && selector.Sel.Name == "held" {
-							t.Errorf("%s writes a Verified's record outside Verify", fileSet.Position(target.Pos()))
-						}
-					}
-				}
-				return true
-			})
-		}
+		checkFileBuildsNoVerified(t, file)
 		checked++
 	}
 	if checked == 0 {
 		t.Fatal("no non-test file of package record was examined")
+	}
+}
+
+// checkFileBuildsNoVerified reports every place file builds or converts a
+// Verified, or writes the record it holds, outside func Verify.
+func checkFileBuildsNoVerified(t *testing.T, file string) {
+	t.Helper()
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, file, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	for _, decl := range parsed.Decls {
+		if function, isFunction := decl.(*ast.FuncDecl); isFunction && function.Recv == nil && function.Name.Name == "Verify" {
+			continue
+		}
+		ast.Inspect(decl, func(node ast.Node) bool {
+			reportVerifiedOutsideVerify(t, fileSet, node)
+			return true
+		})
+	}
+}
+
+// reportVerifiedOutsideVerify reports node where it builds a Verified,
+// converts a value to one, or writes a Verified's held record.
+func reportVerifiedOutsideVerify(t *testing.T, fileSet *token.FileSet, node ast.Node) {
+	t.Helper()
+	switch n := node.(type) {
+	case *ast.CompositeLit:
+		if namesVerified(n.Type) {
+			t.Errorf("%s builds a Verified outside Verify", fileSet.Position(n.Pos()))
+		}
+	case *ast.CallExpr:
+		if namesVerified(n.Fun) {
+			t.Errorf("%s converts a value to a Verified outside Verify", fileSet.Position(n.Pos()))
+		}
+	case *ast.AssignStmt:
+		reportHeldWrite(t, fileSet, n)
+	}
+}
+
+// reportHeldWrite reports every assignment target that writes a Verified's
+// held record.
+func reportHeldWrite(t *testing.T, fileSet *token.FileSet, assign *ast.AssignStmt) {
+	t.Helper()
+	for _, target := range assign.Lhs {
+		if selector, isSelector := target.(*ast.SelectorExpr); isSelector && selector.Sel.Name == "held" {
+			t.Errorf("%s writes a Verified's record outside Verify", fileSet.Position(target.Pos()))
+		}
 	}
 }
 

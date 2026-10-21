@@ -344,44 +344,10 @@ func (s *Station) serve(ctx context.Context, qconn *quic.Conn) {
 		return
 	}
 	r, w := &reader{r: stream}, &writer{w: stream}
-	opener, err := r.read(handshakeFrameBytes)
-	if err != nil {
+	c, ok := s.handshake(qconn, r, w)
+	if !ok {
 		return
 	}
-	ranges := handshake.Supported(s.Profile)
-	negotiated, refusal, err := handshake.ReadOpener(opener, ranges)
-	if err != nil {
-		if refusal != nil {
-			_ = w.write(refusal, handshakeFrameBytes)
-		}
-		return
-	}
-	now := time.Now().UnixMilli()
-	status, err := identity.StatusStatement(s.Key, s.binding, now, now+3_600_000)
-	if err != nil {
-		return
-	}
-	challenge, err := handshake.Challenge(handshake.StationMaterial{
-		Profile: s.Profile, IdentityKey: s.Key.PublicKey(), TLSBinding: s.binding, TLSStatus: status}, negotiated, ranges)
-	if err != nil || w.write(challenge, handshakeFrameBytes) != nil {
-		return
-	}
-	connect, err := r.read(handshakeFrameBytes)
-	if err != nil {
-		return
-	}
-	// A wire 1.0 station: version 5 alone, its session proof bound to this
-	// connection's TLS exporter.
-	state := qconn.ConnectionState().TLS
-	client, hello, err := handshake.AcceptConnect(connect, handshake.StationSession{
-		Profile: s.Profile, Negotiated: negotiated, Challenge: challenge, Leaf: s.leaf, PuzzleDifficulty: identity.PuzzleDifficulty,
-		PuzzleMode: handshake.PuzzleModeEnforce, Capabilities: 1, NowMs: time.Now().UnixMilli(),
-		Export:           state.ExportKeyingMaterial,
-		SignSessionProof: func(_ [32]byte, message []byte) ([]byte, error) { return s.Key.Sign(message) }})
-	if w.write(hello, handshakeFrameBytes) != nil || err != nil {
-		return
-	}
-	c := &conn{nodeID: client.NodeID, qconn: qconn, writer: w, client: client, topics: map[routeKey]bool{}}
 	s.mu.Lock()
 	if s.stopped {
 		s.mu.Unlock()
@@ -404,6 +370,49 @@ func (s *Station) serve(ctx context.Context, qconn *quic.Conn) {
 		}
 		s.received(c, payload)
 	}
+}
+
+// handshake runs the station's side of the handshake on one connection, and
+// returns the connection it opens.
+func (s *Station) handshake(qconn *quic.Conn, r *reader, w *writer) (*conn, bool) {
+	opener, err := r.read(handshakeFrameBytes)
+	if err != nil {
+		return nil, false
+	}
+	ranges := handshake.Supported(s.Profile)
+	negotiated, refusal, err := handshake.ReadOpener(opener, ranges)
+	if err != nil {
+		if refusal != nil {
+			_ = w.write(refusal, handshakeFrameBytes)
+		}
+		return nil, false
+	}
+	now := time.Now().UnixMilli()
+	status, err := identity.StatusStatement(s.Key, s.binding, now, now+3_600_000)
+	if err != nil {
+		return nil, false
+	}
+	challenge, err := handshake.Challenge(handshake.StationMaterial{
+		Profile: s.Profile, IdentityKey: s.Key.PublicKey(), TLSBinding: s.binding, TLSStatus: status}, negotiated, ranges)
+	if err != nil || w.write(challenge, handshakeFrameBytes) != nil {
+		return nil, false
+	}
+	connect, err := r.read(handshakeFrameBytes)
+	if err != nil {
+		return nil, false
+	}
+	// A wire 1.0 station: version 5 alone, its session proof bound to this
+	// connection's TLS exporter.
+	state := qconn.ConnectionState().TLS
+	client, hello, err := handshake.AcceptConnect(connect, handshake.StationSession{
+		Profile: s.Profile, Negotiated: negotiated, Challenge: challenge, Leaf: s.leaf, PuzzleDifficulty: identity.PuzzleDifficulty,
+		PuzzleMode: handshake.PuzzleModeEnforce, Capabilities: 1, NowMs: time.Now().UnixMilli(),
+		Export:           state.ExportKeyingMaterial,
+		SignSessionProof: func(_ [32]byte, message []byte) ([]byte, error) { return s.Key.Sign(message) }})
+	if w.write(hello, handshakeFrameBytes) != nil || err != nil {
+		return nil, false
+	}
+	return &conn{nodeID: client.NodeID, qconn: qconn, writer: w, client: client, topics: map[routeKey]bool{}}, true
 }
 
 // forget drops a connection that ended, unless a reconnect already replaced
@@ -520,53 +529,8 @@ func (s *Station) relayError(c *conn, request frame.VerifiedRequest, code string
 // {v 1, field} in, else malformed_args before any DHT work; {v 1, result, ...}
 // out.
 func (s *Station) answer(c *conn, request frame.VerifiedRequest) {
-	var result cbor.Value
-	switch request.Procedure {
-	case "_dht.put_record":
-		value, ok := dhtArgs(request.Payload, "record")
-		wire, isBytes := value.AsBytes()
-		if !ok || !isBytes {
-			s.malformedArgs(c, request)
-			return
-		}
-		if err := s.store(wire); err != nil {
-			result = dhtRefused("signature_invalid")
-		} else {
-			result = dhtResult("ok")
-		}
-	case "_dht.find_record":
-		key, ok := dhtKey(request.Payload)
-		if !ok {
-			s.malformedArgs(c, request)
-			return
-		}
-		found := s.find(func(sl slot, _ []byte) bool { return sl.key == key })
-		if len(found) == 0 {
-			result = dhtResult("not_found")
-		} else {
-			result = dhtResult("record", cbor.MapEntry{Key: cbor.Text("record"), Val: cbor.Bytes(found[0])})
-		}
-	case "_dht.find_records":
-		key, ok := dhtKey(request.Payload)
-		if !ok {
-			s.malformedArgs(c, request)
-			return
-		}
-		result = dhtResult("records", cbor.MapEntry{Key: cbor.Text("records"),
-			Val: list(s.find(func(sl slot, _ []byte) bool { return sl.key == key }))})
-	case "_dht.find_records_by_type":
-		typeValue, ok := dhtArgs(request.Payload, "type")
-		n, isInt := typeValue.AsInt64()
-		if !ok || !isInt || n < 0 || n > 255 {
-			s.malformedArgs(c, request)
-			return
-		}
-		result = dhtResult("records", cbor.MapEntry{Key: cbor.Text("records"), Val: list(s.find(func(_ slot, wire []byte) bool {
-			verified, err := record.Verify(wire, s.Profile, time.Now().UnixMilli())
-			return err == nil && int64(verified.Record().Type) == n
-		}))})
-	default:
-		s.relayError(c, request, "unknown_next_peer")
+	result, ok := s.dhtAnswer(c, request)
+	if !ok {
 		return
 	}
 	reply, err := frame.SignResult(request, result, nil, s.Key)
@@ -575,6 +539,73 @@ func (s *Station) answer(c *conn, request frame.VerifiedRequest) {
 		return
 	}
 	_ = c.writer.write(cbor.Encode(reply), maxFrameBytes)
+}
+
+// dhtAnswer is a _dht.* procedure's result. ok is false when nothing is
+// answered here: the call was refused to its caller already, or is one this
+// station does not serve.
+func (s *Station) dhtAnswer(c *conn, request frame.VerifiedRequest) (cbor.Value, bool) {
+	switch request.Procedure {
+	case "_dht.put_record":
+		return s.dhtPut(c, request)
+	case "_dht.find_record":
+		return s.dhtFind(c, request)
+	case "_dht.find_records":
+		return s.dhtFindAll(c, request)
+	case "_dht.find_records_by_type":
+		return s.dhtFindByType(c, request)
+	}
+	s.relayError(c, request, "unknown_next_peer")
+	return cbor.Value{}, false
+}
+
+func (s *Station) dhtPut(c *conn, request frame.VerifiedRequest) (cbor.Value, bool) {
+	value, ok := dhtArgs(request.Payload, "record")
+	wire, isBytes := value.AsBytes()
+	if !ok || !isBytes {
+		s.malformedArgs(c, request)
+		return cbor.Value{}, false
+	}
+	if err := s.store(wire); err != nil {
+		return dhtRefused("signature_invalid"), true
+	}
+	return dhtResult("ok"), true
+}
+
+func (s *Station) dhtFind(c *conn, request frame.VerifiedRequest) (cbor.Value, bool) {
+	key, ok := dhtKey(request.Payload)
+	if !ok {
+		s.malformedArgs(c, request)
+		return cbor.Value{}, false
+	}
+	found := s.find(func(sl slot, _ []byte) bool { return sl.key == key })
+	if len(found) == 0 {
+		return dhtResult("not_found"), true
+	}
+	return dhtResult("record", cbor.MapEntry{Key: cbor.Text("record"), Val: cbor.Bytes(found[0])}), true
+}
+
+func (s *Station) dhtFindAll(c *conn, request frame.VerifiedRequest) (cbor.Value, bool) {
+	key, ok := dhtKey(request.Payload)
+	if !ok {
+		s.malformedArgs(c, request)
+		return cbor.Value{}, false
+	}
+	return dhtResult("records", cbor.MapEntry{Key: cbor.Text("records"),
+		Val: list(s.find(func(sl slot, _ []byte) bool { return sl.key == key }))}), true
+}
+
+func (s *Station) dhtFindByType(c *conn, request frame.VerifiedRequest) (cbor.Value, bool) {
+	typeValue, ok := dhtArgs(request.Payload, "type")
+	n, isInt := typeValue.AsInt64()
+	if !ok || !isInt || n < 0 || n > 255 {
+		s.malformedArgs(c, request)
+		return cbor.Value{}, false
+	}
+	return dhtResult("records", cbor.MapEntry{Key: cbor.Text("records"), Val: list(s.find(func(_ slot, wire []byte) bool {
+		verified, err := record.Verify(wire, s.Profile, time.Now().UnixMilli())
+		return err == nil && int64(verified.Record().Type) == n
+	}))}), true
 }
 
 // malformedArgs refuses a _dht.* call whose arguments are not its one form,

@@ -133,26 +133,32 @@ func TestCompositeSignaturesMadeElsewhereVerify(t *testing.T) {
 		"lamps": {"m.bin", "pk.bin", "s.bin"},
 		"otp":   {"otp_message.bin", "otp_pk.bin", "otp_sig.bin"},
 	} {
-		t.Run(signer, func(t *testing.T) {
-			message := fixtureBytes(t, files[0])
-			public := fixtureBytes(t, files[1])
-			signature := fixtureBytes(t, files[2])
-			if !Verify(message, signature, public, profile.PQHybrid) {
-				t.Fatal("the composite does not verify")
-			}
-			if Verify(append(bytes.Clone(message), 0), signature, public, profile.PQHybrid) {
-				t.Error("another message verifies")
-			}
-			if Verify(message, flippedAt(signature, 10), public, profile.PQHybrid) {
-				t.Error("an altered ML-DSA-87 half verifies")
-			}
-			if Verify(message, flippedAt(signature, 4627+10), public, profile.PQHybrid) {
-				t.Error("an altered RSA-PSS half verifies")
-			}
-			if Verify(message, signature, public, profile.PQPure) {
-				t.Error("the composite verifies under pq_pure")
-			}
-		})
+		t.Run(signer, func(t *testing.T) { assertFixtureCompositeVerifies(t, files) })
+	}
+}
+
+// assertFixtureCompositeVerifies checks one signer's message, public key and
+// signature verify as a pq_hybrid composite, and that another message, either
+// half altered, or the wrong profile is refused.
+func assertFixtureCompositeVerifies(t *testing.T, files [3]string) {
+	t.Helper()
+	message := fixtureBytes(t, files[0])
+	public := fixtureBytes(t, files[1])
+	signature := fixtureBytes(t, files[2])
+	if !Verify(message, signature, public, profile.PQHybrid) {
+		t.Fatal("the composite does not verify")
+	}
+	if Verify(append(bytes.Clone(message), 0), signature, public, profile.PQHybrid) {
+		t.Error("another message verifies")
+	}
+	if Verify(message, flippedAt(signature, 10), public, profile.PQHybrid) {
+		t.Error("an altered ML-DSA-87 half verifies")
+	}
+	if Verify(message, flippedAt(signature, 4627+10), public, profile.PQHybrid) {
+		t.Error("an altered RSA-PSS half verifies")
+	}
+	if Verify(message, signature, public, profile.PQPure) {
+		t.Error("the composite verifies under pq_pure")
 	}
 }
 

@@ -307,6 +307,12 @@ own vectors (`cbor/testdata/decoding_rule_v1.json`).
 go test ./...
 ```
 
+CI also holds every function to the structural floor
+([macula-codebase-checks#9](https://github.com/macula-io/macula-codebase-checks/issues/9)):
+deep nesting and tangled functions fail the build. The thresholds are in
+[`.golangci.yml`](.golangci.yml); a failure is fixed by splitting the function,
+never by a baseline or an inline disable.
+
 The suite needs no network. The pool is tested against
 [`teststation`](teststation), an in-process macula 12
 station that routes calls between connections, delivers events and holds a

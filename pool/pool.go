@@ -195,16 +195,11 @@ func checked(seeds []Seed, opts Opts) (Opts, error) {
 	if opts.IdentityKey == nil || opts.IdentityKey.Purpose() != identity.PurposeIdentity {
 		return opts, fmt.Errorf("%w: an identity key is required", ErrInvalidOpts)
 	}
-	p := opts.IdentityKey.Profile()
-	for realm, key := range opts.RealmTrust {
-		if !identity.CarriedKeyWellFormed(key, p) {
-			return opts, fmt.Errorf("%w: realm %x", ErrRealmTrustInvalid, realm[:4])
-		}
+	if err := checkRealmTrust(opts.RealmTrust, opts.IdentityKey); err != nil {
+		return opts, err
 	}
-	for _, limit := range []*int{&opts.MaxSeeds, &opts.MaxDirectLinks, &opts.ReplicationFactor} {
-		if *limit < 0 || *limit > maxLinkLimit {
-			return opts, fmt.Errorf("%w: a link limit of %d, outside 1 to %d", ErrInvalidOpts, *limit, maxLinkLimit)
-		}
+	if err := checkLinkLimits(&opts); err != nil {
+		return opts, err
 	}
 	opts.MaxSeeds = orDefault(opts.MaxSeeds, DefaultMaxSeeds)
 	opts.MaxDirectLinks = orDefault(opts.MaxDirectLinks, DefaultMaxDirectLinks)
@@ -231,6 +226,29 @@ func checked(seeds []Seed, opts Opts) (Opts, error) {
 		}
 	}
 	return opts, nil
+}
+
+// checkRealmTrust refuses a realm key that is not well formed under the
+// profile the pool links with.
+func checkRealmTrust(trust map[[32]byte][]byte, key *identity.NodeKey) error {
+	p := key.Profile()
+	for realm, realmKey := range trust {
+		if !identity.CarriedKeyWellFormed(realmKey, p) {
+			return fmt.Errorf("%w: realm %x", ErrRealmTrustInvalid, realm[:4])
+		}
+	}
+	return nil
+}
+
+// checkLinkLimits refuses a link limit outside the range the pool supports,
+// before the defaults are filled in.
+func checkLinkLimits(opts *Opts) error {
+	for _, limit := range []*int{&opts.MaxSeeds, &opts.MaxDirectLinks, &opts.ReplicationFactor} {
+		if *limit < 0 || *limit > maxLinkLimit {
+			return fmt.Errorf("%w: a link limit of %d, outside 1 to %d", ErrInvalidOpts, *limit, maxLinkLimit)
+		}
+	}
+	return nil
 }
 
 func orDefault(v, fallback int) int {

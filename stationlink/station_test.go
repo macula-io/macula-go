@@ -166,9 +166,39 @@ func (s *testStation) handshaken(ctx context.Context, conn *quic.Conn) bool {
 		return false
 	}
 	reader, writer := frameReader{r: stream}, &frameWriter{w: stream}
-	opener, err := reader.read(HandshakeFrameBytes)
+	negotiated, challenge, ok := s.answerOpener(reader, writer)
+	if !ok {
+		return false
+	}
+	connect, err := reader.read(HandshakeFrameBytes)
 	if err != nil {
 		return false
+	}
+	client, hello, err := s.acceptConnect(conn, connect, negotiated, challenge)
+	if s.refuse != "" {
+		hello = refusedHello(s.refuse)
+	}
+	if writer.write(hello, HandshakeFrameBytes) != nil || err != nil || s.refuse != "" {
+		s.refuseConnection(stream, conn)
+		return false
+	}
+	s.mu.Lock()
+	s.client, s.stream, s.writer = client, stream, writer
+	s.mu.Unlock()
+	close(s.accepted)
+	s.serveFrames(reader, writer)
+	return true
+}
+
+// answerOpener reads the client's HANDSHAKE_OPENER and answers it with the
+// CHALLENGE it earns: the negotiated algorithms, the station's status
+// statement and the puzzle that challenge carries. It reports false when the
+// client gets no CHALLENGE, refusing the offer by name when the opener names
+// something this station cannot serve.
+func (s *testStation) answerOpener(reader frameReader, writer *frameWriter) (handshake.Negotiated, []byte, bool) {
+	opener, err := reader.read(HandshakeFrameBytes)
+	if err != nil {
+		return handshake.Negotiated{}, nil, false
 	}
 	ranges := handshake.Supported(s.profile)
 	negotiated, refusal, err := handshake.ReadOpener(opener, ranges)
@@ -176,27 +206,31 @@ func (s *testStation) handshaken(ctx context.Context, conn *quic.Conn) bool {
 		if refusal != nil {
 			_ = writer.write(refusal, HandshakeFrameBytes)
 		}
-		return false
+		return handshake.Negotiated{}, nil, false
 	}
 	now := time.Now().UnixMilli()
 	status, err := identity.StatusStatement(s.key, s.binding, now, now+3_600_000)
 	if err != nil {
 		s.t.Errorf("station: status statement: %v", err)
-		return false
+		return handshake.Negotiated{}, nil, false
 	}
 	challenge, err := handshake.Challenge(handshake.StationMaterial{
 		Profile: s.profile, IdentityKey: s.key.PublicKey(), TLSBinding: s.binding, TLSStatus: status}, negotiated, ranges)
 	if err != nil {
 		s.t.Errorf("station: challenge: %v", err)
-		return false
+		return handshake.Negotiated{}, nil, false
 	}
 	if err := writer.write(challenge, HandshakeFrameBytes); err != nil {
-		return false
+		return handshake.Negotiated{}, nil, false
 	}
-	connect, err := reader.read(HandshakeFrameBytes)
-	if err != nil {
-		return false
-	}
+	return negotiated, challenge, true
+}
+
+// acceptConnect runs the station's side of a client's CONNECT and returns the
+// HELLO the client is answered with, which the session refused by code even
+// when the CONNECT itself was accepted.
+func (s *testStation) acceptConnect(conn *quic.Conn, connect []byte,
+	negotiated handshake.Negotiated, challenge []byte) (handshake.Client, []byte, error) {
 	state := conn.ConnectionState().TLS
 	s.mu.Lock()
 	floor := s.floor
@@ -206,25 +240,25 @@ func (s *testStation) handshaken(ctx context.Context, conn *quic.Conn) bool {
 		PuzzleDifficulty: identity.PuzzleDifficulty, PuzzleMode: handshake.PuzzleModeEnforce, Capabilities: 1,
 		NowMs: time.Now().UnixMilli(), Export: state.ExportKeyingMaterial, Floor: floor,
 		SignSessionProof: func(_ [32]byte, message []byte) ([]byte, error) { return s.key.Sign(message) }}
-	client, hello, err := handshake.AcceptConnect(connect, session)
-	if s.refuse != "" {
-		hello = refusedHello(s.refuse)
-	}
-	if writer.write(hello, HandshakeFrameBytes) != nil || err != nil || s.refuse != "" {
-		_ = stream.Close()
-		time.Sleep(50 * time.Millisecond)
-		_ = conn.CloseWithError(0, "refused")
-		return false
-	}
-	s.mu.Lock()
-	s.client, s.stream, s.writer = client, stream, writer
-	s.mu.Unlock()
-	close(s.accepted)
+	return handshake.AcceptConnect(connect, session)
+}
+
+// refuseConnection ends a handshake that left the client no session of its
+// own to end: the stream first so the HELLO is read, then the connection.
+func (s *testStation) refuseConnection(stream *quic.Stream, conn *quic.Conn) {
+	_ = stream.Close()
+	time.Sleep(50 * time.Millisecond)
+	_ = conn.CloseWithError(0, "refused")
+}
+
+// serveFrames hands every frame the client sends to received until its stream
+// ends, acknowledging each registration on the way.
+func (s *testStation) serveFrames(reader frameReader, writer *frameWriter) {
 	for {
 		frame, err := reader.read(MaxFrameBytes)
 		if err != nil {
 			close(s.received)
-			return true
+			return
 		}
 		s.acknowledgeRegistration(writer, frame)
 		s.received <- frame

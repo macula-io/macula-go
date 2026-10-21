@@ -437,33 +437,55 @@ func TestTheAdvertisementIsPutInTheDHT(t *testing.T) {
 func TestServeInTheNodesOwnNamespace(t *testing.T) {
 	for _, p := range profiles {
 		t.Run(string(p), func(t *testing.T) {
-			link, s, _ := startServing(t, p)
-			procedure := record.OwnProcedure(link.NodeID(), "ring")
-			if _, err := link.Serve(t.Context(), Offer{Realm: servedRealm, Procedure: procedure, Handler: echo}); err != nil {
-				t.Fatalf("Serve: %v", err)
-			}
-			wire, _ := fieldOfTest(s.nextControl(t), "advertisement").AsBytes()
-			now := time.Now().UnixMilli()
-			verified, err := record.Verify(wire, p, now)
-			if err != nil {
-				t.Fatalf("the advertisement: %v", err)
-			}
-			if err := record.OwnNamespace(verified); err != nil {
-				t.Errorf("OwnNamespace: %v", err)
-			}
-			if err := record.VerifyAuthorization(verified, record.Trust{Profile: p}, now); err != nil {
-				t.Errorf("VerifyAuthorization with no realm key: %v", err)
-			}
-			ad, _ := record.ReadProcedureAdvertisement(verified.Record())
-			if ad.Authorization.Form != record.NoAuthorization || !slices.Equal(ad.ServingStations, [][32]byte{s.nodeID}) {
-				t.Errorf("advertisement %+v", ad)
-			}
-			_, request := s.call(t, link.NodeID(), procedure, cbor.Text("ring ring"), time.Now().Add(5*time.Second))
-			reply, err := frame.VerifyReply(s.nextOther(t), request, p)
-			if text, _ := reply.Payload.AsText(); err != nil || text != "ring ring" {
-				t.Errorf("the RESULT: %+v, %v", reply, err)
-			}
+			assertOwnNamespaceServes(t, p)
 		})
+	}
+}
+
+// assertOwnNamespaceServes serves ~<node_id>/ring on a link for p and checks
+// the advertisement carries no authorization, is authorized by its signature
+// alone, and the procedure answers.
+func assertOwnNamespaceServes(t *testing.T, p profile.Profile) {
+	t.Helper()
+	link, s, _ := startServing(t, p)
+	procedure := record.OwnProcedure(link.NodeID(), "ring")
+	if _, err := link.Serve(t.Context(), Offer{Realm: servedRealm, Procedure: procedure, Handler: echo}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	now := time.Now().UnixMilli()
+	verified := verifyOwnAdvertisement(t, s, p, now)
+	if err := record.OwnNamespace(verified); err != nil {
+		t.Errorf("OwnNamespace: %v", err)
+	}
+	if err := record.VerifyAuthorization(verified, record.Trust{Profile: p}, now); err != nil {
+		t.Errorf("VerifyAuthorization with no realm key: %v", err)
+	}
+	ad, _ := record.ReadProcedureAdvertisement(verified.Record())
+	if ad.Authorization.Form != record.NoAuthorization || !slices.Equal(ad.ServingStations, [][32]byte{s.nodeID}) {
+		t.Errorf("advertisement %+v", ad)
+	}
+	assertOwnProcedureAnswers(t, s, link, procedure, p)
+}
+
+// verifyOwnAdvertisement reads the advertisement the station puts next and
+// verifies it as a record of profile p.
+func verifyOwnAdvertisement(t *testing.T, s *servingStation, p profile.Profile, now int64) record.Verified {
+	t.Helper()
+	wire, _ := fieldOfTest(s.nextControl(t), "advertisement").AsBytes()
+	verified, err := record.Verify(wire, p, now)
+	if err != nil {
+		t.Fatalf("the advertisement: %v", err)
+	}
+	return verified
+}
+
+// assertOwnProcedureAnswers calls procedure and checks the echo came back.
+func assertOwnProcedureAnswers(t *testing.T, s *servingStation, link *Link, procedure string, p profile.Profile) {
+	t.Helper()
+	_, request := s.call(t, link.NodeID(), procedure, cbor.Text("ring ring"), time.Now().Add(5*time.Second))
+	reply, err := frame.VerifyReply(s.nextOther(t), request, p)
+	if text, _ := reply.Payload.AsText(); err != nil || text != "ring ring" {
+		t.Errorf("the RESULT: %+v, %v", reply, err)
 	}
 }
 

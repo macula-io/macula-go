@@ -234,22 +234,30 @@ func TestDialTargetReachesAMaculaStation(t *testing.T) {
 		t.Run(string(p), func(t *testing.T) {
 			station := startStation(t, stationSpec{groups: maculaStationGroups, key: mldsa87Key(t)})
 			for dial := range 2 {
-				dialed, err := dialWithin(t, targetFor(station, p))
-				if err != nil {
-					t.Fatalf("dial %d: %v", dial+1, err)
-				}
-				state := dialed.Conn.ConnectionState()
-				if state.TLS.CurveID != tls.SecP384r1MLKEM1024 {
-					t.Errorf("dial %d settled on %s, want SecP384r1MLKEM1024", dial+1, state.TLS.CurveID)
-				}
-				if !bytes.Equal(dialed.Leaf, station.leaf) {
-					t.Errorf("dial %d: the leaf differs from the DER the station presented", dial+1)
-				}
-				if state.TLS.DidResume || state.Used0RTT {
-					t.Errorf("dial %d resumed %t, used early data %t; want a full handshake", dial+1, state.TLS.DidResume, state.Used0RTT)
-				}
+				checkDialReachesStation(t, station, p, dial+1)
 			}
 		})
+	}
+}
+
+// checkDialReachesStation: the dial settles on SecP384r1MLKEM1024, returns the
+// leaf DER exactly as the station presented it, and resumes no session and
+// sends no early data.
+func checkDialReachesStation(t *testing.T, station testStation, p profile.Profile, attempt int) {
+	t.Helper()
+	dialed, err := dialWithin(t, targetFor(station, p))
+	if err != nil {
+		t.Fatalf("dial %d: %v", attempt, err)
+	}
+	state := dialed.Conn.ConnectionState()
+	if state.TLS.CurveID != tls.SecP384r1MLKEM1024 {
+		t.Errorf("dial %d settled on %s, want SecP384r1MLKEM1024", attempt, state.TLS.CurveID)
+	}
+	if !bytes.Equal(dialed.Leaf, station.leaf) {
+		t.Errorf("dial %d: the leaf differs from the DER the station presented", attempt)
+	}
+	if state.TLS.DidResume || state.Used0RTT {
+		t.Errorf("dial %d resumed %t, used early data %t; want a full handshake", attempt, state.TLS.DidResume, state.Used0RTT)
 	}
 }
 
@@ -413,32 +421,41 @@ func TestProfileTLSConfigFollowsTheProfile(t *testing.T) {
 			if err != nil {
 				t.Fatalf("definition: %v", err)
 			}
-			config := profileTLSConfig("station.test", definition, make(chan error, 1))
-			if config.ServerName != "station.test" {
-				t.Errorf("ServerName %q, want the target's host", config.ServerName)
-			}
-			if config.MinVersion != tls.VersionTLS13 || config.MaxVersion != tls.VersionTLS13 {
-				t.Errorf("versions %#x to %#x, want TLS 1.3 alone", config.MinVersion, config.MaxVersion)
-			}
-			if !slices.Equal(config.CurvePreferences, []tls.CurveID{tls.SecP384r1MLKEM1024}) {
-				t.Errorf("groups %v, want SecP384r1MLKEM1024 alone", config.CurvePreferences)
-			}
-			if !slices.Equal(config.NextProtos, []string{ALPN}) {
-				t.Errorf("ALPN protocols %q, want %q alone", config.NextProtos, ALPN)
-			}
-			if !config.SessionTicketsDisabled || config.ClientSessionCache != nil {
-				t.Errorf("session tickets disabled %t, session cache %v, want tickets disabled and no cache",
-					config.SessionTicketsDisabled, config.ClientSessionCache)
-			}
-			if config.VerifyPeerCertificate != nil || config.VerifyConnection == nil {
-				t.Errorf("VerifyPeerCertificate set %t, VerifyConnection set %t, want VerifyConnection alone",
-					config.VerifyPeerCertificate != nil, config.VerifyConnection != nil)
-			}
-			if !config.InsecureSkipVerify || config.RootCAs != nil {
-				t.Errorf("InsecureSkipVerify %t, RootCAs set %t, want no chain check and no roots",
-					config.InsecureSkipVerify, config.RootCAs != nil)
-			}
+			checkProfileTLSConfig(t, profileTLSConfig("station.test", definition, make(chan error, 1)))
 		})
+	}
+}
+
+// checkProfileTLSConfig: TLS 1.3 alone, the profile's group alone, macula's
+// ALPN protocol alone, no session tickets or cache, and the station's leaf
+// checked in VerifyConnection, which crypto/tls runs on every handshake, not
+// in VerifyPeerCertificate. No chain is checked and no roots are set, so
+// VerifyConnection is the only way a station is accepted.
+func checkProfileTLSConfig(t *testing.T, config *tls.Config) {
+	t.Helper()
+	if config.ServerName != "station.test" {
+		t.Errorf("ServerName %q, want the target's host", config.ServerName)
+	}
+	if config.MinVersion != tls.VersionTLS13 || config.MaxVersion != tls.VersionTLS13 {
+		t.Errorf("versions %#x to %#x, want TLS 1.3 alone", config.MinVersion, config.MaxVersion)
+	}
+	if !slices.Equal(config.CurvePreferences, []tls.CurveID{tls.SecP384r1MLKEM1024}) {
+		t.Errorf("groups %v, want SecP384r1MLKEM1024 alone", config.CurvePreferences)
+	}
+	if !slices.Equal(config.NextProtos, []string{ALPN}) {
+		t.Errorf("ALPN protocols %q, want %q alone", config.NextProtos, ALPN)
+	}
+	if !config.SessionTicketsDisabled || config.ClientSessionCache != nil {
+		t.Errorf("session tickets disabled %t, session cache %v, want tickets disabled and no cache",
+			config.SessionTicketsDisabled, config.ClientSessionCache)
+	}
+	if config.VerifyPeerCertificate != nil || config.VerifyConnection == nil {
+		t.Errorf("VerifyPeerCertificate set %t, VerifyConnection set %t, want VerifyConnection alone",
+			config.VerifyPeerCertificate != nil, config.VerifyConnection != nil)
+	}
+	if !config.InsecureSkipVerify || config.RootCAs != nil {
+		t.Errorf("InsecureSkipVerify %t, RootCAs set %t, want no chain check and no roots",
+			config.InsecureSkipVerify, config.RootCAs != nil)
 	}
 }
 

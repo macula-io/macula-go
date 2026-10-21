@@ -45,36 +45,43 @@ func unverifiedReason(t *testing.T, err error) string {
 // fields, bytes in the ABI's {"$bytes"} form.
 func TestASignedObjectVerifiesToItsSignerAndFields(t *testing.T) {
 	for _, p := range []profile.Profile{profile.PQHybrid, profile.PQPure} {
-		object, key := signedObjectBytes(t, p)
-		text, err := verifySignedObject(objectLabel, object, string(p))
-		if err != nil {
-			t.Fatalf("%s: %v", p, err)
-		}
-		var got struct {
-			NodeID string            `json:"node_id"`
-			Key    map[string]string `json:"key"`
-			TBS    map[string]string `json:"tbs"`
-			Fields map[string]any    `json:"fields"`
-		}
-		if err := json.Unmarshal([]byte(text), &got); err != nil {
-			t.Fatal(err)
-		}
-		nodeID, _ := key.NodeID()
-		if got.NodeID != hex.EncodeToString(nodeID[:]) {
-			t.Errorf("%s: node_id %v", p, got.NodeID)
-		}
-		if got.Key["$bytes"] != base64.StdEncoding.EncodeToString(key.PublicKey()) {
-			t.Errorf("%s: not the signer's key", p)
-		}
-		if got.TBS["$bytes"] == "" {
-			t.Errorf("%s: no tbs", p)
-		}
-		if got.Fields["title"] != "corpus entry" || got.Fields["alg"] == nil {
-			t.Errorf("%s: fields %v", p, got.Fields)
-		}
-		if d, _ := got.Fields["digest"].(map[string]any); d["$bytes"] != "AQID" {
-			t.Errorf("%s: digest %v", p, got.Fields["digest"])
-		}
+		assertSignedObjectVerifies(t, p)
+	}
+}
+
+// assertSignedObjectVerifies checks a signed object, made under p, verifies
+// under p to its signer, with its tbs and fields in the ABI's form.
+func assertSignedObjectVerifies(t *testing.T, p profile.Profile) {
+	t.Helper()
+	object, key := signedObjectBytes(t, p)
+	text, err := verifySignedObject(objectLabel, object, string(p))
+	if err != nil {
+		t.Fatalf("%s: %v", p, err)
+	}
+	var got struct {
+		NodeID string            `json:"node_id"`
+		Key    map[string]string `json:"key"`
+		TBS    map[string]string `json:"tbs"`
+		Fields map[string]any    `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatal(err)
+	}
+	nodeID, _ := key.NodeID()
+	if got.NodeID != hex.EncodeToString(nodeID[:]) {
+		t.Errorf("%s: node_id %v", p, got.NodeID)
+	}
+	if got.Key["$bytes"] != base64.StdEncoding.EncodeToString(key.PublicKey()) {
+		t.Errorf("%s: not the signer's key", p)
+	}
+	if got.TBS["$bytes"] == "" {
+		t.Errorf("%s: no tbs", p)
+	}
+	if got.Fields["title"] != "corpus entry" || got.Fields["alg"] == nil {
+		t.Errorf("%s: fields %v", p, got.Fields)
+	}
+	if d, _ := got.Fields["digest"].(map[string]any); d["$bytes"] != "AQID" {
+		t.Errorf("%s: digest %v", p, got.Fields["digest"])
 	}
 }
 
@@ -144,12 +151,7 @@ func TestMaculaRagSignedCorpusVectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var vectors []struct {
-		Profile         string `json:"profile"`
-		SignedBy        string `json:"signed_by"`
-		CorpusHash      string `json:"corpus_hash"`
-		SignatureBase64 string `json:"signature_base64"`
-	}
+	var vectors []corpusVector
 	if err := json.Unmarshal(raw, &vectors); err != nil {
 		t.Fatal(err)
 	}
@@ -157,32 +159,47 @@ func TestMaculaRagSignedCorpusVectors(t *testing.T) {
 		t.Fatalf("%d vectors, not one per profile", len(vectors))
 	}
 	for _, v := range vectors {
-		object, err := base64.StdEncoding.DecodeString(v.SignatureBase64)
-		if err != nil {
-			t.Fatal(err)
-		}
-		text, err := verifySignedObject(corpusLabel, object, v.Profile)
-		if err != nil {
-			t.Fatalf("%s: %v", v.Profile, err)
-		}
-		var got struct {
-			NodeID string         `json:"node_id"`
-			Fields map[string]any `json:"fields"`
-		}
-		if err := json.Unmarshal([]byte(text), &got); err != nil {
-			t.Fatal(err)
-		}
-		if got.NodeID != v.SignedBy {
-			t.Errorf("%s: node_id %s, not %s", v.Profile, got.NodeID, v.SignedBy)
-		}
-		if got.Fields["corpus_hash"] != v.CorpusHash {
-			t.Errorf("%s: corpus_hash %v", v.Profile, got.Fields["corpus_hash"])
-		}
-		other := map[string]string{"pq_pure": "pq_hybrid", "pq_hybrid": "pq_pure"}[v.Profile]
-		_, err = verifySignedObject(corpusLabel, object, other)
-		if r := unverifiedReason(t, err); r != "malformed" {
-			t.Errorf("%s under %s: %s", v.Profile, other, r)
-		}
+		assertCorpusVectorVerifies(t, corpusLabel, v)
+	}
+}
+
+// corpusVector is one signed corpus vector as macula-rag ships it.
+type corpusVector struct {
+	Profile         string `json:"profile"`
+	SignedBy        string `json:"signed_by"`
+	CorpusHash      string `json:"corpus_hash"`
+	SignatureBase64 string `json:"signature_base64"`
+}
+
+// assertCorpusVectorVerifies checks one vector verifies under its own profile
+// to its signer and corpus_hash, and is malformed under the other profile.
+func assertCorpusVectorVerifies(t *testing.T, corpusLabel string, v corpusVector) {
+	t.Helper()
+	object, err := base64.StdEncoding.DecodeString(v.SignatureBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := verifySignedObject(corpusLabel, object, v.Profile)
+	if err != nil {
+		t.Fatalf("%s: %v", v.Profile, err)
+	}
+	var got struct {
+		NodeID string         `json:"node_id"`
+		Fields map[string]any `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.NodeID != v.SignedBy {
+		t.Errorf("%s: node_id %s, not %s", v.Profile, got.NodeID, v.SignedBy)
+	}
+	if got.Fields["corpus_hash"] != v.CorpusHash {
+		t.Errorf("%s: corpus_hash %v", v.Profile, got.Fields["corpus_hash"])
+	}
+	other := map[string]string{"pq_pure": "pq_hybrid", "pq_hybrid": "pq_pure"}[v.Profile]
+	_, err = verifySignedObject(corpusLabel, object, other)
+	if r := unverifiedReason(t, err); r != "malformed" {
+		t.Errorf("%s under %s: %s", v.Profile, other, r)
 	}
 }
 

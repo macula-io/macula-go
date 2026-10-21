@@ -112,32 +112,10 @@ func TestAStreamReportThroughTheABI(t *testing.T) {
 	t.Cleanup(func() { _ = s.stop() })
 	served := make(chan string, 1)
 	release := make(chan struct{})
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		item, state := s.box.next(ctx)
-		if state != inboxItemReady {
-			return
-		}
-		if session, ok := valueOf[*stationlink.Stream](item.handle); ok {
-			_, err := streamReportJSON(session)
-			served <- string(classify(nil, err).kind)
-			<-release
-			_ = session.Reply(must(payloadFromJSON(`"watched"`)))
-		}
-	}()
+	go reportOnServedStream(s, served, release)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	var stream *stationlink.Stream
-	for stream == nil {
-		stream, err = openStream(ctx, caller.pool, f.realm.ID, procedure, frame.ServerStream, `null`, 10*time.Second, callOptions{})
-		if err != nil {
-			if ctx.Err() != nil {
-				t.Fatalf("no provider answered: %v", err)
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-	}
+	stream := openStreamUntilAnswered(ctx, t, caller, f.realm.ID, procedure)
 	defer stream.Close()
 	if kind := <-served; kind != string(kindNotACaller) {
 		t.Errorf("a served stream's report: %s, want not_a_caller", kind)
@@ -149,6 +127,47 @@ func TestAStreamReportThroughTheABI(t *testing.T) {
 	if _, err := recvJSON(ctx, stream); err != nil {
 		t.Fatal(err)
 	}
+	assertSettledStreamReport(t, stream, provider)
+}
+
+// reportOnServedStream asks a served session for its own report, which must be
+// not_a_caller, and replies once released.
+func reportOnServedStream(s *served, served chan<- string, release <-chan struct{}) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	item, state := s.box.next(ctx)
+	if state != inboxItemReady {
+		return
+	}
+	session, ok := valueOf[*stationlink.Stream](item.handle)
+	if !ok {
+		return
+	}
+	_, err := streamReportJSON(session)
+	served <- string(classify(nil, err).kind)
+	<-release
+	_ = session.Reply(must(payloadFromJSON(`"watched"`)))
+}
+
+// openStreamUntilAnswered opens the stream until one open succeeds.
+func openStreamUntilAnswered(ctx context.Context, t *testing.T, lp *livePool, realm [32]byte, procedure string) *stationlink.Stream {
+	t.Helper()
+	for {
+		stream, err := openStream(ctx, lp.pool, realm, procedure, frame.ServerStream, `null`, 10*time.Second, callOptions{})
+		if err == nil {
+			return stream
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("no provider answered: %v", err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// assertSettledStreamReport checks a settled stream names its sealing: the
+// provider's node_id and the key its reply was sealed under.
+func assertSettledStreamReport(t *testing.T, stream *stationlink.Stream, provider *livePool) {
+	t.Helper()
 	out, err := streamReportJSON(stream)
 	var got reportEnvelope
 	node := provider.pool.NodeID()

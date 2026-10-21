@@ -70,22 +70,7 @@ func TestASealedCallThroughTheABI(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = s.stop() })
 	requests := make(chan map[string]any, 4)
-	go func() {
-		for {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			item, state := s.box.next(ctx)
-			cancel()
-			if state != inboxItemReady {
-				return
-			}
-			var request map[string]any
-			_ = json.Unmarshal([]byte(item.json), &request)
-			requests <- request
-			if pc, ok := valueOf[*pendingCall](item.handle); ok {
-				_ = pc.answer(pendingAnswer{payload: must(payloadFromJSON(`"kept"`))})
-			}
-		}
-	}()
+	go answerSealedCalls(s, requests)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	result, err := callUntilProvided(ctx, caller, f.realm.ID, procedure, callOptions{})
@@ -95,7 +80,33 @@ func TestASealedCallThroughTheABI(t *testing.T) {
 	if request := <-requests; request["sealed"] != float64(1) {
 		t.Errorf("the served request says sealed %v", request["sealed"])
 	}
+	assertKeylessRefusals(t, f, caller, ctx)
+}
 
+// answerSealedCalls answers every call served on s with "kept", publishing the
+// request each one carried.
+func answerSealedCalls(s *served, requests chan<- map[string]any) {
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		item, state := s.box.next(ctx)
+		cancel()
+		if state != inboxItemReady {
+			return
+		}
+		var request map[string]any
+		_ = json.Unmarshal([]byte(item.json), &request)
+		requests <- request
+		if pc, ok := valueOf[*pendingCall](item.handle); ok {
+			_ = pc.answer(pendingAnswer{payload: must(payloadFromJSON(`"kept"`))})
+		}
+	}
+}
+
+// assertKeylessRefusals checks a provider that named no KEM key answers a
+// required confidential call and serve with the kind confidentiality, and the
+// reason the call gives.
+func assertKeylessRefusals(t *testing.T, f fleet, caller *livePool, ctx context.Context) {
+	t.Helper()
 	keyless := f.join(t, "keyless abi provider", f.stations[0])
 	f.realm.Admit(t, f.stations[0], keyless.pool.NodeID())
 	open := f.realm.Org + "/open"

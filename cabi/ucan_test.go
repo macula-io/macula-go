@@ -30,6 +30,16 @@ func hexNode(t *testing.T, k *identity.NodeKey) string {
 func TestUCANArgumentsAreChecked(t *testing.T) {
 	root := teststation.Key(t, profile.PQPure, "abi ucan root")
 	id := hexNode(t, root)
+	assertPoliciesRefused(t, id)
+	assertRealmMemberPolicy(t, id)
+	assertCapsRefused(t, root)
+	assertTokenTimesChecked(t, root)
+	assertProofsRefused(t)
+}
+
+// assertPoliciesRefused checks every malformed gating policy is refused.
+func assertPoliciesRefused(t *testing.T, id string) {
+	t.Helper()
 	for _, policy := range []string{
 		``, `{}`, `{"kind":"open"}`, `{"kind":"ucan_required"}`, `{"kind":"ucan_required","issuer":"00"}`,
 		`{"kind":"ucan_required","issuer":"` + id + `","can":"invoke"}`,
@@ -41,10 +51,23 @@ func TestUCANArgumentsAreChecked(t *testing.T) {
 			t.Errorf("policy %s: %v, want invalid_argument", policy, err)
 		}
 	}
+}
+
+// assertRealmMemberPolicy checks a realm member policy crosses intact.
+func assertRealmMemberPolicy(t *testing.T, id string) {
+	t.Helper()
 	if p, err := policyOf(`{"kind":"realm_member_required","key_id":"` + id + `","can":"invoke"}`); err != nil ||
 		p != (ucan.RealmMemberRequired{KeyID: [32]byte(mustHex(t, id)), Can: "invoke"}) {
 		t.Errorf("a realm member policy: %v, %v", p, err)
 	}
+}
+
+// invokeCaps is a well-formed grant the token checks below vary around.
+const invokeCaps = `[{"with":"mri:realm:io.macula","can":"invoke"}]`
+
+// assertCapsRefused checks malformed capabilities and create options are refused.
+func assertCapsRefused(t *testing.T, root *identity.NodeKey) {
+	t.Helper()
 	for _, c := range []struct{ caps, options string }{
 		{`{"with":"mri:realm:io.macula","can":"invoke"}`, ``},
 		{`[{"with":"mri:realm:io.macula","can":"invoke","extra":1}]`, ``},
@@ -55,20 +78,31 @@ func TestUCANArgumentsAreChecked(t *testing.T) {
 			t.Errorf("caps %s, options %s: %v, want invalid_argument", c.caps, c.options, err)
 		}
 	}
-	caps := `[{"with":"mri:realm:io.macula","can":"invoke"}]`
+}
+
+// assertTokenTimesChecked checks an exp in milliseconds and an nbf after its
+// exp are refused, and a year's token mints.
+func assertTokenTimesChecked(t *testing.T, root *identity.NodeKey) {
+	t.Helper()
 	ms := time.Now().UnixMilli() + 3_600_000
-	if _, err := ucanCreate(root, [32]byte{}, caps, ms, ``); kindOf(err) != kindInvalidArgument ||
+	if _, err := ucanCreate(root, [32]byte{}, invokeCaps, ms, ``); kindOf(err) != kindInvalidArgument ||
 		!strings.Contains(err.Error(), fmt.Sprintf("exp %d", ms)) {
 		t.Errorf("an exp in milliseconds: %v, want invalid_argument", err)
 	}
 	nbf := time.Now().Unix() + 120
-	if _, err := ucanCreate(root, [32]byte{}, caps, nbf-60, fmt.Sprintf(`{"nbf":%d}`, nbf)); kindOf(err) != kindInvalidArgument ||
+	if _, err := ucanCreate(root, [32]byte{}, invokeCaps, nbf-60, fmt.Sprintf(`{"nbf":%d}`, nbf)); kindOf(err) != kindInvalidArgument ||
 		!strings.Contains(err.Error(), fmt.Sprintf("nbf %d, exp %d", nbf, nbf-60)) {
 		t.Errorf("an nbf after its exp: %v, want invalid_argument", err)
 	}
-	if _, err := ucanCreate(root, [32]byte{}, caps, time.Now().Unix()+366*24*3600, ``); err != nil {
+	if _, err := ucanCreate(root, [32]byte{}, invokeCaps, time.Now().Unix()+366*24*3600, ``); err != nil {
 		t.Errorf("a token for a year: %v", err)
 	}
+}
+
+// assertProofsRefused checks malformed proofs are refused and no credentials
+// is a valid presentation.
+func assertProofsRefused(t *testing.T) {
+	t.Helper()
 	for _, proofs := range []string{`"a token"`, `[1]`, `{}`} {
 		if _, err := credentialsOf("", proofs); kindOf(err) != kindInvalidArgument {
 			t.Errorf("proofs %s: %v, want invalid_argument", proofs, err)
@@ -158,22 +192,32 @@ func TestAGatedProcedureThroughTheABI(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.stop() })
-	go func() {
-		for {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			item, state := s.box.next(ctx)
-			cancel()
-			if state != inboxItemReady {
-				return
-			}
-			if pc, ok := valueOf[*pendingCall](item.handle); ok {
-				v, _ := payloadFromJSON(`"served"`)
-				_ = pc.answer(pendingAnswer{payload: v})
-			}
-		}
-	}()
+	go answerGatedCalls(s)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	assertProcedurePresentations(t, ctx, g, procedure)
+}
+
+// answerGatedCalls answers every call served on s with "served".
+func answerGatedCalls(s *served) {
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		item, state := s.box.next(ctx)
+		cancel()
+		if state != inboxItemReady {
+			return
+		}
+		if pc, ok := valueOf[*pendingCall](item.handle); ok {
+			v, _ := payloadFromJSON(`"served"`)
+			_ = pc.answer(pendingAnswer{payload: v})
+		}
+	}
+}
+
+// assertProcedurePresentations calls the gated procedure once per
+// presentation, checking each is served or refused with the code it expects.
+func assertProcedurePresentations(t *testing.T, ctx context.Context, g gatedFleet, procedure string) {
+	t.Helper()
 	for name, c := range g.presentations(t, procedure) {
 		creds, err := credentialsOf(c.token, c.proofs)
 		if err != nil {
@@ -217,22 +261,32 @@ func TestAGatedStreamThroughTheABI(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.stop() })
-	go func() {
-		for {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			item, state := s.box.next(ctx)
-			cancel()
-			if state != inboxItemReady {
-				return
-			}
-			if session, ok := valueOf[*stationlink.Stream](item.handle); ok {
-				v, _ := payloadFromJSON(`"served"`)
-				_ = session.Reply(v)
-			}
-		}
-	}()
+	go answerGatedStreams(s)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	assertStreamPresentations(t, ctx, g, procedure)
+}
+
+// answerGatedStreams replies "served" to every session served on s.
+func answerGatedStreams(s *served) {
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		item, state := s.box.next(ctx)
+		cancel()
+		if state != inboxItemReady {
+			return
+		}
+		if session, ok := valueOf[*stationlink.Stream](item.handle); ok {
+			v, _ := payloadFromJSON(`"served"`)
+			_ = session.Reply(v)
+		}
+	}
+}
+
+// assertStreamPresentations opens the gated stream once per presentation,
+// checking each is served or refused with the code it expects.
+func assertStreamPresentations(t *testing.T, ctx context.Context, g gatedFleet, procedure string) {
+	t.Helper()
 	for name, c := range g.presentations(t, procedure) {
 		creds, err := credentialsOf(c.token, c.proofs)
 		if err != nil {

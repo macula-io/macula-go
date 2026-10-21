@@ -72,40 +72,55 @@ func nextControl(t *testing.T, controls <-chan cbor.Value) cbor.Value {
 func TestASubscriberHearsAVerifiedEventOnce(t *testing.T) {
 	for _, p := range profiles {
 		t.Run(string(p), func(t *testing.T) {
-			link, s := linkWithStation(t, p)
-			controls := make(chan cbor.Value, 8)
-			s.relay(t, controls, func(publish cbor.Value) []cbor.Value {
-				return []cbor.Value{eventOf(publish), eventOf(publish)}
-			})
-			sub, err := link.Subscribe(testRealm, testTopic)
-			if err != nil {
-				t.Fatalf("Subscribe: %v", err)
-			}
-			subscribe := nextControl(t, controls)
-			topic, _ := fieldOfTest(subscribe, "topic").AsBytes()
-			subscriber, _ := fieldOfTest(subscribe, "subscriber").AsBytes()
-			self := link.NodeID()
-			if name, _ := fieldOfTest(subscribe, "frame_type").AsText(); name != "subscribe" ||
-				string(topic) != testTopic || !bytes.Equal(subscriber, self[:]) {
-				t.Errorf("the SUBSCRIBE: %v", subscribe)
-			}
-			if err := link.Publish(Publication{Realm: testRealm, Topic: testTopic, Payload: cbor.Text("headline")}); err != nil {
-				t.Fatalf("Publish: %v", err)
-			}
-			select {
-			case event := <-sub.Events():
-				if text, _ := event.Payload.AsText(); text != "headline" || event.Publisher != self || event.DeliveredVia != "direct" {
-					t.Errorf("event %+v", event)
-				}
-			case <-time.After(10 * time.Second):
-				t.Fatal("no event")
-			}
-			select {
-			case event := <-sub.Events():
-				t.Errorf("a second delivery of the same publication: %+v", event)
-			case <-time.After(300 * time.Millisecond):
-			}
+			assertASubscriberHearsItOnce(t, p)
 		})
+	}
+}
+
+// assertASubscriberHearsItOnce subscribes at a station for p, publishes, and
+// checks the subscriber hears its own publication back verified and exactly
+// once, even though the station delivers it twice.
+func assertASubscriberHearsItOnce(t *testing.T, p profile.Profile) {
+	t.Helper()
+	link, s := linkWithStation(t, p)
+	controls := make(chan cbor.Value, 8)
+	s.relay(t, controls, func(publish cbor.Value) []cbor.Value {
+		return []cbor.Value{eventOf(publish), eventOf(publish)}
+	})
+	sub, err := link.Subscribe(testRealm, testTopic)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	self := link.NodeID()
+	assertSubscribeFrame(t, nextControl(t, controls), self)
+	if err := link.Publish(Publication{Realm: testRealm, Topic: testTopic, Payload: cbor.Text("headline")}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	events := sub.Events()
+	select {
+	case event := <-events:
+		if text, _ := event.Payload.AsText(); text != "headline" || event.Publisher != self || event.DeliveredVia != "direct" {
+			t.Errorf("event %+v", event)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no event")
+	}
+	select {
+	case event := <-events:
+		t.Errorf("a second delivery of the same publication: %+v", event)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// assertSubscribeFrame checks subscribe is the SUBSCRIBE for testTopic a client
+// with this node ID sends: the topic as bytes and the subscriber as itself.
+func assertSubscribeFrame(t *testing.T, subscribe cbor.Value, self [32]byte) {
+	t.Helper()
+	topic, _ := fieldOfTest(subscribe, "topic").AsBytes()
+	subscriber, _ := fieldOfTest(subscribe, "subscriber").AsBytes()
+	if name, _ := fieldOfTest(subscribe, "frame_type").AsText(); name != "subscribe" ||
+		string(topic) != testTopic || !bytes.Equal(subscriber, self[:]) {
+		t.Errorf("the SUBSCRIBE: %v", subscribe)
 	}
 }
 

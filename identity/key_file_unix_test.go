@@ -191,43 +191,56 @@ func unchangedContents(t *testing.T, what, path, want string) {
 // a file others can read planted there is unchanged afterwards.
 func TestSaveLeavesWhatIsPlantedAtTheTemporaryPathUnchanged(t *testing.T) {
 	key := sharedKey(t, pureIdentityKey)
-	const planted = "left as it was"
+	t.Run("a symlink", func(t *testing.T) { assertSaveLeavesAPlantedSymlinkKeyFile(t, key) })
+	t.Run("a file others can read", func(t *testing.T) { assertSaveLeavesAPlantedWorldReadableFile(t, key) })
+}
 
-	t.Run("a symlink", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "node.key")
-		victim := filepath.Join(t.TempDir(), "victim")
-		if err := os.WriteFile(victim, []byte(planted), 0o600); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-		if err := os.Symlink(victim, path+".tmp"); err != nil {
-			t.Fatalf("symlink: %v", err)
-		}
-		if err := key.Save(path); err != nil {
-			t.Fatalf("Save: %v", err)
-		}
-		unchangedContents(t, "the symlink's target", victim, planted)
-		if target, err := os.Readlink(path + ".tmp"); err != nil || target != victim {
-			t.Errorf("the planted symlink points at %q (%v) after Save, want it unchanged", target, err)
-		}
-		assertOwnerOnlyKeyFile(t, path, key)
-	})
+// plantedContents is what is planted at the temporary path: not key bytes, so
+// a test can say it is still there.
+const plantedContents = "left as it was"
 
-	t.Run("a file others can read", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "node.key")
-		if err := os.WriteFile(path+".tmp", []byte(planted), 0o600); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-		if err := os.Chmod(path+".tmp", 0o644); err != nil {
-			t.Fatalf("chmod: %v", err)
-		}
-		if err := key.Save(path); err != nil {
-			t.Fatalf("Save: %v", err)
-		}
-		info, err := os.Lstat(path + ".tmp")
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o644 {
-			t.Fatalf("the planted file after Save: %v, %v; want it unchanged", info, err)
-		}
-		unchangedContents(t, "the planted file", path+".tmp", planted)
-		assertOwnerOnlyKeyFile(t, path, key)
-	})
+// assertSaveLeavesAPlantedSymlinkKeyFile checks Save does not write through a
+// symlink planted at the temporary path: its target and the link are
+// unchanged, and the key is saved beside it as usual.
+func assertSaveLeavesAPlantedSymlinkKeyFile(t *testing.T, key *NodeKey) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "node.key")
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte(plantedContents), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Symlink(victim, path+".tmp"); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := key.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	unchangedContents(t, "the symlink's target", victim, plantedContents)
+	if target, err := os.Readlink(path + ".tmp"); err != nil || target != victim {
+		t.Errorf("the planted symlink points at %q (%v) after Save, want it unchanged", target, err)
+	}
+	assertOwnerOnlyKeyFile(t, path, key)
+}
+
+// assertSaveLeavesAPlantedWorldReadableFile checks Save does not reuse a file
+// at the temporary path that others can read: it is unchanged, and the key is
+// saved beside it owner-only.
+func assertSaveLeavesAPlantedWorldReadableFile(t *testing.T, key *NodeKey) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "node.key")
+	if err := os.WriteFile(path+".tmp", []byte(plantedContents), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Chmod(path+".tmp", 0o644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if err := key.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	info, err := os.Lstat(path + ".tmp")
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o644 {
+		t.Fatalf("the planted file after Save: %v, %v; want it unchanged", info, err)
+	}
+	unchangedContents(t, "the planted file", path+".tmp", plantedContents)
+	assertOwnerOnlyKeyFile(t, path, key)
 }

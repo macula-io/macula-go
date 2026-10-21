@@ -94,30 +94,44 @@ func TestTheWireOneEnvelopeVectors(t *testing.T) {
 	}
 	for _, c := range f.Cases {
 		t.Run(c.ID, func(t *testing.T) {
-			before := frame.WireCounters()
-			outcome, reason, code := envelopeVerdict(t, c)
-			after := frame.WireCounters()
-			if outcome != c.Outcome() || reason != c.Reason() {
-				t.Errorf("verdict (%s, %s), want (%s, %s)", outcome, reason, c.Outcome(), c.Reason())
-			}
-			if want := c.ExpectInt("quic_code"); want != 0 && code != want {
-				t.Errorf("QUIC code %d, want %d", code, want)
-			}
-			switch c.ExpectText("count") {
-			case "wire_unknown_frame_type":
-				if after.UnknownFrameType == before.UnknownFrameType {
-					t.Errorf("wire_unknown_frame_type did not count")
-				}
-			case "wire_ext_ignored":
-				if sum(after.ExtIgnored) == sum(before.ExtIgnored) {
-					t.Errorf("wire_ext_ignored did not count")
-				}
-			case "wire_ext_refused":
-				if sum(after.ExtRefused) == sum(before.ExtRefused) {
-					t.Errorf("wire_ext_refused did not count")
-				}
-			}
+			assertAnEnvelopeVector(t, c)
 		})
+	}
+}
+
+// assertAnEnvelopeVector applies one vector: the link's verdict on the frame,
+// the QUIC code it names, and the counter it must move.
+func assertAnEnvelopeVector(t *testing.T, c wire10vectors.Case) {
+	t.Helper()
+	before := frame.WireCounters()
+	outcome, reason, code := envelopeVerdict(t, c)
+	after := frame.WireCounters()
+	if outcome != c.Outcome() || reason != c.Reason() {
+		t.Errorf("verdict (%s, %s), want (%s, %s)", outcome, reason, c.Outcome(), c.Reason())
+	}
+	if want := c.ExpectInt("quic_code"); want != 0 && code != want {
+		t.Errorf("QUIC code %d, want %d", code, want)
+	}
+	assertCounterMoved(t, c.ExpectText("count"), before, after)
+}
+
+// assertCounterMoved checks the counter the vector names moved between the two
+// readings; a vector naming none needs no counter to move.
+func assertCounterMoved(t *testing.T, counter string, before, after frame.WireCounts) {
+	t.Helper()
+	switch counter {
+	case "wire_unknown_frame_type":
+		if after.UnknownFrameType == before.UnknownFrameType {
+			t.Errorf("wire_unknown_frame_type did not count")
+		}
+	case "wire_ext_ignored":
+		if sum(after.ExtIgnored) == sum(before.ExtIgnored) {
+			t.Errorf("wire_ext_ignored did not count")
+		}
+	case "wire_ext_refused":
+		if sum(after.ExtRefused) == sum(before.ExtRefused) {
+			t.Errorf("wire_ext_refused did not count")
+		}
 	}
 }
 

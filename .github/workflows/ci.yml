@@ -32,6 +32,22 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
 
+  # The structural floor (macula-io/macula-codebase-checks#9): deep nesting
+  # and tangled functions fail the build. The thresholds are declared in
+  # .golangci.yml, with no baseline and no inline disables.
+  lint:
+    name: structural floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+          args: --timeout=15m
+
   test:
     name: test
     runs-on: ubuntu-latest

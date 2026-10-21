@@ -30,55 +30,84 @@ func nodeOf(t *testing.T, k *identity.NodeKey) [32]byte {
 // when it should.
 func TestCreatedTokensAuthorize(t *testing.T) {
 	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
-		t.Run(string(p), func(t *testing.T) {
-			root := teststation.Key(t, p, "ucan root")
-			alice := teststation.Key(t, p, "ucan alice")
-			bob := teststation.Key(t, p, "ucan bob")
-			const now = int64(1790000000)
-			request := &Request{Realm: sha256.Sum256([]byte("io.macula")), Procedure: "acme/count_v1"}
-			policy := UCANRequired{Issuer: nodeOf(t, root)}
+		t.Run(string(p), func(t *testing.T) { checkCreatedTokensAuthorize(t, p) })
+	}
+}
 
-			toAlice, err := Create(root, nodeOf(t, alice), []Capability{{With: "mri:org:io.macula/acme", Can: "invoke"}},
-				Options{Exp: now + 3600})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(toAlice), ".") || strings.Count(string(toAlice), ".") != 2 {
-				t.Fatalf("not a JWT: %.60s", toAlice)
-			}
-			ctx := Context{Caller: nodeOf(t, alice), Profile: p, Now: now, Request: request}
-			if _, err := Authorize(toAlice, policy, ctx); err != nil {
-				t.Fatalf("a root token: %v", err)
-			}
+// checkCreatedTokensAuthorize is one profile's chain: a root token authorizes
+// its audience, a token delegated from it authorizes with its proof beside it,
+// and each check refuses them when it should.
+func checkCreatedTokensAuthorize(t *testing.T, p profile.Profile) {
+	t.Helper()
+	root := teststation.Key(t, p, "ucan root")
+	alice := teststation.Key(t, p, "ucan alice")
+	bob := teststation.Key(t, p, "ucan bob")
+	const now = int64(1790000000)
+	request := &Request{Realm: sha256.Sum256([]byte("io.macula")), Procedure: "acme/count_v1"}
+	policy := UCANRequired{Issuer: nodeOf(t, root)}
 
-			toBob, err := Create(alice, nodeOf(t, bob), []Capability{{With: "mri:proc:io.macula/acme/count_v1", Can: "invoke"}},
-				Options{Exp: now + 60, Prf: []string{ProofID(toAlice)}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			chain := Context{Caller: nodeOf(t, bob), Profile: p, Now: now, Request: request,
-				Proofs: map[string][]byte{ProofID(toAlice): toAlice}}
-			if _, err := Authorize(toBob, policy, chain); err != nil {
-				t.Fatalf("a delegated chain: %v", err)
-			}
+	toAlice := mintRootToken(t, root, alice, now)
+	ctx := Context{Caller: nodeOf(t, alice), Profile: p, Now: now, Request: request}
+	if _, err := Authorize(toAlice, policy, ctx); err != nil {
+		t.Fatalf("a root token: %v", err)
+	}
 
-			for name, c := range map[string]struct {
-				ctx  Context
-				want error
-			}{
-				"presented by another node": {Context{Caller: nodeOf(t, bob), Profile: p, Now: now, Request: request}, ErrNotTheAudience},
-				"at its exp":                {Context{Caller: nodeOf(t, alice), Profile: p, Now: now + 3600, Request: request}, ErrExpired},
-				"for another procedure": {Context{Caller: nodeOf(t, alice), Profile: p, Now: now,
-					Request: &Request{Realm: request.Realm, Procedure: "beta/count_v1"}}, ErrMissingCapability},
-			} {
-				if _, err := Authorize(toAlice, policy, c.ctx); !errors.Is(err, c.want) {
-					t.Errorf("%s: %v, want %v", name, err, c.want)
-				}
-			}
-			if _, err := Authorize(toBob, policy, Context{Caller: nodeOf(t, bob), Profile: p, Now: now, Request: request}); !errors.Is(err, ErrMissingProof) {
-				t.Errorf("a chain without its proof: %v, want missing_proof", err)
-			}
-		})
+	toBob := mintDelegatedToken(t, alice, bob, toAlice, now)
+	chain := Context{Caller: nodeOf(t, bob), Profile: p, Now: now, Request: request,
+		Proofs: map[string][]byte{ProofID(toAlice): toAlice}}
+	if _, err := Authorize(toBob, policy, chain); err != nil {
+		t.Fatalf("a delegated chain: %v", err)
+	}
+
+	checkRootTokenRefusals(t, toAlice, policy, p, now, request, alice, bob)
+	if _, err := Authorize(toBob, policy, Context{Caller: nodeOf(t, bob), Profile: p, Now: now, Request: request}); !errors.Is(err, ErrMissingProof) {
+		t.Errorf("a chain without its proof: %v, want missing_proof", err)
+	}
+}
+
+// mintRootToken mints a root token for audience, and checks it is a JWT.
+func mintRootToken(t *testing.T, issuer, audience *identity.NodeKey, now int64) []byte {
+	t.Helper()
+	token, err := Create(issuer, nodeOf(t, audience), []Capability{{With: "mri:org:io.macula/acme", Can: "invoke"}},
+		Options{Exp: now + 3600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(token), ".") || strings.Count(string(token), ".") != 2 {
+		t.Fatalf("not a JWT: %.60s", token)
+	}
+	return token
+}
+
+// mintDelegatedToken mints a token from alice to bob, narrowed to one
+// procedure, that carries toAlice's proof id.
+func mintDelegatedToken(t *testing.T, alice, bob *identity.NodeKey, toAlice []byte, now int64) []byte {
+	t.Helper()
+	toBob, err := Create(alice, nodeOf(t, bob), []Capability{{With: "mri:proc:io.macula/acme/count_v1", Can: "invoke"}},
+		Options{Exp: now + 60, Prf: []string{ProofID(toAlice)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return toBob
+}
+
+// checkRootTokenRefusals: the root token is refused for another audience, at
+// its exp, and for another procedure.
+func checkRootTokenRefusals(t *testing.T, toAlice []byte, policy UCANRequired, p profile.Profile,
+	now int64, request *Request, alice, bob *identity.NodeKey) {
+	t.Helper()
+	for name, c := range map[string]struct {
+		ctx  Context
+		want error
+	}{
+		"presented by another node": {Context{Caller: nodeOf(t, bob), Profile: p, Now: now, Request: request}, ErrNotTheAudience},
+		"at its exp":                {Context{Caller: nodeOf(t, alice), Profile: p, Now: now + 3600, Request: request}, ErrExpired},
+		"for another procedure": {Context{Caller: nodeOf(t, alice), Profile: p, Now: now,
+			Request: &Request{Realm: request.Realm, Procedure: "beta/count_v1"}}, ErrMissingCapability},
+	} {
+		if _, err := Authorize(toAlice, policy, c.ctx); !errors.Is(err, c.want) {
+			t.Errorf("%s: %v, want %v", name, err, c.want)
+		}
 	}
 }
 

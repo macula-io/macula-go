@@ -142,40 +142,61 @@ func bytesList(items [][]byte) cbor.Value {
 func TestRecordsArePutAndFoundVerified(t *testing.T) {
 	for _, p := range profiles {
 		t.Run(string(p), func(t *testing.T) {
-			link, s := linkWithStation(t, p)
-			d := &dhtStation{byKey: map[[32]byte][][]byte{}, byType: map[record.Type][][]byte{}}
-			s.answerCalls(d.answer(t, s))
-			c := newClient(t, p)
-			nodeID, _ := c.key.NodeID()
-			unsigned, err := record.NewNodeRecord(nodeID, nil, 0, record.NodeRecordOptions{DisplayName: "venus"})
-			if err != nil {
-				t.Fatalf("NewNodeRecord: %v", err)
-			}
-			signed, err := record.Sign(unsigned, c.key)
-			if err != nil {
-				t.Fatalf("Sign: %v", err)
-			}
-			wire, err := record.Encode(signed)
-			if err != nil {
-				t.Fatalf("Encode: %v", err)
-			}
-			ctx := t.Context()
-			if err := link.PutRecord(ctx, wire); err != nil {
-				t.Fatalf("PutRecord: %v", err)
-			}
-			key, _ := record.StorageKey(signed)
-			found, err := link.FindRecord(ctx, key)
-			if err != nil || found.Record().Type != record.TypeNodeRecord {
-				t.Errorf("FindRecord: %v, %v", found.Record().Type, err)
-			}
-			byType, dropped, err := link.FindRecordsByType(ctx, record.TypeNodeRecord)
-			if err != nil || len(byType) != 1 || dropped != 0 {
-				t.Errorf("FindRecordsByType: %d records, %d dropped, %v", len(byType), dropped, err)
-			}
-			if _, err := link.FindRecord(ctx, [32]byte{9}); !errors.Is(err, ErrRecordNotFound) {
-				t.Errorf("FindRecord of an empty key: %v, want ErrRecordNotFound", err)
-			}
+			assertRecordIsPutAndFoundVerified(t, p)
 		})
+	}
+}
+
+// assertRecordIsPutAndFoundVerified puts a node record the client signs at a
+// station for p and checks it comes back, verified, by its storage key and by
+// type; a key with nothing stored is ErrRecordNotFound.
+func assertRecordIsPutAndFoundVerified(t *testing.T, p profile.Profile) {
+	t.Helper()
+	link, s := linkWithStation(t, p)
+	d := &dhtStation{byKey: map[[32]byte][][]byte{}, byType: map[record.Type][][]byte{}}
+	s.answerCalls(d.answer(t, s))
+	c := newClient(t, p)
+	nodeID, _ := c.key.NodeID()
+	unsigned, err := record.NewNodeRecord(nodeID, nil, 0, record.NodeRecordOptions{DisplayName: "venus"})
+	if err != nil {
+		t.Fatalf("NewNodeRecord: %v", err)
+	}
+	signed, err := record.Sign(unsigned, c.key)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	wire, err := record.Encode(signed)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	ctx := t.Context()
+	if err := link.PutRecord(ctx, wire); err != nil {
+		t.Fatalf("PutRecord: %v", err)
+	}
+	key, _ := record.StorageKey(signed)
+	assertFoundByKey(t, link, key)
+	assertFoundByType(t, link)
+	if _, err := link.FindRecord(ctx, [32]byte{9}); !errors.Is(err, ErrRecordNotFound) {
+		t.Errorf("FindRecord of an empty key: %v, want ErrRecordNotFound", err)
+	}
+}
+
+// assertFoundByKey checks the record stored under key is found, as a node
+// record.
+func assertFoundByKey(t *testing.T, link *Link, key [32]byte) {
+	t.Helper()
+	found, err := link.FindRecord(t.Context(), key)
+	if err != nil || found.Record().Type != record.TypeNodeRecord {
+		t.Errorf("FindRecord: %v, %v", found.Record().Type, err)
+	}
+}
+
+// assertFoundByType checks a node record is found by its type, none dropped.
+func assertFoundByType(t *testing.T, link *Link) {
+	t.Helper()
+	byType, dropped, err := link.FindRecordsByType(t.Context(), record.TypeNodeRecord)
+	if err != nil || len(byType) != 1 || dropped != 0 {
+		t.Errorf("FindRecordsByType: %d records, %d dropped, %v", len(byType), dropped, err)
 	}
 }
 

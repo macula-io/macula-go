@@ -65,33 +65,18 @@ func ReadEnvelope(v cbor.Value) (Envelope, error) {
 	var hasVersion bool
 	kept := make([]cbor.MapEntry, 0, len(entries))
 	for _, e := range entries {
-		name, isText := e.Key.AsText()
-		if !isText {
-			return Envelope{}, ErrMalformedFrame
+		name, err := envelopeEntry(e)
+		if err != nil {
+			return Envelope{}, err
 		}
 		switch name {
+		case "ext":
+			// Acted on already, and not part of the frame it carries.
+			continue
 		case "version":
-			if n, isInt := e.Val.AsInt64(); !isInt || n != ProtocolVersion {
-				return Envelope{}, fmt.Errorf("%w: version %+v", ErrMalformedFrame, e.Val)
-			}
 			hasVersion = true
 		case "frame_type":
-			text, isText := e.Val.AsText()
-			if !isText || text == "" || len(text) > maxFrameTypeBytes {
-				return Envelope{}, fmt.Errorf("%w: frame_type", ErrMalformedFrame)
-			}
-			frameType = text
-		case "ext":
-			if err := readExt(e.Val); err != nil {
-				return Envelope{}, err
-			}
-			continue
-		case "capabilities":
-			return Envelope{}, fmt.Errorf("%w: the dropped capabilities header", ErrMalformedFrame)
-		default:
-			if rule, shared := envelopeRules[name]; shared && !rule(e.Val) {
-				return Envelope{}, fmt.Errorf("%w: %s", ErrMalformedFrame, name)
-			}
+			frameType, _ = e.Val.AsText()
 		}
 		kept = append(kept, e)
 	}
@@ -99,6 +84,36 @@ func ReadEnvelope(v cbor.Value) (Envelope, error) {
 		return Envelope{}, ErrMalformedFrame
 	}
 	return Envelope{FrameType: frameType, Frame: cbor.Map(kept)}, nil
+}
+
+// envelopeEntry judges one envelope entry, and returns its name.
+func envelopeEntry(e cbor.MapEntry) (string, error) {
+	name, isText := e.Key.AsText()
+	if !isText {
+		return "", ErrMalformedFrame
+	}
+	switch name {
+	case "version":
+		if n, isInt := e.Val.AsInt64(); !isInt || n != ProtocolVersion {
+			return "", fmt.Errorf("%w: version %+v", ErrMalformedFrame, e.Val)
+		}
+	case "frame_type":
+		text, isText := e.Val.AsText()
+		if !isText || text == "" || len(text) > maxFrameTypeBytes {
+			return "", fmt.Errorf("%w: frame_type", ErrMalformedFrame)
+		}
+	case "ext":
+		if err := readExt(e.Val); err != nil {
+			return "", err
+		}
+	case "capabilities":
+		return "", fmt.Errorf("%w: the dropped capabilities header", ErrMalformedFrame)
+	default:
+		if rule, shared := envelopeRules[name]; shared && !rule(e.Val) {
+			return "", fmt.Errorf("%w: %s", ErrMalformedFrame, name)
+		}
+	}
+	return name, nil
 }
 
 // readExt judges an ext map (CheckExt) and acts on it (ActOnExt).

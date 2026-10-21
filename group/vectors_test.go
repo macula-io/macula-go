@@ -46,24 +46,28 @@ type vectorFile struct {
 		} `json:"result"`
 	} `json:"payloads"`
 	Profiles map[string]struct {
-		Cases []struct {
-			Name   string `json:"name"`
-			Token  string `json:"token"`
-			Policy struct {
-				Kind  string `json:"kind"`
-				KeyID string `json:"key_id"`
-				Can   string `json:"can"`
-			} `json:"policy"`
-			Context struct {
-				Caller    string `json:"caller"`
-				Now       int64  `json:"now"`
-				Realm     string `json:"realm"`
-				Procedure string `json:"procedure"`
-			} `json:"context"`
-			Verdict string `json:"verdict"`
-		} `json:"cases"`
+		Cases []vectorGrant `json:"cases"`
 	} `json:"profiles"`
 	Refusals []string `json:"refusals"`
+}
+
+// vectorGrant is one org's group_keys grant and the verdict macula reaches on
+// it.
+type vectorGrant struct {
+	Name   string `json:"name"`
+	Token  string `json:"token"`
+	Policy struct {
+		Kind  string `json:"kind"`
+		KeyID string `json:"key_id"`
+		Can   string `json:"can"`
+	} `json:"policy"`
+	Context struct {
+		Caller    string `json:"caller"`
+		Now       int64  `json:"now"`
+		Realm     string `json:"realm"`
+		Procedure string `json:"procedure"`
+	} `json:"context"`
+	Verdict string `json:"verdict"`
 }
 
 func loadVectors(t *testing.T) vectorFile {
@@ -139,24 +143,29 @@ func TestVectorsOrgGrantsAuthorizeAsMacula(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, c := range p.Cases {
-			t.Run(name+"/"+c.Name, func(t *testing.T) {
-				if c.Policy.Kind != "realm_member_required" {
-					t.Fatalf("a policy of kind %q", c.Policy.Kind)
-				}
-				policy := ucan.RealmMemberRequired{KeyID: [32]byte(unhex(t, c.Policy.KeyID)), Can: c.Policy.Can}
-				ctx := ucan.Context{Caller: [32]byte(unhex(t, c.Context.Caller)), Profile: prof, Now: c.Context.Now,
-					Proofs:  map[string][]byte{},
-					Request: &ucan.Request{Realm: [32]byte(unhex(t, c.Context.Realm)), Procedure: c.Context.Procedure}}
-				_, err := ucan.Authorize([]byte(c.Token), policy, ctx)
-				got := "ok"
-				if err != nil {
-					got = ucan.RefusalName(err)
-				}
-				if got != c.Verdict {
-					t.Fatalf("verdict %s (%v), macula's is %s", got, err, c.Verdict)
-				}
-			})
+			t.Run(name+"/"+c.Name, func(t *testing.T) { assertGrantAuthorizesAsMacula(t, prof, c) })
 		}
+	}
+}
+
+// assertGrantAuthorizesAsMacula checks the org's grant, under its realm member
+// policy, reaches macula's verdict: granted, or the refusal macula names.
+func assertGrantAuthorizesAsMacula(t *testing.T, prof profile.Profile, c vectorGrant) {
+	t.Helper()
+	if c.Policy.Kind != "realm_member_required" {
+		t.Fatalf("a policy of kind %q", c.Policy.Kind)
+	}
+	policy := ucan.RealmMemberRequired{KeyID: [32]byte(unhex(t, c.Policy.KeyID)), Can: c.Policy.Can}
+	ctx := ucan.Context{Caller: [32]byte(unhex(t, c.Context.Caller)), Profile: prof, Now: c.Context.Now,
+		Proofs:  map[string][]byte{},
+		Request: &ucan.Request{Realm: [32]byte(unhex(t, c.Context.Realm)), Procedure: c.Context.Procedure}}
+	_, err := ucan.Authorize([]byte(c.Token), policy, ctx)
+	got := "ok"
+	if err != nil {
+		got = ucan.RefusalName(err)
+	}
+	if got != c.Verdict {
+		t.Fatalf("verdict %s (%v), macula's is %s", got, err, c.Verdict)
 	}
 }
 

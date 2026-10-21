@@ -26,16 +26,20 @@ import (
 type realmMemberEndorsementVectors struct {
 	Realm    string `json:"realm"`
 	Profiles map[string]struct {
-		RealmKey string `json:"realm_key"`
-		Cases    []struct {
-			Name    string   `json:"name"`
-			Record  string   `json:"record"`
-			Member  string   `json:"member"`
-			NowMs   int64    `json:"now_ms"`
-			Roles   []string `json:"roles"`
-			Refused string   `json:"refused"`
-		} `json:"cases"`
+		RealmKey string                       `json:"realm_key"`
+		Cases    []realmMemberEndorsementCase `json:"cases"`
 	} `json:"profiles"`
+}
+
+// realmMemberEndorsementCase is one signed endorsement, the member it is
+// checked as and its verdict: the endorsed roles, or the refusal's name.
+type realmMemberEndorsementCase struct {
+	Name    string   `json:"name"`
+	Record  string   `json:"record"`
+	Member  string   `json:"member"`
+	NowMs   int64    `json:"now_ms"`
+	Roles   []string `json:"roles"`
+	Refused string   `json:"refused"`
 }
 
 // refusalNames is each refusal by the name macula gives it.
@@ -64,25 +68,33 @@ func TestRealmMemberEndorsementVectors(t *testing.T) {
 		for _, c := range p.Cases {
 			cases++
 			t.Run(name+"/"+c.Name, func(t *testing.T) {
-				roles, err := VerifyRealmMemberEndorsement(decodeHex(t, c.Record), trust, realm, id32(t, c.Member), c.NowMs)
-				if c.Refused == "" {
-					if err != nil || !slices.Equal(roles, c.Roles) {
-						t.Fatalf("got %v, %v; macula admits with roles %v", roles, err, c.Roles)
-					}
-					return
-				}
-				want, named := refusalNames[c.Refused]
-				if !named {
-					t.Fatalf("macula refuses %s, a name this test does not map", c.Refused)
-				}
-				if !errors.Is(err, want) || roles != nil {
-					t.Fatalf("got %v, %v; macula refuses %s", roles, err, c.Refused)
-				}
+				checkEndorsement(t, trust, realm, c)
 			})
 		}
 	}
 	if cases != 28 {
 		t.Errorf("%d cases, want 14 per profile", cases)
+	}
+}
+
+// checkEndorsement holds VerifyRealmMemberEndorsement to macula's verdict on
+// one case: the same roles where macula admits, the same refusal where it
+// refuses.
+func checkEndorsement(t *testing.T, trust Trust, realm [32]byte, c realmMemberEndorsementCase) {
+	t.Helper()
+	roles, err := VerifyRealmMemberEndorsement(decodeHex(t, c.Record), trust, realm, id32(t, c.Member), c.NowMs)
+	if c.Refused == "" {
+		if err != nil || !slices.Equal(roles, c.Roles) {
+			t.Fatalf("got %v, %v; macula admits with roles %v", roles, err, c.Roles)
+		}
+		return
+	}
+	want, named := refusalNames[c.Refused]
+	if !named {
+		t.Fatalf("macula refuses %s, a name this test does not map", c.Refused)
+	}
+	if !errors.Is(err, want) || roles != nil {
+		t.Fatalf("got %v, %v; macula refuses %s", roles, err, c.Refused)
 	}
 }
 

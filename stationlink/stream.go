@@ -366,26 +366,42 @@ func (s *Stream) readEnded(err error) {
 
 // received handles one frame from the peer, and reports whether reading stops.
 func (s *Stream) received(payload []byte, state frame.StreamState) (frame.StreamState, bool) {
+	verified, state, ok := s.verifiedFrame(payload, state)
+	if !ok {
+		return state, true
+	}
+	if s.caller {
+		// A frame unsealed returned has opened under the stream's key, or is
+		// one a clear stream takes: the report's settle point (Report).
+		s.settleOn(verified.FrameType)
+	}
+	return s.applyFrame(verified, payload, state)
+}
+
+// verifiedFrame decodes one frame from the peer and verifies it, unsealing it
+// when the stream is sealed. ok is false when the frame was refused and
+// reading stops.
+func (s *Stream) verifiedFrame(payload []byte, state frame.StreamState) (frame.VerifiedStreamFrame, frame.StreamState, bool) {
 	v, err := cbor.Decode(payload)
 	if err != nil {
 		s.fail("malformed_frame", err)
-		return state, true
+		return frame.VerifiedStreamFrame{}, state, false
 	}
 	if unknownOnStream(v) {
 		s.mu.Lock()
 		s.resetCode = quicCodeUnknownFrameType
 		s.mu.Unlock()
 		s.end(&StreamError{Code: "unknown_frame_type"})
-		return state, true
+		return frame.VerifiedStreamFrame{}, state, false
 	}
 	if _, isRelay := v.Get("relay_error"); isRelay && s.caller {
 		relayed, err := frame.VerifyRelayError(v, s.open, s.link.profile, s.link.station.NodeID)
 		if err != nil {
 			s.fail("malformed_frame", err)
-			return state, true
+			return frame.VerifiedStreamFrame{}, state, false
 		}
 		s.peerFinished(&StreamError{Code: relayed.Code, Relay: true})
-		return state, true
+		return frame.VerifiedStreamFrame{}, state, false
 	}
 	var verified frame.VerifiedStreamFrame
 	if s.caller {
@@ -398,28 +414,21 @@ func (s *Stream) received(payload []byte, state frame.StreamState) (frame.Stream
 		// An enum value this library does not know refuses the frame by
 		// name (WIRE_1_0.md section 3.4).
 		s.fail("enum_unknown", err)
-		return state, true
+		return frame.VerifiedStreamFrame{}, state, false
 	case err != nil:
 		s.fail("malformed_frame", err)
-		return state, true
+		return frame.VerifiedStreamFrame{}, state, false
 	}
 	if verified, err = s.unsealed(verified); err != nil {
-		var refused *StreamError
-		if errors.As(err, &refused) {
-			if refused.Code == codeSealedRefused && s.resealed(refused) {
-				return state, true
-			}
-			s.peerFinished(refused)
-		} else {
-			s.fail("malformed_frame", err)
-		}
-		return state, true
+		s.refuseUnsealed(err)
+		return frame.VerifiedStreamFrame{}, state, false
 	}
-	if s.caller {
-		// A frame unsealed returned has opened under the stream's key, or is
-		// one a clear stream takes: the report's settle point (Report).
-		s.settleOn(verified.FrameType)
-	}
+	return verified, state, true
+}
+
+// applyFrame is what one verified frame does to the stream; stop reports
+// whether reading ends after it.
+func (s *Stream) applyFrame(verified frame.VerifiedStreamFrame, payload []byte, state frame.StreamState) (frame.StreamState, bool) {
 	switch verified.FrameType {
 	case "stream_error":
 		s.peerFinished(&StreamError{Code: verified.Code, Message: verified.Message})
@@ -429,18 +438,7 @@ func (s *Stream) received(payload []byte, state frame.StreamState) (frame.Stream
 		s.peerFinished(nil)
 		return state, true
 	case "stream_end":
-		s.deliver(StreamEvent{Kind: StreamEnd, Role: verified.Role}, len(payload))
-		if verified.Role == frame.Both {
-			s.peerFinished(nil)
-			return state, true
-		}
-		s.mu.Lock()
-		s.peerEnded = true
-		mine := s.sentEnd
-		s.mu.Unlock()
-		if mine {
-			s.end(nil)
-		}
+		s.peerEndReached(verified, payload)
 		return state, true
 	}
 	if !s.deliver(StreamEvent{Kind: StreamData, Encoding: verified.Encoding, Body: verified.Body}, len(payload)) {
@@ -448,6 +446,23 @@ func (s *Stream) received(payload []byte, state frame.StreamState) (frame.Stream
 		return state, true
 	}
 	return state, false
+}
+
+// peerEndReached is a STREAM_END from the peer: the stream ends once both
+// sides have ended, as the end's role says.
+func (s *Stream) peerEndReached(verified frame.VerifiedStreamFrame, payload []byte) {
+	s.deliver(StreamEvent{Kind: StreamEnd, Role: verified.Role}, len(payload))
+	if verified.Role == frame.Both {
+		s.peerFinished(nil)
+		return
+	}
+	s.mu.Lock()
+	s.peerEnded = true
+	mine := s.sentEnd
+	s.mu.Unlock()
+	if mine {
+		s.end(nil)
+	}
 }
 
 // deliver queues event for Recv, refusing it when it would take the inbox, or

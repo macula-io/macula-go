@@ -565,34 +565,17 @@ func AcceptConnect(connect []byte, s StationSession) (Client, []byte, error) {
 
 // checkConnect returns the client and the session proof.
 func checkConnect(connect []byte, s StationSession) (Client, []byte, error) {
-	if !knownPuzzleMode(s.PuzzleMode) || s.PuzzleDifficulty < 0 || s.PuzzleDifficulty > 256 {
-		return Client{}, nil, ErrInvalidStationSession
-	}
-	f, err := decode(connect, "connect", connectKeys)
+	f, err := decodeConnect(connect, s)
 	if err != nil {
 		return Client{}, nil, err
 	}
-	switch {
-	case !sameRanges(f.ranges(), s.Negotiated.Client):
-		return Client{}, nil, ErrNegotiationMismatch
-	case profile.Profile(f.text("profile")) != s.Negotiated.Profile || s.Negotiated.Profile != s.Profile:
-		return Client{}, nil, ErrProfileUnsupported
-	}
 	identityKey, connectKey, proof := f.bytes("identity_key"), f.bytes("connect_key"), f.bytes("proof")
-	switch {
-	case !identity.CarriedKeyWellFormed(identityKey, s.Profile) || !identity.CarriedKeyWellFormed(connectKey, s.Profile) ||
-		len(proof) != identity.SignatureSize(s.Profile):
-		return Client{}, nil, ErrMalformedFrame
-	case sharesAHalf(identityKey, connectKey) || inLeaf(connectKey, s.Leaf):
-		return Client{}, nil, ErrKeyPurposeReuse
+	if err := checkConnectKeys(identityKey, connectKey, proof, s); err != nil {
+		return Client{}, nil, err
 	}
 	nodeID := identity.NodeIDOf(identityKey, s.Profile)
-	puzzle := puzzleResult(nodeID, s)
-	if puzzle == PuzzleResultUnsolved && s.PuzzleMode == PuzzleModeEnforce {
-		return Client{}, nil, ErrPuzzleInvalid
-	}
-	if s.Negotiated.Version < s.Floor.of(nodeID) {
-		return Client{}, nil, ErrVersionBelowFloor
+	if err := checkPuzzleAndFloor(nodeID, s); err != nil {
+		return Client{}, nil, err
 	}
 	connectBinding := f.signed("connect_binding")
 	binding, err := identity.VerifyConnectBinding(connectBinding, identityKey, s.Profile, connectKey, s.NowMs)
@@ -603,33 +586,13 @@ func checkConnect(connect []byte, s StationSession) (Client, []byte, error) {
 	if err != nil {
 		return Client{}, nil, err
 	}
-	challenge, err := decode(s.Challenge, "challenge", challengeKeys)
-	if err != nil {
-		return Client{}, nil, ErrProofInvalid
-	}
-	stationNodeID := identity.NodeIDOf(challenge.bytes("identity_key"), s.Profile)
-	e, err := sessionExported(s.Export, nodeID, stationNodeID)
+	e, stationNodeID, err := checkConnectProof(f, connect, s, identityKey, connectKey, proof, nodeID)
 	if err != nil {
 		return Client{}, nil, err
 	}
-	tbs, err := connectTBS(connect)
+	sessionProof, err := signSessionProof(s, connect, e, stationNodeID, nodeID)
 	if err != nil {
 		return Client{}, nil, err
-	}
-	message := proofMessage(challenge.bytes("nonce"), stationNodeID, nodeID, s.Leaf, s.Challenge, e, tbs)
-	if !identity.Verify(message, proof, connectKey, s.Profile) {
-		return Client{}, nil, ErrProofInvalid
-	}
-	if s.SignSessionProof == nil {
-		return Client{}, nil, ErrExporterUnavailable
-	}
-	sessionProof, err := s.SignSessionProof(nodeID,
-		sessionProofMessage(e, s.Challenge, connect, stationNodeID, nodeID, helloAccepted(s.Capabilities, nil)))
-	if errors.Is(err, ErrSessionProofRate) {
-		return Client{}, nil, ErrSessionProofRate
-	}
-	if err != nil {
-		return Client{}, nil, fmt.Errorf("handshake: sign the session proof: %w", err)
 	}
 	return Client{
 		NodeID:            nodeID,
@@ -639,10 +602,94 @@ func checkConnect(connect []byte, s StationSession) (Client, []byte, error) {
 		Capabilities:      f.uint("capabilities"),
 		StatusExpiresAt:   expiresAt,
 		BindingNotAfter:   binding.NotAfter,
-		Puzzle:            puzzle,
+		Puzzle:            puzzleResult(nodeID, s),
 		MemberEndorsement: endorsementBytes(f.bytes("member_endorsement")),
 		Version:           s.Negotiated.Version,
 	}, sessionProof, nil
+}
+
+// decodeConnect is the station's own session checked, and the CONNECT frame
+// decoded once it agrees with what HELLO negotiated.
+func decodeConnect(connect []byte, s StationSession) (frameFields, error) {
+	if !knownPuzzleMode(s.PuzzleMode) || s.PuzzleDifficulty < 0 || s.PuzzleDifficulty > 256 {
+		return frameFields{}, ErrInvalidStationSession
+	}
+	f, err := decode(connect, "connect", connectKeys)
+	if err != nil {
+		return frameFields{}, err
+	}
+	switch {
+	case !sameRanges(f.ranges(), s.Negotiated.Client):
+		return frameFields{}, ErrNegotiationMismatch
+	case profile.Profile(f.text("profile")) != s.Negotiated.Profile || s.Negotiated.Profile != s.Profile:
+		return frameFields{}, ErrProfileUnsupported
+	}
+	return f, nil
+}
+
+// checkConnectKeys refuses a key that is not well formed for the profile, a
+// proof of the wrong length, and a key reused for another purpose.
+func checkConnectKeys(identityKey, connectKey, proof []byte, s StationSession) error {
+	switch {
+	case !identity.CarriedKeyWellFormed(identityKey, s.Profile) || !identity.CarriedKeyWellFormed(connectKey, s.Profile) ||
+		len(proof) != identity.SignatureSize(s.Profile):
+		return ErrMalformedFrame
+	case sharesAHalf(identityKey, connectKey) || inLeaf(connectKey, s.Leaf):
+		return ErrKeyPurposeReuse
+	}
+	return nil
+}
+
+// checkPuzzleAndFloor refuses an unsolved puzzle where the station enforces
+// it, and a negotiation below the node's version floor.
+func checkPuzzleAndFloor(nodeID [32]byte, s StationSession) error {
+	puzzle := puzzleResult(nodeID, s)
+	if puzzle == PuzzleResultUnsolved && s.PuzzleMode == PuzzleModeEnforce {
+		return ErrPuzzleInvalid
+	}
+	if s.Negotiated.Version < s.Floor.of(nodeID) {
+		return ErrVersionBelowFloor
+	}
+	return nil
+}
+
+// checkConnectProof is the session's own proof: the challenge the station
+// sent is read, and the CONNECT's proof must verify the message it implies.
+func checkConnectProof(f frameFields, connect []byte, s StationSession, identityKey, connectKey, proof []byte, nodeID [32]byte) ([]byte, [32]byte, error) {
+	challenge, err := decode(s.Challenge, "challenge", challengeKeys)
+	if err != nil {
+		return nil, [32]byte{}, ErrProofInvalid
+	}
+	stationNodeID := identity.NodeIDOf(challenge.bytes("identity_key"), s.Profile)
+	e, err := sessionExported(s.Export, nodeID, stationNodeID)
+	if err != nil {
+		return nil, [32]byte{}, err
+	}
+	tbs, err := connectTBS(connect)
+	if err != nil {
+		return nil, [32]byte{}, err
+	}
+	message := proofMessage(challenge.bytes("nonce"), stationNodeID, nodeID, s.Leaf, s.Challenge, e, tbs)
+	if !identity.Verify(message, proof, connectKey, s.Profile) {
+		return nil, [32]byte{}, ErrProofInvalid
+	}
+	return e, stationNodeID, nil
+}
+
+// signSessionProof signs the session proof the station answers HELLO with.
+func signSessionProof(s StationSession, connect, e []byte, stationNodeID, nodeID [32]byte) ([]byte, error) {
+	if s.SignSessionProof == nil {
+		return nil, ErrExporterUnavailable
+	}
+	sessionProof, err := s.SignSessionProof(nodeID,
+		sessionProofMessage(e, s.Challenge, connect, stationNodeID, nodeID, helloAccepted(s.Capabilities, nil)))
+	if errors.Is(err, ErrSessionProofRate) {
+		return nil, ErrSessionProofRate
+	}
+	if err != nil {
+		return nil, fmt.Errorf("handshake: sign the session proof: %w", err)
+	}
+	return sessionProof, nil
 }
 
 // connectTBS is the CONNECT tbs a received CONNECT's proof covers: the frame

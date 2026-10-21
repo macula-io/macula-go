@@ -46,20 +46,35 @@ func (f *fake) pull(_ context.Context, p Pull) (cbor.Value, [32]byte, error) {
 	}
 	epochs := f.served
 	if id, ok := p.Payload.Get("epoch"); ok {
-		if b, isID := id.AsBytes(); isID {
-			epochs = nil
-			for _, e := range f.served {
-				if bytes.Equal(e.ID[:], b) {
-					epochs = []Epoch{e}
-				}
-			}
-			if epochs == nil {
-				detail := "unknown_epoch"
-				return cbor.Value{}, [32]byte{}, &stationlink.ProviderError{Code: "handler_error", Detail: &detail}
-			}
+		served, err := f.servedEpoch(id)
+		if err != nil {
+			return cbor.Value{}, [32]byte{}, err
 		}
+		epochs = served
 	}
 	return ReplyValue(Reply{Prefix: prefix, Policy: f.policy, Epochs: epochs}), [32]byte{0xd1}, nil
+}
+
+// servedEpoch is the epoch a pull names, when its epoch field holds an id the
+// distributor serves. A field that is not an id names whatever is current, and
+// an id it does not serve is refused as unknown. It reads f.served, which the
+// caller holds the lock over.
+func (f *fake) servedEpoch(id cbor.Value) ([]Epoch, error) {
+	b, isID := id.AsBytes()
+	if !isID {
+		return f.served, nil
+	}
+	var served []Epoch
+	for _, e := range f.served {
+		if bytes.Equal(e.ID[:], b) {
+			served = []Epoch{e}
+		}
+	}
+	if served != nil {
+		return served, nil
+	}
+	detail := "unknown_epoch"
+	return nil, &stationlink.ProviderError{Code: "handler_error", Detail: &detail}
 }
 
 func (f *fake) keyring() *Keyring {

@@ -28,33 +28,46 @@ func TestTheWireOneTBSVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range f.Cases {
-		t.Run(c.ID, func(t *testing.T) {
-			fields, _ := c.Input["fields"].(map[string]any)
-			tbs := cbor.Encode(typedValue(t, fields))
-			if want := expectHex(t, c, "tbs"); !bytes.Equal(tbs, want) {
-				t.Fatalf("tbs\n got %x\nwant %x", tbs, want)
-			}
-			key, err := keys.Key(c.Profile, c.Text("signer"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var input []byte
-			switch c.Text("form") {
-			case "keyed":
-				input = objectSignedBytes(c.Text("label"), key, tbs)
-			case "unkeyed":
-				input = labelled(c.Text("label"), tbs)
-			default:
-				t.Fatalf("form %q has no signing input here", c.Text("form"))
-			}
-			if want := expectHex(t, c, "signing_input"); !bytes.Equal(input, want) {
-				t.Fatalf("signing input\n got %x\nwant %x", input, want)
-			}
-			if !Verify(input, expectHex(t, c, "signature"), key, profile.Profile(c.Profile)) {
-				t.Errorf("the signature does not verify over the signing input")
-			}
-		})
+		t.Run(c.ID, func(t *testing.T) { checkTBSVector(t, c, keys) })
 	}
+}
+
+// checkTBSVector checks one vector: fields encode to its tbs, the tbs under its
+// label and signer is its signing input, and the vector's signature verifies
+// over that input.
+func checkTBSVector(t *testing.T, c wire10vectors.Case, keys wire10vectors.Keys) {
+	t.Helper()
+	fields, _ := c.Input["fields"].(map[string]any)
+	tbs := cbor.Encode(typedValue(t, fields))
+	if want := expectHex(t, c, "tbs"); !bytes.Equal(tbs, want) {
+		t.Fatalf("tbs\n got %x\nwant %x", tbs, want)
+	}
+	key, err := keys.Key(c.Profile, c.Text("signer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := signingInput(t, c, key, tbs)
+	if want := expectHex(t, c, "signing_input"); !bytes.Equal(input, want) {
+		t.Fatalf("signing input\n got %x\nwant %x", input, want)
+	}
+	if !Verify(input, expectHex(t, c, "signature"), key, profile.Profile(c.Profile)) {
+		t.Errorf("the signature does not verify over the signing input")
+	}
+}
+
+// signingInput is the vector's signing input: a keyed structure's label, a zero
+// byte and the sha384 of the key as carried, or an unkeyed structure's label
+// and a zero byte, before the tbs.
+func signingInput(t *testing.T, c wire10vectors.Case, key, tbs []byte) []byte {
+	t.Helper()
+	switch c.Text("form") {
+	case "keyed":
+		return objectSignedBytes(c.Text("label"), key, tbs)
+	case "unkeyed":
+		return labelled(c.Text("label"), tbs)
+	}
+	t.Fatalf("form %q has no signing input here", c.Text("form"))
+	return nil
 }
 
 func expectHex(t *testing.T, c wire10vectors.Case, name string) []byte {
@@ -89,24 +102,31 @@ func typedValue(t *testing.T, v any) cbor.Value {
 		}
 		return cbor.List(items)
 	case map[string]any:
-		if h, isHex := v["$hex"].(string); isHex && len(v) == 1 {
-			b, err := hex.DecodeString(h)
-			if err != nil {
-				t.Fatalf("$hex %q: %v", h, err)
-			}
-			return cbor.Bytes(b)
-		}
-		names := make([]string, 0, len(v))
-		for name := range v {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		entries := make([]cbor.MapEntry, len(names))
-		for i, name := range names {
-			entries[i] = cbor.MapEntry{Key: cbor.Text(name), Val: typedValue(t, v[name])}
-		}
-		return cbor.Map(entries)
+		return typedMapValue(t, v)
 	}
 	t.Fatalf("a typed JSON value of %T", v)
 	return cbor.Value{}
+}
+
+// typedMapValue is a typed JSON object: {"$hex": ...} is a byte string, and any
+// other object a map with text keys in sorted order.
+func typedMapValue(t *testing.T, v map[string]any) cbor.Value {
+	t.Helper()
+	if h, isHex := v["$hex"].(string); isHex && len(v) == 1 {
+		b, err := hex.DecodeString(h)
+		if err != nil {
+			t.Fatalf("$hex %q: %v", h, err)
+		}
+		return cbor.Bytes(b)
+	}
+	names := make([]string, 0, len(v))
+	for name := range v {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	entries := make([]cbor.MapEntry, len(names))
+	for i, name := range names {
+		entries[i] = cbor.MapEntry{Key: cbor.Text(name), Val: typedValue(t, v[name])}
+	}
+	return cbor.Map(entries)
 }

@@ -95,17 +95,36 @@ func classify(ctx context.Context, err error) *abiError {
 	if errors.As(err, &ae) {
 		return ae
 	}
-	if ctx != nil {
-		switch context.Cause(ctx) {
-		case nil:
-		case errTokenCancelled:
-			return newError(kindCancelled, "the call was cancelled")
-		default:
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return newError(kindTimeout, "the call's timeout ran out")
-			}
-		}
+	if verdict := contextVerdict(ctx); verdict != nil {
+		return verdict
 	}
+	if verdict := groupVerdict(err); verdict != nil {
+		return verdict
+	}
+	if verdict := registrationRefusal(err); verdict != nil {
+		return verdict
+	}
+	if verdict := stationVerdict(err); verdict != nil {
+		return verdict
+	}
+	return newError(kindFailed, "%v", err)
+}
+
+// contextVerdict is why a call ended, when its context says so.
+func contextVerdict(ctx context.Context) *abiError {
+	if ctx == nil || context.Cause(ctx) == nil {
+		return nil
+	}
+	if context.Cause(ctx) == errTokenCancelled {
+		return newError(kindCancelled, "the call was cancelled")
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return newError(kindTimeout, "the call's timeout ran out")
+	}
+	return nil
+}
+
+func groupVerdict(err error) *abiError {
 	var groupErr *group.Error
 	var held *pool.GroupHeldError
 	switch {
@@ -116,6 +135,11 @@ func classify(ctx context.Context, err error) *abiError {
 	case errors.Is(err, group.ErrInvalidGroup):
 		return newError(kindInvalidArgument, "%v", err)
 	}
+	return nil
+}
+
+// registrationRefusal is a serve or subscribe no station accepted.
+func registrationRefusal(err error) *abiError {
 	var registerRefused *stationlink.RefusedError
 	var unacknowledged *stationlink.UnacknowledgedError
 	switch {
@@ -124,6 +148,11 @@ func classify(ctx context.Context, err error) *abiError {
 	case errors.As(err, &unacknowledged):
 		return registrationVerdict(err, unacknowledged.Kind, unacknowledged.Station, "unacknowledged")
 	}
+	return nil
+}
+
+// stationVerdict is err as one of the station's own refusals reports it.
+func stationVerdict(err error) *abiError {
 	var provider *stationlink.ProviderError
 	var relay *stationlink.RelayError
 	var confidentiality *stationlink.ConfidentialityError
@@ -171,7 +200,7 @@ func classify(ctx context.Context, err error) *abiError {
 	case errors.Is(err, pool.ErrNoProvider):
 		return newError(kindNoProvider, "%v", err)
 	}
-	return newError(kindFailed, "%v", err)
+	return nil
 }
 
 // registrationVerdict is a serve or subscribe no station accepted (macula#12):

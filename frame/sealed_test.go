@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
 )
 
@@ -107,28 +108,44 @@ func TestASealedReplyCarriesSealedAlone(t *testing.T) {
 	request := verifiedCall(t, keys)
 	sealed := sealedOf(nil, make([]byte, 12))
 	for _, frameType := range []string{frameTypeResult, frameTypeError} {
-		var signed cbor.Value
-		if frameType == frameTypeResult {
-			signed = must[cbor.Value](t)(SignSealedResult(request, sealed, nil, keys.provider))
-		} else {
-			signed = must[cbor.Value](t)(SignSealedProviderError(request, sealed, nil, keys.provider))
-		}
-		reply := must[VerifiedReply](t)(VerifyReply(onWire(t, signed), request, profile.PQPure))
-		if reply.FrameType != frameType || reply.Sealed == nil || reply.Sealed.KeyID != sealed.KeyID || reply.Code != "" {
-			t.Errorf("a sealed %s verified as %+v", frameType, reply)
-		}
-		fields := objectFields(t, signed, "reply")
-		for _, clearField := range []string{"payload", "code", "detail"} {
-			if _, has := fields[clearField]; has {
-				t.Errorf("a sealed %s signed %s beside its sealed field", frameType, clearField)
-			}
-		}
+		checkSealedReply(t, request, sealed, frameType, keys.provider)
 	}
 	if clear := must[VerifiedReply](t)(VerifyReply(onWire(t, must[cbor.Value](t)(SignResult(request, cbor.Text("ok"), nil,
 		keys.provider))), request, profile.PQPure)); clear.Sealed != nil {
 		t.Error("a clear RESULT verified as sealed")
 	}
+	checkSealedReplyWithAClearField(t, request, sealed, keys.provider)
+	if _, err := SignSealedResult(request, sealedOf(nil, nil), nil, keys.provider); err == nil {
+		t.Error("a reply sealed without its nonce was signed")
+	}
+}
 
+// checkSealedReply holds a sealed RESULT or ERROR to the reply a verifier
+// reads: sealed, with no code of its own, and no clear field signed beside it.
+func checkSealedReply(t *testing.T, request VerifiedRequest, sealed Sealed, frameType string, key *identity.NodeKey) {
+	t.Helper()
+	var signed cbor.Value
+	if frameType == frameTypeResult {
+		signed = must[cbor.Value](t)(SignSealedResult(request, sealed, nil, key))
+	} else {
+		signed = must[cbor.Value](t)(SignSealedProviderError(request, sealed, nil, key))
+	}
+	reply := must[VerifiedReply](t)(VerifyReply(onWire(t, signed), request, profile.PQPure))
+	if reply.FrameType != frameType || reply.Sealed == nil || reply.Sealed.KeyID != sealed.KeyID || reply.Code != "" {
+		t.Errorf("a sealed %s verified as %+v", frameType, reply)
+	}
+	fields := objectFields(t, signed, "reply")
+	for _, clearField := range []string{"payload", "code", "detail"} {
+		if _, has := fields[clearField]; has {
+			t.Errorf("a sealed %s signed %s beside its sealed field", frameType, clearField)
+		}
+	}
+}
+
+// checkSealedReplyWithAClearField holds each crafted reply that signs a clear
+// field beside its sealed one to a malformed frame.
+func checkSealedReplyWithAClearField(t *testing.T, request VerifiedRequest, sealed Sealed, key *identity.NodeKey) {
+	t.Helper()
 	for name, fields := range map[string][]cbor.MapEntry{
 		"a sealed ERROR with a code":       withEntry(replyTBS(request, frameTypeError), "sealed", sealed.value()),
 		"a sealed RESULT with its payload": withEntry(replyTBS(request, frameTypeResult), "sealed", sealed.value()),
@@ -139,11 +156,8 @@ func TestASealedReplyCarriesSealedAlone(t *testing.T) {
 		if name == "a sealed ERROR with a code" {
 			frameType = frameTypeError
 		}
-		_, err := VerifyReply(onWire(t, crafted(frameType, "reply", signedWith(t, replyLabel, fields, keys.provider))), request, profile.PQPure)
+		_, err := VerifyReply(onWire(t, crafted(frameType, "reply", signedWith(t, replyLabel, fields, key))), request, profile.PQPure)
 		wantRefusal(t, name, err, ErrMalformedFrame)
-	}
-	if _, err := SignSealedResult(request, sealedOf(nil, nil), nil, keys.provider); err == nil {
-		t.Error("a reply sealed without its nonce was signed")
 	}
 }
 

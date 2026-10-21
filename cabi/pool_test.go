@@ -289,25 +289,7 @@ func TestServedStreamsRunBothWays(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = s.stop() })
 
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		item, state := s.box.next(ctx)
-		if state != inboxItemReady {
-			t.Errorf("no session: %v", state)
-			return
-		}
-		session, ok := valueOf[*stationlink.Stream](item.handle)
-		if !ok {
-			t.Error("the session's handle is not a stream")
-			return
-		}
-		one, _ := payloadFromJSON(`{"n": 1}`)
-		_ = session.SendValue(one)
-		_ = session.Send([]byte{7, 8})
-		done, _ := payloadFromJSON(`"done"`)
-		_ = session.Reply(done)
-	}()
+	go serveStreamSession(t, s)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -316,6 +298,40 @@ func TestServedStreamsRunBothWays(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = stream.Close() }()
+	joined := strings.Join(recvFramesUntilEnd(t, ctx, stream), "\n")
+	for _, want := range []string{`"body":{"n":1}`, `"body":{"$bytes":"Bwg="}`, `"kind":"reply"`, `"payload":"done"`, `"kind":"eof"`} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the frames lack %s:\n%s", want, joined)
+		}
+	}
+}
+
+// serveStreamSession answers one session on a served stream with a value, a
+// raw chunk and a reply, then ends.
+func serveStreamSession(t *testing.T, s *served) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	item, state := s.box.next(ctx)
+	if state != inboxItemReady {
+		t.Errorf("no session: %v", state)
+		return
+	}
+	session, ok := valueOf[*stationlink.Stream](item.handle)
+	if !ok {
+		t.Error("the session's handle is not a stream")
+		return
+	}
+	one, _ := payloadFromJSON(`{"n": 1}`)
+	_ = session.SendValue(one)
+	_ = session.Send([]byte{7, 8})
+	done, _ := payloadFromJSON(`"done"`)
+	_ = session.Reply(done)
+}
+
+// recvFramesUntilEnd collects a stream's frames up to its end frame.
+func recvFramesUntilEnd(t *testing.T, ctx context.Context, stream *stationlink.Stream) []string {
+	t.Helper()
 	var frames []string
 	for {
 		out, err := recvJSON(ctx, stream)
@@ -324,13 +340,7 @@ func TestServedStreamsRunBothWays(t *testing.T) {
 		}
 		frames = append(frames, out)
 		if strings.Contains(out, `"kind":"eof"`) || strings.Contains(out, `"kind":"error"`) {
-			break
-		}
-	}
-	joined := strings.Join(frames, "\n")
-	for _, want := range []string{`"body":{"n":1}`, `"body":{"$bytes":"Bwg="}`, `"kind":"reply"`, `"payload":"done"`, `"kind":"eof"`} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("the frames lack %s:\n%s", want, joined)
+			return frames
 		}
 	}
 }

@@ -81,41 +81,51 @@ func run(host string, port int, nodeHex, profileName, realmHex string, share int
 	case share >= 0 && padChunk:
 		return sharePadded(ctx, pl, key, realm, station, pattern(share), hold)
 	case share >= 0:
-		data := pattern(share)
-		start := time.Now()
-		mcid, err := pl.ShareContent(ctx, realm, data, "gocontent.bin")
-		if err != nil {
-			return err
-		}
-		fmt.Printf("shared %s %d bytes sha384 %s in %s\n", hex.EncodeToString(mcid[:]), len(data), sum(data), time.Since(start).Round(time.Millisecond))
-		time.Sleep(hold)
-		if err := pl.UnshareContent(ctx, realm, mcid); err != nil {
-			return err
-		}
-		fmt.Println("unshared")
-		time.Sleep(after)
-		return nil
+		return shareContent(ctx, pl, realm, pattern(share), hold, after)
 	case fetch != "":
-		raw, err := hex.DecodeString(fetch)
-		var mcid manifest.Mcid
-		if err != nil || len(raw) != len(mcid) {
-			return fmt.Errorf("-fetch: not a 50-byte content id")
-		}
-		copy(mcid[:], raw)
-		start := time.Now()
-		data, err := pl.GetContent(ctx, realm, mcid, pool.ContentOptions{})
-		took := time.Since(start).Round(time.Millisecond)
-		if errors.Is(err, pool.ErrNotShared) {
-			fmt.Printf("not_shared in %s: %v\n", took, err)
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("fetch after %s: %w", took, err)
-		}
-		fmt.Printf("fetched %d bytes sha384 %s in %s\n", len(data), sum(data), took)
-		return nil
+		return fetchContent(ctx, pl, realm, fetch)
 	}
 	return errors.New("give -share or -fetch")
+}
+
+// shareContent shares data for hold, then unshares it and stays linked for
+// after.
+func shareContent(ctx context.Context, pl *pool.Pool, realm [32]byte, data []byte, hold, after time.Duration) error {
+	start := time.Now()
+	mcid, err := pl.ShareContent(ctx, realm, data, "gocontent.bin")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("shared %s %d bytes sha384 %s in %s\n", hex.EncodeToString(mcid[:]), len(data), sum(data), time.Since(start).Round(time.Millisecond))
+	time.Sleep(hold)
+	if err := pl.UnshareContent(ctx, realm, mcid); err != nil {
+		return err
+	}
+	fmt.Println("unshared")
+	time.Sleep(after)
+	return nil
+}
+
+// fetchContent fetches the content one MCID names and reports what came back.
+func fetchContent(ctx context.Context, pl *pool.Pool, realm [32]byte, fetch string) error {
+	raw, err := hex.DecodeString(fetch)
+	var mcid manifest.Mcid
+	if err != nil || len(raw) != len(mcid) {
+		return fmt.Errorf("-fetch: not a 50-byte content id")
+	}
+	copy(mcid[:], raw)
+	start := time.Now()
+	data, err := pl.GetContent(ctx, realm, mcid, pool.ContentOptions{})
+	took := time.Since(start).Round(time.Millisecond)
+	if errors.Is(err, pool.ErrNotShared) {
+		fmt.Printf("not_shared in %s: %v\n", took, err)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("fetch after %s: %w", took, err)
+	}
+	fmt.Printf("fetched %d bytes sha384 %s in %s\n", len(data), sum(data), took)
+	return nil
 }
 
 // sharePadded serves data's true manifest on this node's content procedure,
@@ -125,6 +135,22 @@ func sharePadded(ctx context.Context, pl *pool.Pool, key *identity.NodeKey, real
 	if len(chunks) < 2 {
 		return errors.New("-pad-chunk needs content over one chunk")
 	}
+	procedure := record.OwnProcedure(pl.NodeID(), pool.ContentProcedureName)
+	if _, err := pl.Serve(ctx, pool.Offer{Realm: realm, Procedure: procedure, Stream: &stationlink.StreamOffer{
+		Mode: frame.ServerStream, Handler: paddedHandler(m, paddedChunks(m, chunks))}}); err != nil {
+		return err
+	}
+	if err := announceContent(ctx, pl, key, realm, station, procedure, m); err != nil {
+		return err
+	}
+	fmt.Printf("shared %s %d bytes padded-first-chunk\n", hex.EncodeToString(m.Mcid[:]), len(data))
+	time.Sleep(hold)
+	return nil
+}
+
+// paddedChunks is the chunks by their content id, the first one a byte past
+// its declared size.
+func paddedChunks(m manifest.Manifest, chunks [][]byte) map[string][]byte {
 	byMcid := map[string][]byte{}
 	for i, c := range chunks {
 		chunkMcid, _ := manifest.ChunkMcid(m, i)
@@ -132,34 +158,41 @@ func sharePadded(ctx context.Context, pl *pool.Pool, key *identity.NodeKey, real
 	}
 	first, _ := manifest.ChunkMcid(m, 0)
 	byMcid[string(first[:])] = append(append([]byte(nil), chunks[0]...), 0)
-	self := pl.NodeID()
-	procedure := record.OwnProcedure(self, pool.ContentProcedureName)
+	return byMcid
+}
+
+// paddedHandler answers the manifest and the chunks it names, the first chunk
+// with its byte appended.
+func paddedHandler(m manifest.Manifest, byMcid map[string][]byte) func(context.Context, *stationlink.Stream) error {
 	body := func(kind string, mcid []byte, entry cbor.MapEntry) cbor.Value {
 		return cbor.Map([]cbor.MapEntry{{Key: cbor.Text("kind"), Val: cbor.Text(kind)},
 			{Key: cbor.Text("mcid"), Val: cbor.Bytes(mcid)}, entry})
 	}
-	if _, err := pl.Serve(ctx, pool.Offer{Realm: realm, Procedure: procedure, Stream: &stationlink.StreamOffer{
-		Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
-			asked, _ := s.Request().Payload.Get("mcid")
-			mcid, _ := asked.AsBytes()
-			if string(mcid) == string(m.Mcid[:]) {
-				if err := s.SendValue(body("manifest", mcid, cbor.MapEntry{Key: cbor.Text("manifest"), Val: manifest.ToWire(m)})); err != nil {
-					return err
-				}
-				return s.Close()
-			}
-			chunk, held := byMcid[string(mcid)]
-			if !held {
-				return s.Abort("not_shared", "this node does not share that content")
-			}
-			if err := s.SendValue(body("block", mcid, cbor.MapEntry{Key: cbor.Text("bytes"), Val: cbor.Bytes(chunk)})); err != nil {
+	return func(_ context.Context, s *stationlink.Stream) error {
+		asked, _ := s.Request().Payload.Get("mcid")
+		mcid, _ := asked.AsBytes()
+		if string(mcid) == string(m.Mcid[:]) {
+			if err := s.SendValue(body("manifest", mcid, cbor.MapEntry{Key: cbor.Text("manifest"), Val: manifest.ToWire(m)})); err != nil {
 				return err
 			}
 			return s.Close()
-		}}}); err != nil {
-		return err
+		}
+		chunk, held := byMcid[string(mcid)]
+		if !held {
+			return s.Abort("not_shared", "this node does not share that content")
+		}
+		if err := s.SendValue(body("block", mcid, cbor.MapEntry{Key: cbor.Text("bytes"), Val: cbor.Bytes(chunk)})); err != nil {
+			return err
+		}
+		return s.Close()
 	}
-	unsigned, err := record.NewContentAnnouncement(self, m.Mcid[:], record.ContentAnnouncementOptions{
+}
+
+// announceContent puts the content announcement that says this node serves
+// the manifest.
+func announceContent(ctx context.Context, pl *pool.Pool, key *identity.NodeKey, realm, station [32]byte,
+	procedure string, m manifest.Manifest) error {
+	unsigned, err := record.NewContentAnnouncement(pl.NodeID(), m.Mcid[:], record.ContentAnnouncementOptions{
 		RealmID: realm, ServingStation: station, Procedure: procedure, TTLMs: uint64(time.Hour / time.Millisecond)})
 	if err != nil {
 		return err
@@ -172,12 +205,7 @@ func sharePadded(ctx context.Context, pl *pool.Pool, key *identity.NodeKey, real
 	if err != nil {
 		return err
 	}
-	if err := pl.PutRecord(ctx, wire); err != nil {
-		return err
-	}
-	fmt.Printf("shared %s %d bytes padded-first-chunk\n", hex.EncodeToString(m.Mcid[:]), len(data))
-	time.Sleep(hold)
-	return nil
+	return pl.PutRecord(ctx, wire)
 }
 
 func pattern(n int) []byte {

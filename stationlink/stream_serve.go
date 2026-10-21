@@ -39,49 +39,12 @@ func (l *Link) acceptStreams() {
 // another node is dropped without a word, and one the provider refuses is told
 // why at seq 0.
 func (l *Link) incoming(qs *quic.Stream) {
-	_ = qs.SetReadDeadline(time.Now().Add(l.openWait))
-	payload, err := frameReader{r: qs}.read(streamOpenBytes)
-	_ = qs.SetReadDeadline(time.Time{})
-	if err != nil {
-		l.count("stream_open_unread")
-		abandon(qs)
-		return
-	}
-	v, err := cbor.Decode(payload)
-	if err == nil && unknownOnStream(v) {
-		l.count("stream_unknown_frame_type")
-		abortUnknown(qs)
-		return
-	}
-	if err != nil || frameTypeOf(v) != "stream_open" {
-		l.count("stream_open_malformed")
-		abandon(qs)
-		return
-	}
-	open, err := frame.VerifyRequest(v, l.profile)
-	if err != nil {
-		l.count("stream_open_unverified")
-		abandon(qs)
-		return
-	}
-	if open.Target != l.self {
-		l.count("stream_for_another_node")
-		abandon(qs)
-		return
-	}
-	state, err := frame.OpenStream(open)
-	if err != nil {
-		abandon(qs)
+	open, state, ok := l.readStreamOpen(qs)
+	if !ok {
 		return
 	}
 	s := newStream(l, qs, open, false)
-	verdict := l.admission.admit(open, l.share, time.Now().UnixMilli())
-	switch {
-	case verdict.refusal != "":
-		s.refuse(verdict.refusal)
-		return
-	case verdict.copy:
-		s.refuse(codeRequestCopy)
+	if !l.admitStream(s, open) {
 		return
 	}
 	release, full := l.admission.openSession(open.Caller)
@@ -106,6 +69,63 @@ func (l *Link) incoming(qs *quic.Stream) {
 	}
 	go s.read(state)
 	go s.serve(offer.Handler)
+}
+
+// readStreamOpen reads a stream's first frame within streamOpenWait and
+// returns the STREAM_OPEN it carries and the state it opens. A stream that
+// fails before a session exists is released here, without a word.
+func (l *Link) readStreamOpen(qs *quic.Stream) (frame.VerifiedRequest, frame.StreamState, bool) {
+	_ = qs.SetReadDeadline(time.Now().Add(l.openWait))
+	payload, err := frameReader{r: qs}.read(streamOpenBytes)
+	_ = qs.SetReadDeadline(time.Time{})
+	if err != nil {
+		l.count("stream_open_unread")
+		abandon(qs)
+		return frame.VerifiedRequest{}, frame.StreamState{}, false
+	}
+	v, err := cbor.Decode(payload)
+	if err == nil && unknownOnStream(v) {
+		l.count("stream_unknown_frame_type")
+		abortUnknown(qs)
+		return frame.VerifiedRequest{}, frame.StreamState{}, false
+	}
+	if err != nil || frameTypeOf(v) != "stream_open" {
+		l.count("stream_open_malformed")
+		abandon(qs)
+		return frame.VerifiedRequest{}, frame.StreamState{}, false
+	}
+	open, err := frame.VerifyRequest(v, l.profile)
+	if err != nil {
+		l.count("stream_open_unverified")
+		abandon(qs)
+		return frame.VerifiedRequest{}, frame.StreamState{}, false
+	}
+	if open.Target != l.self {
+		l.count("stream_for_another_node")
+		abandon(qs)
+		return frame.VerifiedRequest{}, frame.StreamState{}, false
+	}
+	state, err := frame.OpenStream(open)
+	if err != nil {
+		abandon(qs)
+		return frame.VerifiedRequest{}, frame.StreamState{}, false
+	}
+	return open, state, true
+}
+
+// admitStream refuses a stream the admission refuses, and reports whether it
+// may go on.
+func (l *Link) admitStream(s *Stream, open frame.VerifiedRequest) bool {
+	verdict := l.admission.admit(open, l.share, time.Now().UnixMilli())
+	switch {
+	case verdict.refusal != "":
+		s.refuse(verdict.refusal)
+		return false
+	case verdict.copy:
+		s.refuse(codeRequestCopy)
+		return false
+	}
+	return true
 }
 
 // servedStream judges an admitted open with room for its session as macula

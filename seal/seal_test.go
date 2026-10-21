@@ -16,47 +16,78 @@ import (
 // cannot be reproduced, only recovered.
 func TestSenderSecretRoundTrips(t *testing.T) {
 	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
-		t.Run(string(p), func(t *testing.T) {
-			key, err := GenerateKey(p)
-			if err != nil {
-				t.Fatal(err)
-			}
-			ss, kemCt, err := SenderSecret(key.PublicKey())
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := MLKEMCiphertextSize
-			if p == profile.PQHybrid {
-				want += P384PointSize
-			}
-			if len(kemCt) != want {
-				t.Fatalf("kem_ct is %d bytes, want %d", len(kemCt), want)
-			}
-			recovered, err := RecipientSecret(key, kemCt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if recovered != ss {
-				t.Fatalf("recipient recovered %x, sender has %x", recovered, ss)
-			}
-			again, kemCtAgain, err := SenderSecret(key.PublicKey())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if again == ss || bytes.Equal(kemCtAgain, kemCt) {
-				t.Fatal("two encapsulations to one key gave the same secret or kem_ct")
-			}
+		t.Run(string(p), func(t *testing.T) { checkSenderSecretRoundTrip(t, p) })
+	}
+}
 
-			// A different recipient key recovers something else: the secret
-			// is bound to the key it was sealed to.
-			other, err := GenerateKey(p)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if otherSs, err := RecipientSecret(other, kemCt); err == nil && otherSs == ss {
-				t.Fatal("another recipient key recovered the same secret")
-			}
-		})
+// checkSenderSecretRoundTrip is one profile's round trip: the sender's secret
+// is the one its recipient recovers from its kem_ct, and nothing else recovers
+// it.
+func checkSenderSecretRoundTrip(t *testing.T, p profile.Profile) {
+	t.Helper()
+	key, err := GenerateKey(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ss, kemCt, err := SenderSecret(key.PublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkKemCtSize(t, p, kemCt)
+	checkRecipientRecovers(t, key, kemCt, ss)
+	checkFreshEncapsulationDiffers(t, key, ss, kemCt)
+	checkAnotherKeyRecoversAnotherSecret(t, p, kemCt, ss)
+}
+
+// checkKemCtSize: a hybrid kem_ct carries the ephemeral P-384 point after the
+// ML-KEM ciphertext, which the sender's side appends.
+func checkKemCtSize(t *testing.T, p profile.Profile, kemCt []byte) {
+	t.Helper()
+	want := MLKEMCiphertextSize
+	if p == profile.PQHybrid {
+		want += P384PointSize
+	}
+	if len(kemCt) != want {
+		t.Fatalf("kem_ct is %d bytes, want %d", len(kemCt), want)
+	}
+}
+
+// checkRecipientRecovers: the recipient reaches the sender's secret from the
+// kem_ct it was given.
+func checkRecipientRecovers(t *testing.T, key *PrivateKey, kemCt []byte, ss [KeyHashSize]byte) {
+	t.Helper()
+	recovered, err := RecipientSecret(key, kemCt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered != ss {
+		t.Fatalf("recipient recovered %x, sender has %x", recovered, ss)
+	}
+}
+
+// checkFreshEncapsulationDiffers: a second encapsulation to one key is fresh,
+// so neither its secret nor its kem_ct repeats the first.
+func checkFreshEncapsulationDiffers(t *testing.T, key *PrivateKey, ss [KeyHashSize]byte, kemCt []byte) {
+	t.Helper()
+	again, kemCtAgain, err := SenderSecret(key.PublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again == ss || bytes.Equal(kemCtAgain, kemCt) {
+		t.Fatal("two encapsulations to one key gave the same secret or kem_ct")
+	}
+}
+
+// checkAnotherKeyRecoversAnotherSecret: the secret is bound to the key it was
+// sealed to, so a different recipient key recovers something else.
+func checkAnotherKeyRecoversAnotherSecret(t *testing.T, p profile.Profile, kemCt []byte, ss [KeyHashSize]byte) {
+	t.Helper()
+	other, err := GenerateKey(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherSs, err := RecipientSecret(other, kemCt); err == nil && otherSs == ss {
+		t.Fatal("another recipient key recovered the same secret")
 	}
 }
 

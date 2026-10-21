@@ -247,98 +247,139 @@ func TestVectorRecipientKeys(t *testing.T) {
 func TestVectorCalls(t *testing.T) {
 	v := loadVectors(t)
 	for _, c := range v.Calls {
-		t.Run(c.Profile+"/"+c.FrameType, func(t *testing.T) {
-			key := recipientKey(t, c.Profile, v.Recipients[c.Profile])
-			carried := key.PublicKey().Carried()
-			id := KeyID(carried)
-			equal(t, "key_id", id[:], c.KeyID)
-
-			// The recipient's side of the shared secret, and the values it
-			// combines.
-			equal(t, "kem_ct", c.KemCt, append(bytes.Clone(c.MLKEMCt), c.EphPub...))
-			ssMLKEM, err := key.MLKEM.Decapsulate(c.MLKEMCt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			equal(t, "ss_mlkem", ssMLKEM, c.SsMLKEM)
-			keyHash := KeyHash(carried)
-			if c.Profile == string(profile.PQHybrid) {
-				ssECDH, err := ecdhSecret(key.P384, c.EphPub)
-				if err != nil {
-					t.Fatal(err)
-				}
-				equal(t, "ss_ecdh", ssECDH, c.SsECDH)
-				equal(t, "ikm", hybridIkm(ssMLKEM, ssECDH, c.MLKEMCt, c.EphPub, keyHash), c.Ikm)
-			} else {
-				equal(t, "ikm", pureIkm(ssMLKEM, c.MLKEMCt, keyHash), c.Ikm)
-			}
-			ss, err := RecipientSecret(key, c.KemCt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			equal(t, "ss", ss[:], c.Ss)
-
-			parties := Parties{RequestID: [16]byte(c.RequestID), Caller: id32(t, c.Caller), Target: id32(t, c.Target)}
-			kReq, kRep := CallKeys(ss, c.FrameType, parties)
-			equal(t, "k_req", kReq[:], c.KReq)
-			equal(t, "k_rep", kRep[:], c.KRep)
-
-			request := Request{FrameType: c.FrameType, Realm: id32(t, c.Realm), Procedure: c.Procedure,
-				Caller: parties.Caller, Target: parties.Target, RequestID: parties.RequestID, Deadline: c.Deadline}
-			equal(t, "request aad", RequestAAD(request), c.Request.Aad)
-			equal(t, "request nonce", c.Request.Nonce, make([]byte, NonceSize))
-			checkSealed(t, "request", kReq, c.Request)
-
-			if c.Reply != nil {
-				aad := ReplyAAD(request, c.Reply.FrameType, [48]byte(c.Reply.RequestHash), id32(t, c.Reply.RespondedBy))
-				equal(t, "reply aad", aad, c.Reply.Aad)
-				checkSealed(t, "reply", kRep, c.Reply.vectorSealed)
-			}
-			if c.FrameType == FrameCall {
-				e := c.ErrorReply
-				if e == nil || e.FrameType != "error" {
-					t.Fatalf("a call vector without its sealed ERROR")
-				}
-				equal(t, "error plaintext", ErrorPlain(e.Code, e.Detail), e.Plain)
-				code, detail, err := OpenErrorPlain(e.Plain)
-				if err != nil || code != e.Code || detail != e.Detail {
-					t.Fatalf("error plaintext reads as %q, %q, %v", code, detail, err)
-				}
-				aad := ReplyAAD(request, e.FrameType, [48]byte(e.RequestHash), id32(t, e.RespondedBy))
-				equal(t, "error aad", aad, e.Aad)
-				checkSealed(t, "error", kRep, e.vectorSealed)
-			}
-
-			if c.FrameType != FrameStreamOpen {
-				if len(c.Frames) != 0 || c.KC2P != nil {
-					t.Fatalf("a %s vector carries stream frames or keys", c.FrameType)
-				}
-				return
-			}
-			if c.Reply != nil || len(c.Frames) == 0 {
-				t.Fatalf("a stream_open vector carries a reply, or no frames")
-			}
-			kC2P, kP2C := StreamKeys(ss, parties)
-			equal(t, "k_c2p", kC2P[:], c.KC2P)
-			equal(t, "k_p2c", kP2C[:], c.KP2C)
-			directions := map[Direction]int{}
-			for _, f := range c.Frames {
-				direction := Direction(f.Direction)
-				directions[direction]++
-				equal(t, "stream frame aad", StreamAAD(f.FrameType, parties.RequestID, f.Seq, direction), f.Aad)
-				streamKey := kP2C
-				if direction == CallerToProvider {
-					streamKey = kC2P
-					nonce := StreamNonce(f.Seq)
-					equal(t, "caller stream frame nonce", nonce[:], f.Nonce)
-				}
-				checkSealed(t, "stream frame", streamKey, f.vectorSealed)
-			}
-			if directions[CallerToProvider] == 0 || directions[ProviderToCaller] == 0 {
-				t.Fatalf("stream frames in only one direction: %v", directions)
-			}
-		})
+		t.Run(c.Profile+"/"+c.FrameType, func(t *testing.T) { checkCallVector(t, v, c) })
 	}
+}
+
+// checkCallVector holds one call vector to the recipient's side byte for byte:
+// the key and the secret both sides reach, then the request and reply it seals,
+// a call's sealed ERROR and a stream_open's frames.
+func checkCallVector(t *testing.T, v vectorFile, c vectorCall) {
+	t.Helper()
+	key := recipientKey(t, c.Profile, v.Recipients[c.Profile])
+	carried := key.PublicKey().Carried()
+	id := KeyID(carried)
+	equal(t, "key_id", id[:], c.KeyID)
+
+	parties := Parties{RequestID: [16]byte(c.RequestID), Caller: id32(t, c.Caller), Target: id32(t, c.Target)}
+	ss := checkCallSecret(t, c, key, carried)
+	kReq, kRep := CallKeys(ss, c.FrameType, parties)
+	equal(t, "k_req", kReq[:], c.KReq)
+	equal(t, "k_rep", kRep[:], c.KRep)
+
+	request := Request{FrameType: c.FrameType, Realm: id32(t, c.Realm), Procedure: c.Procedure,
+		Caller: parties.Caller, Target: parties.Target, RequestID: parties.RequestID, Deadline: c.Deadline}
+	equal(t, "request aad", RequestAAD(request), c.Request.Aad)
+	equal(t, "request nonce", c.Request.Nonce, make([]byte, NonceSize))
+	checkSealed(t, "request", kReq, c.Request)
+
+	checkCallReply(t, c, request, kRep)
+	checkCallError(t, c, request, kRep)
+	checkCallFrames(t, c, ss, parties)
+}
+
+// checkCallSecret holds the recipient's side of the shared secret, and the
+// values it combines, to the vector's, and returns the secret.
+func checkCallSecret(t *testing.T, c vectorCall, key *PrivateKey, carried []byte) [KeyHashSize]byte {
+	t.Helper()
+	equal(t, "kem_ct", c.KemCt, append(bytes.Clone(c.MLKEMCt), c.EphPub...))
+	ssMLKEM, err := key.MLKEM.Decapsulate(c.MLKEMCt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equal(t, "ss_mlkem", ssMLKEM, c.SsMLKEM)
+	keyHash := KeyHash(carried)
+	if c.Profile == string(profile.PQHybrid) {
+		ssECDH, err := ecdhSecret(key.P384, c.EphPub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		equal(t, "ss_ecdh", ssECDH, c.SsECDH)
+		equal(t, "ikm", hybridIkm(ssMLKEM, ssECDH, c.MLKEMCt, c.EphPub, keyHash), c.Ikm)
+	} else {
+		equal(t, "ikm", pureIkm(ssMLKEM, c.MLKEMCt, keyHash), c.Ikm)
+	}
+	ss, err := RecipientSecret(key, c.KemCt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equal(t, "ss", ss[:], c.Ss)
+	return ss
+}
+
+// checkCallReply checks a call's reply, where the vector carries one, under the
+// key the call's keys derive.
+func checkCallReply(t *testing.T, c vectorCall, request Request, kRep [32]byte) {
+	t.Helper()
+	if c.Reply == nil {
+		return
+	}
+	aad := ReplyAAD(request, c.Reply.FrameType, [48]byte(c.Reply.RequestHash), id32(t, c.Reply.RespondedBy))
+	equal(t, "reply aad", aad, c.Reply.Aad)
+	checkSealed(t, "reply", kRep, c.Reply.vectorSealed)
+}
+
+// checkCallError checks a call's sealed ERROR: its plaintext is the vector's,
+// reads back with the same code and detail, and its own AAD and ct hold under
+// the reply key.
+func checkCallError(t *testing.T, c vectorCall, request Request, kRep [32]byte) {
+	t.Helper()
+	if c.FrameType != FrameCall {
+		return
+	}
+	e := c.ErrorReply
+	if e == nil || e.FrameType != "error" {
+		t.Fatalf("a call vector without its sealed ERROR")
+	}
+	equal(t, "error plaintext", ErrorPlain(e.Code, e.Detail), e.Plain)
+	code, detail, err := OpenErrorPlain(e.Plain)
+	if err != nil || code != e.Code || detail != e.Detail {
+		t.Fatalf("error plaintext reads as %q, %q, %v", code, detail, err)
+	}
+	aad := ReplyAAD(request, e.FrameType, [48]byte(e.RequestHash), id32(t, e.RespondedBy))
+	equal(t, "error aad", aad, e.Aad)
+	checkSealed(t, "error", kRep, e.vectorSealed)
+}
+
+// checkCallFrames: only a stream_open vector carries stream frames and keys,
+// and each frame's AAD, nonce and ct hold under its direction's key.
+func checkCallFrames(t *testing.T, c vectorCall, ss [KeyHashSize]byte, parties Parties) {
+	t.Helper()
+	if c.FrameType != FrameStreamOpen {
+		if len(c.Frames) != 0 || c.KC2P != nil {
+			t.Fatalf("a %s vector carries stream frames or keys", c.FrameType)
+		}
+		return
+	}
+	if c.Reply != nil || len(c.Frames) == 0 {
+		t.Fatalf("a stream_open vector carries a reply, or no frames")
+	}
+	kC2P, kP2C := StreamKeys(ss, parties)
+	equal(t, "k_c2p", kC2P[:], c.KC2P)
+	equal(t, "k_p2c", kP2C[:], c.KP2C)
+	directions := map[Direction]int{}
+	for _, f := range c.Frames {
+		checkStreamFrame(t, f, parties, kC2P, kP2C, directions)
+	}
+	if directions[CallerToProvider] == 0 || directions[ProviderToCaller] == 0 {
+		t.Fatalf("stream frames in only one direction: %v", directions)
+	}
+}
+
+// checkStreamFrame checks one stream frame against its direction's key, and
+// counts its direction.
+func checkStreamFrame(t *testing.T, f vectorFrame, parties Parties, kC2P, kP2C [32]byte, directions map[Direction]int) {
+	t.Helper()
+	direction := Direction(f.Direction)
+	directions[direction]++
+	equal(t, "stream frame aad", StreamAAD(f.FrameType, parties.RequestID, f.Seq, direction), f.Aad)
+	streamKey := kP2C
+	if direction == CallerToProvider {
+		streamKey = kC2P
+		nonce := StreamNonce(f.Seq)
+		equal(t, "caller stream frame nonce", nonce[:], f.Nonce)
+	}
+	checkSealed(t, "stream frame", streamKey, f.vectorSealed)
 }
 
 func TestVectorEvents(t *testing.T) {
@@ -390,35 +431,57 @@ func TestVectorSenderSide(t *testing.T) {
 func TestVectorRefusals(t *testing.T) {
 	v := loadVectors(t)
 	for _, r := range v.Refusals {
-		t.Run(r.Why, func(t *testing.T) {
-			if r.Expect != "sealed_refused" {
-				t.Fatalf("expect %q", r.Expect)
-			}
-			var p384 []byte
-			if r.Profile == string(profile.PQHybrid) {
-				p384 = r.P384Priv
-			}
-			key, err := NewPrivateKey(profile.Profile(r.Profile), r.MLKEMSeed, p384)
-			if err != nil {
-				t.Fatal(err)
-			}
-			equal(t, "key_as_carried", key.PublicKey().Carried(), r.KeyAsCarried)
-			if key.P384 != nil {
-				equal(t, "p384_pub", key.P384.PublicKey().Bytes(), r.P384Pub)
-			}
-			if key.P384 != nil && len(r.KemCt) == MLKEMCiphertextSize+P384PointSize {
-				peer, err := ecdh.P384().NewPublicKey(r.KemCt[MLKEMCiphertextSize:])
-				if err != nil {
-					t.Fatalf("the ephemeral point is not on P-384: %v", err)
-				}
-				raw, err := key.P384.ECDH(peer)
-				if err != nil || !bytes.Equal(raw, make([]byte, len(raw))) {
-					t.Fatalf("crypto/ecdh gives %x, %v: this refusal no longer reaches the zero output it names", raw, err)
-				}
-			}
-			if ss, err := RecipientSecret(key, r.KemCt); !errors.Is(err, ErrRefused) {
-				t.Fatalf("recovered %x, %v: want ErrRefused", ss, err)
-			}
-		})
+		t.Run(r.Why, func(t *testing.T) { checkRefusal(t, r) })
+	}
+}
+
+// checkRefusal: the vector's key is the one it carries, its refusal reaches
+// whatever it names, and RecipientSecret refuses its kem_ct.
+func checkRefusal(t *testing.T, r vectorRefusal) {
+	t.Helper()
+	if r.Expect != "sealed_refused" {
+		t.Fatalf("expect %q", r.Expect)
+	}
+	key := refusalKey(t, r)
+	checkRefusalReachesItsZero(t, key, r)
+	if ss, err := RecipientSecret(key, r.KemCt); !errors.Is(err, ErrRefused) {
+		t.Fatalf("recovered %x, %v: want ErrRefused", ss, err)
+	}
+}
+
+// refusalKey builds the vector's private key, with its P-384 scalar only where
+// the profile has one, and checks it is the key the vector carries.
+func refusalKey(t *testing.T, r vectorRefusal) *PrivateKey {
+	t.Helper()
+	var p384 []byte
+	if r.Profile == string(profile.PQHybrid) {
+		p384 = r.P384Priv
+	}
+	key, err := NewPrivateKey(profile.Profile(r.Profile), r.MLKEMSeed, p384)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equal(t, "key_as_carried", key.PublicKey().Carried(), r.KeyAsCarried)
+	if key.P384 != nil {
+		equal(t, "p384_pub", key.P384.PublicKey().Bytes(), r.P384Pub)
+	}
+	return key
+}
+
+// checkRefusalReachesItsZero: the zero-ECDH refusal reaches its zero, because
+// crypto/ecdh returns the 48 zero bytes without an error, so RecipientSecret's
+// own check is what refuses it.
+func checkRefusalReachesItsZero(t *testing.T, key *PrivateKey, r vectorRefusal) {
+	t.Helper()
+	if key.P384 == nil || len(r.KemCt) != MLKEMCiphertextSize+P384PointSize {
+		return
+	}
+	peer, err := ecdh.P384().NewPublicKey(r.KemCt[MLKEMCiphertextSize:])
+	if err != nil {
+		t.Fatalf("the ephemeral point is not on P-384: %v", err)
+	}
+	raw, err := key.P384.ECDH(peer)
+	if err != nil || !bytes.Equal(raw, make([]byte, len(raw))) {
+		t.Fatalf("crypto/ecdh gives %x, %v: this refusal no longer reaches the zero output it names", raw, err)
 	}
 }

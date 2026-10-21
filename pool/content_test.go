@@ -45,36 +45,42 @@ func pattern(n int) []byte {
 // another station, dialed through that station's own endpoint record.
 func TestContentIsFetchedFromTheNodeThatSharesIt(t *testing.T) {
 	sharer, fetcher, sharing, _ := contentPools(t, "content")
-	ctx := t.Context()
 	for _, c := range []struct {
 		name string
 		data []byte
 	}{{"a raw block", pattern(10_000)}, {"a chunked blob", pattern(600_000)}} {
-		t.Run(c.name, func(t *testing.T) {
-			mcid, err := sharer.ShareContent(ctx, contentRealm, c.data, "blob.bin")
-			if err != nil {
-				t.Fatalf("ShareContent: %v", err)
-			}
-			if chunked := manifest.McidIsChunked(mcid); chunked != (len(c.data) > manifest.DefaultChunkSize) {
-				t.Errorf("chunked %v for %d bytes", chunked, len(c.data))
-			}
-			got, err := fetcher.GetContent(ctx, contentRealm, mcid, ContentOptions{})
-			if err != nil || !bytes.Equal(got, c.data) {
-				t.Fatalf("GetContent: %d bytes, %v", len(got), err)
-			}
-			if !sharing.Connected(fetcher.NodeID()) {
-				t.Error("the fetcher did not dial the sharer's station")
-			}
-			if err := sharer.UnshareContent(ctx, contentRealm, mcid); err != nil {
-				t.Fatalf("UnshareContent: %v", err)
-			}
-			if _, err := fetcher.GetContent(ctx, contentRealm, mcid, ContentOptions{}); !errors.Is(err, ErrNotShared) {
-				t.Errorf("after unsharing: %v, want ErrNotShared", err)
-			}
-		})
+		t.Run(c.name, func(t *testing.T) { checkContentFetched(t, sharer, fetcher, sharing, c.data) })
 	}
-	if _, err := fetcher.GetContent(ctx, [32]byte{0x0d}, manifest.BlockMcid([]byte("never shared")), ContentOptions{}); !errors.Is(err, ErrNotShared) {
+	if _, err := fetcher.GetContent(t.Context(), [32]byte{0x0d}, manifest.BlockMcid([]byte("never shared")), ContentOptions{}); !errors.Is(err, ErrNotShared) {
 		t.Errorf("content nobody shares: %v, want ErrNotShared", err)
+	}
+}
+
+// checkContentFetched: content shared on one station is fetched on another,
+// through the sharer's own endpoint on its station, and stops being found once
+// it is unshared.
+func checkContentFetched(t *testing.T, sharer, fetcher *Pool, sharing *teststation.Station, data []byte) {
+	t.Helper()
+	ctx := t.Context()
+	mcid, err := sharer.ShareContent(ctx, contentRealm, data, "blob.bin")
+	if err != nil {
+		t.Fatalf("ShareContent: %v", err)
+	}
+	if chunked := manifest.McidIsChunked(mcid); chunked != (len(data) > manifest.DefaultChunkSize) {
+		t.Errorf("chunked %v for %d bytes", chunked, len(data))
+	}
+	got, err := fetcher.GetContent(ctx, contentRealm, mcid, ContentOptions{})
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("GetContent: %d bytes, %v", len(got), err)
+	}
+	if !sharing.Connected(fetcher.NodeID()) {
+		t.Error("the fetcher did not dial the sharer's station")
+	}
+	if err := sharer.UnshareContent(ctx, contentRealm, mcid); err != nil {
+		t.Fatalf("UnshareContent: %v", err)
+	}
+	if _, err := fetcher.GetContent(ctx, contentRealm, mcid, ContentOptions{}); !errors.Is(err, ErrNotShared) {
+		t.Errorf("after unsharing: %v, want ErrNotShared", err)
 	}
 }
 
@@ -299,7 +305,28 @@ func TestASilentSharerIsFailedOverAtTheRootTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	silent := connectWith(t, "silent", teststation.Realm{}, func(o *Opts) { o.RealmTrust = nil }, sharing)
+	serveSilentSharer(t, sharing, mcid)
+	for range 3 {
+		checkFetchPastSilentSharer(t, fetcher, data, mcid)
+	}
+	if err := sharer.UnshareContent(t.Context(), contentRealm, mcid); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := fetcher.GetContent(t.Context(), contentRealm, mcid, ContentOptions{}); !errors.Is(err, ErrContentUnavailable) {
+		t.Errorf("only a silent sharer left: %v, want ErrContentUnavailable", err)
+	}
+	if took := time.Since(start); took < DefaultRootTimeout-200*time.Millisecond || took > DefaultRootTimeout+3*time.Second {
+		t.Errorf("a silent sharer held the fetch %v, want about DefaultRootTimeout (%v)", took, DefaultRootTimeout)
+	}
+}
+
+// serveSilentSharer serves, on a new connection to station, a content
+// procedure that accepts the root ask and never answers, and announces mcid as
+// shared there.
+func serveSilentSharer(t *testing.T, station *teststation.Station, mcid manifest.Mcid) {
+	t.Helper()
+	silent := connectWith(t, "silent", teststation.Realm{}, func(o *Opts) { o.RealmTrust = nil }, station)
 	own := record.OwnProcedure(silent.NodeID(), ContentProcedureName)
 	if _, err := silent.Serve(t.Context(), Offer{Realm: contentRealm, Procedure: own, Stream: &stationlink.StreamOffer{
 		Mode: frame.ServerStream, Handler: func(ctx context.Context, _ *stationlink.Stream) error {
@@ -309,7 +336,7 @@ func TestASilentSharerIsFailedOverAtTheRootTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	unsigned, err := record.NewContentAnnouncement(silent.NodeID(), mcid[:], record.ContentAnnouncementOptions{
-		RealmID: contentRealm, ServingStation: sharing.NodeID, Procedure: own})
+		RealmID: contentRealm, ServingStation: station.NodeID, Procedure: own})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,24 +351,18 @@ func TestASilentSharerIsFailedOverAtTheRootTimeout(t *testing.T) {
 	if err := silent.PutRecord(t.Context(), wire); err != nil {
 		t.Fatal(err)
 	}
-	for range 3 {
-		start := time.Now()
-		got, err := fetcher.GetContent(t.Context(), contentRealm, mcid, ContentOptions{})
-		if err != nil || !bytes.Equal(got, data) {
-			t.Fatalf("GetContent past a silent sharer: %d bytes, %v", len(got), err)
-		}
-		if took := time.Since(start); took > DefaultRootTimeout+3*time.Second {
-			t.Fatalf("the fetch took %v past a silent sharer, want about DefaultRootTimeout (%v)", took, DefaultRootTimeout)
-		}
-	}
-	if err := sharer.UnshareContent(t.Context(), contentRealm, mcid); err != nil {
-		t.Fatal(err)
-	}
+}
+
+// checkFetchPastSilentSharer: the fetch comes back whole, having waited about
+// DefaultRootTimeout, the root deadline, for the sharer that never answered.
+func checkFetchPastSilentSharer(t *testing.T, fetcher *Pool, data []byte, mcid manifest.Mcid) {
+	t.Helper()
 	start := time.Now()
-	if _, err := fetcher.GetContent(t.Context(), contentRealm, mcid, ContentOptions{}); !errors.Is(err, ErrContentUnavailable) {
-		t.Errorf("only a silent sharer left: %v, want ErrContentUnavailable", err)
+	got, err := fetcher.GetContent(t.Context(), contentRealm, mcid, ContentOptions{})
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("GetContent past a silent sharer: %d bytes, %v", len(got), err)
 	}
-	if took := time.Since(start); took < DefaultRootTimeout-200*time.Millisecond || took > DefaultRootTimeout+3*time.Second {
-		t.Errorf("a silent sharer held the fetch %v, want about DefaultRootTimeout (%v)", took, DefaultRootTimeout)
+	if took := time.Since(start); took > DefaultRootTimeout+3*time.Second {
+		t.Fatalf("the fetch took %v past a silent sharer, want about DefaultRootTimeout (%v)", took, DefaultRootTimeout)
 	}
 }

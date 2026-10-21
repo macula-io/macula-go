@@ -332,49 +332,81 @@ func checkRefused(t *testing.T, name string, hello []byte, err, want error, code
 func TestAWholeHandshakeConnectsBothSides(t *testing.T) {
 	forEachWorld(t, func(t *testing.T, w *world) {
 		challenge, connect, station, client, hello := w.pair(t)
-		if station.NodeID != identity.NodeIDOf(w.station.PublicKey(), w.profile) ||
-			!bytes.Equal(station.IdentityKey, w.station.PublicKey()) ||
-			station.StatusExpiresAt != now+hour || station.BindingNotAfter != now+7*day || station.Version != Version {
-			t.Errorf("the station as the client sees it: node_id %x, status until %d, binding until %d, version %d",
-				station.NodeID, station.StatusExpiresAt, station.BindingNotAfter, station.Version)
-		}
-		if client.NodeID != identity.NodeIDOf(w.client.PublicKey(), w.profile) ||
-			!bytes.Equal(client.IdentityKey, w.client.PublicKey()) || !bytes.Equal(client.ConnectKey, w.connect.PublicKey()) ||
-			client.Capabilities != clientCapabilities || client.StatusExpiresAt != now+hour ||
-			client.BindingNotAfter != now+day || client.Puzzle != PuzzleResultSolved || client.Version != Version {
-			t.Errorf("the client as the station sees it: node_id %x, capabilities %d, status until %d, binding until %d, puzzle %s, version %d",
-				client.NodeID, client.Capabilities, client.StatusExpiresAt, client.BindingNotAfter, client.Puzzle, client.Version)
-		}
+		assertStationAsTheClientSeesIt(t, w, station)
+		assertClientAsTheStationSeesIt(t, w, client)
 		if capabilities, err := ReadHello(hello, station); err != nil || capabilities != stationCapabilities {
 			t.Errorf("ReadHello = (%d, %v), want the station's capabilities", capabilities, err)
 		}
-		for name, frame := range map[string][]byte{"opener": Opener(w.ranges()), "challenge": challenge, "CONNECT": connect, "HELLO": hello} {
-			if version, _ := fields(t, frame)["version"].AsInt64(); version != 5 {
-				t.Errorf("the %s is version %d, want 5", name, version)
-			}
-		}
-		if keys := frameKeys(t, Opener(w.ranges())); keys != "frame_type profiles version versions" {
-			t.Errorf("the opener holds %q", keys)
-		}
-		if keys := frameKeys(t, challenge); keys != "frame_type identity_key nonce profile profiles tls_binding tls_status version versions" {
-			t.Errorf("the challenge holds %q", keys)
-		}
-		if keys := frameKeys(t, connect); keys != "capabilities connect_binding connect_key connect_status frame_type identity_key member_endorsement profile profiles proof version versions" {
-			t.Errorf("CONNECT holds %q", keys)
-		}
-		if keys := frameKeys(t, hello); keys != "accepted capabilities frame_type session_proof version" {
-			t.Errorf("HELLO holds %q", keys)
-		}
-		if endorsement, ok := fields(t, connect)["member_endorsement"].AsBytes(); !ok || len(endorsement) != 0 {
-			t.Errorf("CONNECT's member_endorsement %x (bytes %t), want it present and empty", endorsement, ok)
-		}
-		if client.MemberEndorsement == nil || len(client.MemberEndorsement) != 0 {
-			t.Errorf("the station was handed member_endorsement %x, want an empty one", client.MemberEndorsement)
-		}
+		frames := map[string][]byte{"opener": Opener(w.ranges()), "challenge": challenge, "CONNECT": connect, "HELLO": hello}
+		assertFramesAreVersion5(t, frames)
+		assertFrameKeys(t, frames)
+		assertConnectsMemberEndorsementIsEmpty(t, connect, client)
 		if bytes.Equal(challenge, w.challenge(t)) {
 			t.Error("two challenges are equal, want a fresh nonce in each")
 		}
 	})
+}
+
+// assertStationAsTheClientSeesIt checks the station the client read: its
+// node_id and carried key, and the version and expiry times it stated.
+func assertStationAsTheClientSeesIt(t *testing.T, w *world, station Station) {
+	t.Helper()
+	if station.NodeID != identity.NodeIDOf(w.station.PublicKey(), w.profile) ||
+		!bytes.Equal(station.IdentityKey, w.station.PublicKey()) ||
+		station.StatusExpiresAt != now+hour || station.BindingNotAfter != now+7*day || station.Version != Version {
+		t.Errorf("the station as the client sees it: node_id %x, status until %d, binding until %d, version %d",
+			station.NodeID, station.StatusExpiresAt, station.BindingNotAfter, station.Version)
+	}
+}
+
+// assertClientAsTheStationSeesIt checks the client the station read: its
+// node_id, both carried keys, capabilities, puzzle and version.
+func assertClientAsTheStationSeesIt(t *testing.T, w *world, client Client) {
+	t.Helper()
+	if client.NodeID != identity.NodeIDOf(w.client.PublicKey(), w.profile) ||
+		!bytes.Equal(client.IdentityKey, w.client.PublicKey()) || !bytes.Equal(client.ConnectKey, w.connect.PublicKey()) ||
+		client.Capabilities != clientCapabilities || client.StatusExpiresAt != now+hour ||
+		client.BindingNotAfter != now+day || client.Puzzle != PuzzleResultSolved || client.Version != Version {
+		t.Errorf("the client as the station sees it: node_id %x, capabilities %d, status until %d, binding until %d, puzzle %s, version %d",
+			client.NodeID, client.Capabilities, client.StatusExpiresAt, client.BindingNotAfter, client.Puzzle, client.Version)
+	}
+}
+
+// assertFramesAreVersion5 checks each named frame of a handshake is version 5.
+func assertFramesAreVersion5(t *testing.T, frames map[string][]byte) {
+	t.Helper()
+	for name, frame := range frames {
+		if version, _ := fields(t, frame)["version"].AsInt64(); version != 5 {
+			t.Errorf("the %s is version %d, want 5", name, version)
+		}
+	}
+}
+
+// assertFrameKeys checks each handshake frame holds exactly its keys.
+func assertFrameKeys(t *testing.T, frames map[string][]byte) {
+	t.Helper()
+	for name, want := range map[string]string{
+		"opener":    "frame_type profiles version versions",
+		"challenge": "frame_type identity_key nonce profile profiles tls_binding tls_status version versions",
+		"CONNECT":   "capabilities connect_binding connect_key connect_status frame_type identity_key member_endorsement profile profiles proof version versions",
+		"HELLO":     "accepted capabilities frame_type session_proof version",
+	} {
+		if keys := frameKeys(t, frames[name]); keys != want {
+			t.Errorf("the %s holds %q", name, keys)
+		}
+	}
+}
+
+// assertConnectsMemberEndorsementIsEmpty checks CONNECT carries
+// member_endorsement, present and empty, and the station is handed it so.
+func assertConnectsMemberEndorsementIsEmpty(t *testing.T, connect []byte, client Client) {
+	t.Helper()
+	if endorsement, ok := fields(t, connect)["member_endorsement"].AsBytes(); !ok || len(endorsement) != 0 {
+		t.Errorf("CONNECT's member_endorsement %x (bytes %t), want it present and empty", endorsement, ok)
+	}
+	if client.MemberEndorsement == nil || len(client.MemberEndorsement) != 0 {
+		t.Errorf("the station was handed member_endorsement %x, want an empty one", client.MemberEndorsement)
+	}
 }
 
 // Version 5 is wire 1.0's only handshake version: a handshake version bump is a
@@ -885,15 +917,7 @@ func TestStatusFramesRenewAPeersStatement(t *testing.T) {
 		if expiresAt, err := ReadStatus(frame, peer); err != nil || expiresAt != now+75*minute {
 			t.Errorf("ReadStatus = (%d, %v), want the new statement's expiry", expiresAt, err)
 		}
-		other, err := identity.TLSBinding(w.station, leaf, now, now+day)
-		if err != nil {
-			t.Fatalf("TLSBinding: %v", err)
-		}
-		otherPeer := peer
-		otherPeer.Binding = other
-		if _, err := ReadStatus(frame, otherPeer); !errors.Is(err, identity.ErrStatusBindingMismatch) {
-			t.Errorf("a statement for another binding: %v, want ErrStatusBindingMismatch", err)
-		}
+		assertStatusRefusedForAnotherBinding(t, w, frame, peer)
 		early := peer
 		early.NowMs = now + 9*minute
 		if _, err := ReadStatus(frame, early); !errors.Is(err, identity.ErrStatusFutureDated) {
@@ -909,31 +933,60 @@ func TestStatusFramesRenewAPeersStatement(t *testing.T) {
 		// carry frame_id and sent_at_ms (ext is read by the envelope before
 		// it), never realm, call_id or source_route.
 		statementEntry := entry("statement", statement.Value())
-		frameID, sentAt := entry("frame_id", cbor.Bytes(make([]byte, 16))), entry("sent_at_ms", cbor.Int(now))
-		for name, enveloped := range map[string][]byte{
-			"frame_id":   encodeFrame("status", statementEntry, frameID),
-			"sent_at_ms": encodeFrame("status", statementEntry, sentAt),
-			"both":       encodeFrame("status", statementEntry, frameID, sentAt),
-		} {
-			if _, err := ReadStatus(enveloped, peer); err != nil {
-				t.Errorf("a status frame with %s: %v, want it read", name, err)
-			}
-		}
-		for name, routed := range map[string]cbor.MapEntry{
-			"realm":                  entry("realm", cbor.Bytes(make([]byte, 32))),
-			"call_id":                entry("call_id", cbor.Bytes(make([]byte, 16))),
-			"source_route":           entry("source_route", cbor.Bytes([]byte{1})),
-			"a frame_id of 15 bytes": entry("frame_id", cbor.Bytes(make([]byte, 15))),
-		} {
-			if _, err := ReadStatus(encodeFrame("status", statementEntry, routed), peer); !errors.Is(err, ErrMalformedFrame) {
-				t.Errorf("a status frame with %s: %v, want ErrMalformedFrame", name, err)
-			}
-		}
+		assertStatusEnvelopeReads(t, statementEntry, peer)
+		assertStatusRefusesRoutingFields(t, statementEntry, peer)
 		v4 := encodeFrameVersion(4, "status", entry("statement", statement.Value()))
 		if _, err := ReadStatus(v4, peer); !errors.Is(err, ErrUnsupportedVersion) {
 			t.Errorf("a version 4 status frame: %v, want ErrUnsupportedVersion", err)
 		}
 	})
+}
+
+// assertStatusRefusedForAnotherBinding checks a statement made for one TLS
+// binding is refused under another.
+func assertStatusRefusedForAnotherBinding(t *testing.T, w *world, frame []byte, peer Peer) {
+	t.Helper()
+	other, err := identity.TLSBinding(w.station, leaf, now, now+day)
+	if err != nil {
+		t.Fatalf("TLSBinding: %v", err)
+	}
+	otherPeer := peer
+	otherPeer.Binding = other
+	if _, err := ReadStatus(frame, otherPeer); !errors.Is(err, identity.ErrStatusBindingMismatch) {
+		t.Errorf("a statement for another binding: %v, want ErrStatusBindingMismatch", err)
+	}
+}
+
+// assertStatusEnvelopeReads checks STATUS's envelope fields are read before the
+// frame: frame_id, sent_at_ms or both.
+func assertStatusEnvelopeReads(t *testing.T, statementEntry cbor.MapEntry, peer Peer) {
+	t.Helper()
+	frameID, sentAt := entry("frame_id", cbor.Bytes(make([]byte, 16))), entry("sent_at_ms", cbor.Int(now))
+	for name, enveloped := range map[string][]byte{
+		"frame_id":   encodeFrame("status", statementEntry, frameID),
+		"sent_at_ms": encodeFrame("status", statementEntry, sentAt),
+		"both":       encodeFrame("status", statementEntry, frameID, sentAt),
+	} {
+		if _, err := ReadStatus(enveloped, peer); err != nil {
+			t.Errorf("a status frame with %s: %v, want it read", name, err)
+		}
+	}
+}
+
+// assertStatusRefusesRoutingFields checks a status frame refuses the routing
+// fields it never carries, and a frame_id of the wrong size.
+func assertStatusRefusesRoutingFields(t *testing.T, statementEntry cbor.MapEntry, peer Peer) {
+	t.Helper()
+	for name, routed := range map[string]cbor.MapEntry{
+		"realm":                  entry("realm", cbor.Bytes(make([]byte, 32))),
+		"call_id":                entry("call_id", cbor.Bytes(make([]byte, 16))),
+		"source_route":           entry("source_route", cbor.Bytes([]byte{1})),
+		"a frame_id of 15 bytes": entry("frame_id", cbor.Bytes(make([]byte, 15))),
+	} {
+		if _, err := ReadStatus(encodeFrame("status", statementEntry, routed), peer); !errors.Is(err, ErrMalformedFrame) {
+			t.Errorf("a status frame with %s: %v, want ErrMalformedFrame", name, err)
+		}
+	}
 }
 
 // A station session with a puzzle mode or difficulty the design does not have

@@ -36,6 +36,19 @@ var refusalOf = map[string]error{
 // TestOwnNamespaceFixtures holds OwnNamespace and VerifyAuthorization to the
 // verdicts macula reaches on the same signed records, under both profiles.
 func TestOwnNamespaceFixtures(t *testing.T) {
+	dir, verdicts := readOwnNamespaceVerdicts(t)
+	if len(verdicts) != 14 {
+		t.Fatalf("%d verdicts, want the 7 cases under both profiles", len(verdicts))
+	}
+	for _, v := range verdicts {
+		t.Run(v.File, func(t *testing.T) {
+			checkOwnNamespaceVerdict(t, dir, v)
+		})
+	}
+}
+
+func readOwnNamespaceVerdicts(t *testing.T) (string, []ownNamespaceVerdict) {
+	t.Helper()
 	dir := filepath.Join("testdata", "own_namespace")
 	raw, err := os.ReadFile(filepath.Join(dir, "verdicts.json"))
 	if err != nil {
@@ -45,38 +58,38 @@ func TestOwnNamespaceFixtures(t *testing.T) {
 	if err := json.Unmarshal(raw, &verdicts); err != nil {
 		t.Fatal(err)
 	}
-	if len(verdicts) != 14 {
-		t.Fatalf("%d verdicts, want the 7 cases under both profiles", len(verdicts))
+	return dir, verdicts
+}
+
+// checkOwnNamespaceVerdict holds OwnNamespace and VerifyAuthorization to
+// macula's verdicts on one signed record.
+func checkOwnNamespaceVerdict(t *testing.T, dir string, v ownNamespaceVerdict) {
+	t.Helper()
+	wantOwn, known := refusalOf[v.OwnNamespace]
+	wantVerify, knownVerify := refusalOf[v.VerifyAuthorization]
+	if !known || !knownVerify {
+		t.Fatalf("an unknown verdict: %q / %q", v.OwnNamespace, v.VerifyAuthorization)
 	}
-	for _, v := range verdicts {
-		t.Run(v.File, func(t *testing.T) {
-			wantOwn, known := refusalOf[v.OwnNamespace]
-			wantVerify, knownVerify := refusalOf[v.VerifyAuthorization]
-			if !known || !knownVerify {
-				t.Fatalf("an unknown verdict: %q / %q", v.OwnNamespace, v.VerifyAuthorization)
-			}
-			p, err := profile.Parse(v.Profile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			wire, err := os.ReadFile(filepath.Join(dir, v.File))
-			if err != nil {
-				t.Fatal(err)
-			}
-			verified, err := Verify(wire, p, v.NowMs)
-			if err != nil {
-				t.Fatalf("the fixture does not verify: %v", err)
-			}
-			if ad := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(verified.Record())); ad.Procedure != v.Procedure {
-				t.Fatalf("procedure %q, the verdicts name %q", ad.Procedure, v.Procedure)
-			}
-			if got := OwnNamespace(verified); !errors.Is(got, wantOwn) || (wantOwn == nil) != (got == nil) {
-				t.Errorf("OwnNamespace = %v, want %v", got, wantOwn)
-			}
-			got := VerifyAuthorization(verified, Trust{Profile: p}, v.NowMs)
-			if !errors.Is(got, wantVerify) || (wantVerify == nil) != (got == nil) {
-				t.Errorf("VerifyAuthorization = %v, want %v", got, wantVerify)
-			}
-		})
+	p, err := profile.Parse(v.Profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := os.ReadFile(filepath.Join(dir, v.File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := Verify(wire, p, v.NowMs)
+	if err != nil {
+		t.Fatalf("the fixture does not verify: %v", err)
+	}
+	if ad := must[ProcedureAdvertisement](t)(ReadProcedureAdvertisement(verified.Record())); ad.Procedure != v.Procedure {
+		t.Fatalf("procedure %q, the verdicts name %q", ad.Procedure, v.Procedure)
+	}
+	if got := OwnNamespace(verified); !errors.Is(got, wantOwn) || (wantOwn == nil) != (got == nil) {
+		t.Errorf("OwnNamespace = %v, want %v", got, wantOwn)
+	}
+	got := VerifyAuthorization(verified, Trust{Profile: p}, v.NowMs)
+	if !errors.Is(got, wantVerify) || (wantVerify == nil) != (got == nil) {
+		t.Errorf("VerifyAuthorization = %v, want %v", got, wantVerify)
 	}
 }

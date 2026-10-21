@@ -277,31 +277,37 @@ func (s *callSeal) sealedOutcome(reply frame.VerifiedReply, requestHash [48]byte
 		// request's, or a scheme this node does not open, is not opened.
 		return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
 	case reply.Sealed != nil:
-		plain, err := seal.Open(s.kRep, [seal.NonceSize]byte(reply.Sealed.Nonce),
-			seal.ReplyAAD(s.request, reply.FrameType, requestHash, reply.RespondedBy), reply.Sealed.Ct)
-		if err != nil {
-			return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
-		}
-		if reply.FrameType == "result" {
-			payload, err := cbor.Decode(plain)
-			if err != nil {
-				return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
-			}
-			return callOutcome{payload: payload}
-		}
-		code, detail, err := seal.OpenErrorPlain(plain)
-		if err != nil {
-			return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
-		}
-		var d *string
-		if detail != "" {
-			d = &detail
-		}
-		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: code, Detail: d}}
+		return s.openReply(reply, requestHash)
 	case reply.FrameType == "error" && reply.Code == codeSealedRefused:
 		return callOutcome{err: &SealedRefusedError{Named: refusedKey(reply.Detail)}}
 	case reply.FrameType == "error" && IsClearRefusal(reply.Code):
 		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: reply.Code, Detail: reply.Detail}}
 	}
 	return callOutcome{err: ErrClearAnswerToSealed}
+}
+
+// openReply opens an answer sealed under the request's key: a result's
+// payload, or an error's code and detail.
+func (s *callSeal) openReply(reply frame.VerifiedReply, requestHash [48]byte) callOutcome {
+	plain, err := seal.Open(s.kRep, [seal.NonceSize]byte(reply.Sealed.Nonce),
+		seal.ReplyAAD(s.request, reply.FrameType, requestHash, reply.RespondedBy), reply.Sealed.Ct)
+	if err != nil {
+		return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
+	}
+	if reply.FrameType == "result" {
+		payload, err := cbor.Decode(plain)
+		if err != nil {
+			return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
+		}
+		return callOutcome{payload: payload}
+	}
+	code, detail, err := seal.OpenErrorPlain(plain)
+	if err != nil {
+		return callOutcome{err: &ConfidentialityError{Reason: ReasonReplyNotOpened}}
+	}
+	var d *string
+	if detail != "" {
+		d = &detail
+	}
+	return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: code, Detail: d}}
 }

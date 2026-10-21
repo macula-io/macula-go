@@ -122,66 +122,90 @@ func payloadToJSON(v cbor.Value) json.RawMessage {
 func writeJSON(buf *bytes.Buffer, v cbor.Value) {
 	switch v.Kind() {
 	case cbor.KindUInt, cbor.KindNegInt:
-		// Integers are written from their own digits, never through a
-		// float. One outside int64 cannot come off the wire, which
-		// refuses it; it is written as null rather than as a wrong number.
-		i, ok := v.AsInt64()
-		if !ok {
-			buf.WriteString("null")
-			return
-		}
-		buf.WriteString(strconv.FormatInt(i, 10))
+		writeJSONInt(buf, v)
 	case cbor.KindBytes:
-		b, _ := v.AsBytes()
-		text, _ := json.Marshal(map[string]string{bytesKey: base64.StdEncoding.EncodeToString(b)})
-		buf.Write(text)
+		writeJSONBytes(buf, v)
 	case cbor.KindText:
-		s, _ := v.AsText()
-		text, _ := json.Marshal(s)
-		buf.Write(text)
+		writeJSONText(buf, v)
 	case cbor.KindFloat:
-		f, _ := v.AsFloat()
-		if math.IsNaN(f) || math.IsInf(f, 0) {
-			buf.WriteString("null")
-			return
-		}
-		// A float keeps a fraction or an exponent, so it parses back as
-		// a float, never as an integer.
-		text := strconv.FormatFloat(f, 'g', -1, 64)
-		if !strings.ContainsAny(text, ".eE") {
-			text += ".0"
-		}
-		buf.WriteString(text)
+		writeJSONFloat(buf, v)
 	case cbor.KindNull:
 		buf.WriteString("null")
 	case cbor.KindList:
-		items, _ := v.AsList()
-		buf.WriteByte('[')
-		for i, item := range items {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			writeJSON(buf, item)
-		}
-		buf.WriteByte(']')
+		writeJSONList(buf, v)
 	case cbor.KindMap:
-		entries, _ := v.AsMap()
-		buf.WriteByte('{')
-		for i, e := range entries {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			key, ok := e.Key.AsText()
-			if !ok {
-				key = e.Key.String()
-			}
-			text, _ := json.Marshal(key)
-			buf.Write(text)
-			buf.WriteByte(':')
-			writeJSON(buf, e.Val)
-		}
-		buf.WriteByte('}')
+		writeJSONMap(buf, v)
 	default:
 		buf.WriteString("null")
 	}
+}
+
+// writeJSONInt writes an integer from its own digits, never through a float.
+// One outside int64 cannot come off the wire, which refuses it; it is written
+// as null rather than as a wrong number.
+func writeJSONInt(buf *bytes.Buffer, v cbor.Value) {
+	i, ok := v.AsInt64()
+	if !ok {
+		buf.WriteString("null")
+		return
+	}
+	buf.WriteString(strconv.FormatInt(i, 10))
+}
+
+func writeJSONBytes(buf *bytes.Buffer, v cbor.Value) {
+	b, _ := v.AsBytes()
+	text, _ := json.Marshal(map[string]string{bytesKey: base64.StdEncoding.EncodeToString(b)})
+	buf.Write(text)
+}
+
+func writeJSONText(buf *bytes.Buffer, v cbor.Value) {
+	s, _ := v.AsText()
+	text, _ := json.Marshal(s)
+	buf.Write(text)
+}
+
+// writeJSONFloat keeps a fraction or an exponent, so a float parses back as a
+// float, never as an integer.
+func writeJSONFloat(buf *bytes.Buffer, v cbor.Value) {
+	f, _ := v.AsFloat()
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		buf.WriteString("null")
+		return
+	}
+	text := strconv.FormatFloat(f, 'g', -1, 64)
+	if !strings.ContainsAny(text, ".eE") {
+		text += ".0"
+	}
+	buf.WriteString(text)
+}
+
+func writeJSONList(buf *bytes.Buffer, v cbor.Value) {
+	items, _ := v.AsList()
+	buf.WriteByte('[')
+	for i, item := range items {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		writeJSON(buf, item)
+	}
+	buf.WriteByte(']')
+}
+
+func writeJSONMap(buf *bytes.Buffer, v cbor.Value) {
+	entries, _ := v.AsMap()
+	buf.WriteByte('{')
+	for i, e := range entries {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		key, ok := e.Key.AsText()
+		if !ok {
+			key = e.Key.String()
+		}
+		text, _ := json.Marshal(key)
+		buf.Write(text)
+		buf.WriteByte(':')
+		writeJSON(buf, e.Val)
+	}
+	buf.WriteByte('}')
 }

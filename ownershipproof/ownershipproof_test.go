@@ -325,26 +325,32 @@ func TestAnErlangMadePayloadFromTheWireVerifies(t *testing.T) {
 
 func TestAttachSignsWhatVerifyReads(t *testing.T) {
 	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
-		t.Run(string(p), func(t *testing.T) {
-			key, err := identity.GenerateKey(identity.PurposeIdentity, p)
-			if err != nil {
-				t.Fatal(err)
-			}
-			signed, err := Attach(vectorFields(), key, vectorRealm(), vectorProcedure)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := Verify(signed, vectorProcedure, vectorRealm(), p, time.Now())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if id, _ := key.NodeID(); got.Identity != id {
-				t.Fatalf("verified identity %x, want the key's %x", got.Identity, id)
-			}
-			if _, err := Verify(withField(t, signed, "weight", cbor.Int(4)), vectorProcedure, vectorRealm(), p, time.Now()); !errors.Is(err, ErrBadSignature) {
-				t.Fatalf("a changed field: %v, want ErrBadSignature", err)
-			}
-		})
+		t.Run(string(p), func(t *testing.T) { assertAttachSignsWhatVerifyReads(t, p) })
+	}
+}
+
+// assertAttachSignsWhatVerifyReads checks a proof attached by a key of profile
+// p verifies under that key and names it, and stops verifying once a signed
+// field changes.
+func assertAttachSignsWhatVerifyReads(t *testing.T, p profile.Profile) {
+	t.Helper()
+	key, err := identity.GenerateKey(identity.PurposeIdentity, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := Attach(vectorFields(), key, vectorRealm(), vectorProcedure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Verify(signed, vectorProcedure, vectorRealm(), p, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, _ := key.NodeID(); got.Identity != id {
+		t.Fatalf("verified identity %x, want the key's %x", got.Identity, id)
+	}
+	if _, err := Verify(withField(t, signed, "weight", cbor.Int(4)), vectorProcedure, vectorRealm(), p, time.Now()); !errors.Is(err, ErrBadSignature) {
+		t.Fatalf("a changed field: %v, want ErrBadSignature", err)
 	}
 }
 

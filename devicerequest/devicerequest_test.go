@@ -79,40 +79,48 @@ func TestJSONRequestFollowsTheRealmsRule(t *testing.T) {
 // message its own fields rebuild, with the key's own profile.
 func TestSignedProofVerifiesOverItsMessage(t *testing.T) {
 	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
-		key := teststation.Key(t, p, "device "+string(p))
-		realm := sha256.Sum256([]byte("io.macula"))
-		request, err := JSONRequest([]byte(`{"public_key": "a2V5", "device_info": {"hostname": "h"}}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		proof, err := Sign(key, realm, ProcedureJoinSession, request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if proof.V != Version || len(proof.Nonce) != 32 || proof.Timestamp == 0 {
-			t.Fatalf("%s: proof %+v", p, proof)
-		}
-		nonce, _ := hex.DecodeString(proof.Nonce)
-		signature, _ := hex.DecodeString(proof.Signature)
-		message := Message(key.PublicKey(), realm, ProcedureJoinSession, proof.Timestamp, [16]byte(nonce), request)
-		if !identity.Verify(message, signature, key.PublicKey(), p) {
-			t.Fatalf("%s: the signature does not verify over its message", p)
-		}
-		other, err := JSONRequest([]byte(`{"public_key": "a2V5", "device_info": {"hostname": "evil"}}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if identity.Verify(Message(key.PublicKey(), realm, ProcedureJoinSession, proof.Timestamp, [16]byte(nonce), other),
-			signature, key.PublicKey(), p) {
-			t.Fatalf("%s: the signature also verifies over another device_info", p)
-		}
-		again, err := Sign(key, realm, ProcedureJoinSession, request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if again.Nonce == proof.Nonce {
-			t.Fatalf("%s: two proofs share a nonce", p)
-		}
+		checkSignedProof(t, p)
+	}
+}
+
+// checkSignedProof holds a proof signed under p to the realm's shape, to its
+// signature verifying over the message its own fields rebuild, to that
+// signature not verifying over another device_info, and to a fresh nonce.
+func checkSignedProof(t *testing.T, p profile.Profile) {
+	t.Helper()
+	key := teststation.Key(t, p, "device "+string(p))
+	realm := sha256.Sum256([]byte("io.macula"))
+	request, err := JSONRequest([]byte(`{"public_key": "a2V5", "device_info": {"hostname": "h"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := Sign(key, realm, ProcedureJoinSession, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.V != Version || len(proof.Nonce) != 32 || proof.Timestamp == 0 {
+		t.Fatalf("%s: proof %+v", p, proof)
+	}
+	nonce, _ := hex.DecodeString(proof.Nonce)
+	signature, _ := hex.DecodeString(proof.Signature)
+	message := Message(key.PublicKey(), realm, ProcedureJoinSession, proof.Timestamp, [16]byte(nonce), request)
+	if !identity.Verify(message, signature, key.PublicKey(), p) {
+		t.Fatalf("%s: the signature does not verify over its message", p)
+	}
+	other, err := JSONRequest([]byte(`{"public_key": "a2V5", "device_info": {"hostname": "evil"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Verify(Message(key.PublicKey(), realm, ProcedureJoinSession, proof.Timestamp, [16]byte(nonce), other),
+		signature, key.PublicKey(), p) {
+		t.Fatalf("%s: the signature also verifies over another device_info", p)
+	}
+	again, err := Sign(key, realm, ProcedureJoinSession, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Nonce == proof.Nonce {
+		t.Fatalf("%s: two proofs share a nonce", p)
 	}
 }
 

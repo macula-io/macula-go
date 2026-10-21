@@ -57,38 +57,78 @@ func main() {
 }
 
 func run(host string, port uint16, profileName, node string, hold, serve, every time.Duration) error {
-	p, err := profile.Parse(profileName)
+	p, nodeID, err := parseTarget(profileName, node)
 	if err != nil {
 		return err
+	}
+	key, issuer, stopIssuer, err := newIdentity(p)
+	if err != nil {
+		return err
+	}
+	defer stopIssuer()
+	ctx, cancel := context.WithTimeout(context.Background(), stationlink.HandshakeTimeout)
+	defer cancel()
+	link, err := dialAndReport(ctx, key, issuer, stationTarget(host, port, p, nodeID))
+	if err != nil {
+		return err
+	}
+	if err := dhtChecks(ctx, link, key, nodeID); err != nil {
+		return err
+	}
+	if err := pubsubCheck(link); err != nil {
+		return err
+	}
+	if err := holdLink(link, hold); err != nil {
+		return err
+	}
+	if serve > 0 {
+		if err := serveCheck(link, key, stationTarget(host, port, p, nodeID), serve, every); err != nil {
+			return err
+		}
+	}
+	return link.Close("client_stop")
+}
+
+// parseTarget is the profile to dial with, and the station's node_id.
+func parseTarget(profileName, node string) (profile.Profile, [32]byte, error) {
+	p, err := profile.Parse(profileName)
+	if err != nil {
+		return p, [32]byte{}, err
 	}
 	raw, err := hex.DecodeString(node)
 	if err != nil || len(raw) != 32 {
-		return fmt.Errorf("-node must be 64 hex")
+		return p, [32]byte{}, fmt.Errorf("-node must be 64 hex")
 	}
 	var nodeID [32]byte
 	copy(nodeID[:], raw)
+	return p, nodeID, nil
+}
+
+// newIdentity generates this run's identity key and starts its statement
+// issuer; the returned stop ends the issuer.
+func newIdentity(p profile.Profile) (*identity.NodeKey, *identity.StatementIssuer, func(), error) {
 	started := time.Now()
 	key, err := identity.GenerateIdentityKey(p, identity.PuzzleDifficulty)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 	issuer, err := identity.NewStatementIssuer(key, func() int64 { return time.Now().UnixMilli() })
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
-	running, stopIssuer := context.WithCancel(context.Background())
-	defer stopIssuer()
+	running, stop := context.WithCancel(context.Background())
 	go issuer.Run(running, nil)
 	fmt.Printf("identity: %s, generated in %s\n", key, time.Since(started).Round(time.Millisecond))
-	ctx, cancel := context.WithTimeout(context.Background(), stationlink.HandshakeTimeout)
-	defer cancel()
+	return key, issuer, stop, nil
+}
+
+// dialAndReport dials the station and prints what the handshake agreed, then
+// calls _macula.ping once.
+func dialAndReport(ctx context.Context, key *identity.NodeKey, issuer *identity.StatementIssuer, target transport.Target) (*stationlink.Link, error) {
 	dialStarted := time.Now()
-	link, err := stationlink.Dial(ctx, stationlink.Config{
-		Target:      transport.Target{Host: host, Port: port, Profile: p, ExpectedNodeID: nodeID},
-		IdentityKey: key, Issuer: issuer,
-	})
+	link, err := stationlink.Dial(ctx, stationlink.Config{Target: target, IdentityKey: key, Issuer: issuer})
 	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+		return nil, fmt.Errorf("dial: %w", err)
 	}
 	state := link.TLSState()
 	leaf := state.PeerCertificates[0]
@@ -99,24 +139,18 @@ func run(host string, port uint16, profileName, node string, hold, serve, every 
 	callStarted := time.Now()
 	_, err = link.Call(ctx, stationlink.Call{Procedure: "_macula.ping", Payload: cbor.Map(nil)})
 	fmt.Printf("call _macula.ping: %v in %s\n", outcome(err), time.Since(callStarted).Round(time.Millisecond))
-	if err := dhtChecks(ctx, link, key, nodeID); err != nil {
-		return err
-	}
-	if err := pubsubCheck(link); err != nil {
-		return err
-	}
+	return link, nil
+}
+
+// holdLink keeps the link up for hold, and reports a link that ended early.
+func holdLink(link *stationlink.Link, hold time.Duration) error {
 	select {
 	case <-time.After(hold):
 		fmt.Printf("held %s: still up, unrouted %v\n", hold, link.Unrouted())
+		return nil
 	case <-link.Done():
 		return fmt.Errorf("the link ended while held: %w", link.Err())
 	}
-	if serve > 0 {
-		if err := serveCheck(link, key, stationTarget(host, port, p, nodeID), serve, every); err != nil {
-			return err
-		}
-	}
-	return link.Close("client_stop")
 }
 
 // stationTarget is the station as a dial target.
@@ -128,26 +162,74 @@ func stationTarget(host string, port uint16, p profile.Profile, nodeID [32]byte)
 // it from a second link every every, for serve.
 func serveCheck(provider *stationlink.Link, providerKey *identity.NodeKey, target transport.Target, serve, every time.Duration) error {
 	p := target.Profile
-	var suffix [6]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return err
-	}
-	// A named throwaway realm, its id the name's SHA-256 as a realm's is, so
-	// the gated check's UCANs grant in it by name.
-	realmName := "golivelink-" + hex.EncodeToString(suffix[:])
-	realm := sha256.Sum256([]byte(realmName))
-	const org, procedure = "golivelink", "golivelink/echo"
-	realmKey, err := identity.GenerateKey(identity.PurposeIdentity, p)
+	realmName, realm, err := throwawayRealm()
 	if err != nil {
 		return err
 	}
-	orgKey, err := identity.GenerateKey(identity.PurposeIdentity, p)
+	realmKey, orgKey, err := realmKeys(p)
 	if err != nil {
 		return err
 	}
-	orgKeyID := identity.KeyIDOf(orgKey.PublicKey(), p)
 	ctx, cancel := context.WithTimeout(context.Background(), stationlink.HandshakeTimeout)
 	defer cancel()
+	if err := putRealmRecords(ctx, provider, p, realm, realmKey, orgKey); err != nil {
+		return err
+	}
+	echoed := func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return r.Payload, nil }
+	served, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: procedure, Handler: echoed, RealmKey: realmKey.PublicKey()})
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
+	started := time.Now()
+	fmt.Printf("serve %s: advertised, provider %x\n", procedure, provider.NodeID())
+	caller, err := callerPool(ctx, p, target, realm, realmKey)
+	if err != nil {
+		return err
+	}
+	defer caller.Close()
+	if err := streamCheck(ctx, provider, caller, realm, realmKey.PublicKey()); err != nil {
+		return err
+	}
+	gated, cancelGated := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelGated()
+	if err := gatedCheck(gated, provider, caller, p, realmName, realmKey.PublicKey()); err != nil {
+		return err
+	}
+	return callLoop(provider, caller, served, realm, procedure, started, serve, every)
+}
+
+// The org and procedure a run serves on its throwaway realm.
+const (
+	org       = "golivelink"
+	procedure = "golivelink/echo"
+)
+
+// throwawayRealm is a named realm of this run's own: its id is the name's
+// SHA-256, as a realm's is, so the gated check's UCANs grant in it by name.
+func throwawayRealm() (string, [32]byte, error) {
+	var suffix [6]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", [32]byte{}, err
+	}
+	name := "golivelink-" + hex.EncodeToString(suffix[:])
+	return name, sha256.Sum256([]byte(name)), nil
+}
+
+func realmKeys(p profile.Profile) (realmKey, orgKey *identity.NodeKey, err error) {
+	if realmKey, err = identity.GenerateKey(identity.PurposeIdentity, p); err != nil {
+		return nil, nil, err
+	}
+	if orgKey, err = identity.GenerateKey(identity.PurposeIdentity, p); err != nil {
+		return nil, nil, err
+	}
+	return realmKey, orgKey, nil
+}
+
+// putRealmRecords puts the throwaway realm's org directory and the org's
+// delegation to the provider.
+func putRealmRecords(ctx context.Context, provider *stationlink.Link, p profile.Profile, realm [32]byte,
+	realmKey, orgKey *identity.NodeKey) error {
+	orgKeyID := identity.KeyIDOf(orgKey.PublicKey(), p)
 	directory := cbor.Map([]cbor.MapEntry{
 		{Key: cbor.Text("realm_id"), Val: cbor.Bytes(realm[:])},
 		{Key: cbor.Text("org_name"), Val: cbor.Text(org)},
@@ -165,31 +247,26 @@ func serveCheck(provider *stationlink.Link, providerKey *identity.NodeKey, targe
 			return err
 		}
 	}
-	echoed := func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return r.Payload, nil }
-	served, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: procedure, Handler: echoed, RealmKey: realmKey.PublicKey()})
-	if err != nil {
-		return fmt.Errorf("serve: %w", err)
-	}
-	started := time.Now()
-	fmt.Printf("serve %s: advertised, provider %x\n", procedure, provider.NodeID())
+	return nil
+}
+
+// callerPool is the caller's own pool: one seed, trusting the throwaway realm.
+func callerPool(ctx context.Context, p profile.Profile, target transport.Target, realm [32]byte, realmKey *identity.NodeKey) (*pool.Pool, error) {
 	callerKey, err := identity.GenerateIdentityKey(p, identity.PuzzleDifficulty)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	caller, err := pool.Connect(ctx, []pool.Seed{{Host: target.Host, Port: target.Port, NodeID: target.ExpectedNodeID}},
 		pool.Opts{IdentityKey: callerKey, RealmTrust: map[[32]byte][]byte{realm: realmKey.PublicKey()}})
 	if err != nil {
-		return fmt.Errorf("the caller's pool: %w", err)
+		return nil, fmt.Errorf("the caller's pool: %w", err)
 	}
-	defer caller.Close()
-	if err := streamCheck(ctx, provider, caller, realm, realmKey.PublicKey()); err != nil {
-		return err
-	}
-	gated, cancelGated := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancelGated()
-	if err := gatedCheck(gated, provider, caller, p, realmName, realmKey.PublicKey()); err != nil {
-		return err
-	}
+	return caller, nil
+}
+
+// callLoop calls the served procedure every every, until serve is over.
+func callLoop(provider *stationlink.Link, caller *pool.Pool, served *stationlink.Served, realm [32]byte, procedure string,
+	started time.Time, serve, every time.Duration) error {
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	for {
@@ -431,20 +508,11 @@ func gatedCheck(ctx context.Context, provider *stationlink.Link, caller *pool.Po
 		return err
 	}
 	policy := ucan.UCANRequired{Issuer: rootID}
-	calls, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: call, RealmKey: realmKey, Policy: policy,
-		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return cbor.Text("served"), nil }})
+	stop, err := serveGated(ctx, provider, realm, realmKey, policy, call, watch)
 	if err != nil {
-		return fmt.Errorf("serve %s: %w", call, err)
+		return err
 	}
-	defer func() { _ = calls.Stop() }()
-	streams, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: watch, RealmKey: realmKey, Policy: policy,
-		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
-			return s.Send([]byte("served"))
-		}}})
-	if err != nil {
-		return fmt.Errorf("serve %s: %w", watch, err)
-	}
-	defer func() { _ = streams.Stop() }()
+	defer stop()
 	grant := func(audience [32]byte) ([]byte, error) {
 		return ucan.Create(root, audience, []ucan.Capability{{With: "mri:org:" + realmName + "/golivelink", Can: "invoke"}},
 			ucan.Options{Exp: time.Now().Unix() + 300})
@@ -457,37 +525,76 @@ func gatedCheck(ctx context.Context, provider *stationlink.Link, caller *pool.Po
 	if err != nil {
 		return err
 	}
-	cases := []struct {
-		name   string
-		token  []byte
-		proofs [][]byte
-		want   string
-	}{
+	for _, c := range gatedCases(token, stray) {
+		if err := checkGatedCase(ctx, caller, realm, call, watch, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// serveGated serves the gated call and stream on provider, both on policy.
+func serveGated(ctx context.Context, provider *stationlink.Link, realm [32]byte, realmKey []byte,
+	policy ucan.UCANRequired, call, watch string) (func(), error) {
+	calls, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: call, RealmKey: realmKey, Policy: policy,
+		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return cbor.Text("served"), nil }})
+	if err != nil {
+		return nil, fmt.Errorf("serve %s: %w", call, err)
+	}
+	streams, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: watch, RealmKey: realmKey, Policy: policy,
+		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
+			return s.Send([]byte("served"))
+		}}})
+	if err != nil {
+		_ = calls.Stop()
+		return nil, fmt.Errorf("serve %s: %w", watch, err)
+	}
+	return func() {
+		_ = calls.Stop()
+		_ = streams.Stop()
+	}, nil
+}
+
+// gatedCase is one token case a gated provider must judge.
+type gatedCase struct {
+	name   string
+	token  []byte
+	proofs [][]byte
+	want   string
+}
+
+// gatedCases is what a gated provider must judge as macula's link does: no
+// token (unauthorized), the root's grant to the caller (served), and that
+// grant with a proof no token names (malformed_frame).
+func gatedCases(token, stray []byte) []gatedCase {
+	return []gatedCase{
 		{"no token", nil, nil, "unauthorized"},
 		{"the root's grant", token, nil, ""},
 		{"a proof no token names", token, [][]byte{stray}, "malformed_frame"},
 	}
-	for _, c := range cases {
-		_, err := caller.Call(ctx, pool.Call{Realm: realm, Procedure: call, Payload: cbor.Map(nil), Timeout: 10 * time.Second,
-			Token: c.token, Proofs: c.proofs})
-		got := refusedWith(err)
-		fmt.Printf("gated call, %s: %s\n", c.name, outcome(err))
-		if got != c.want {
-			return fmt.Errorf("gated call, %s: %v, want %q", c.name, err, c.want)
-		}
-		stream, err := caller.OpenStream(ctx, pool.StreamCall{Realm: realm, Procedure: watch, Mode: frame.ServerStream,
-			Payload: cbor.Map(nil), Token: c.token, Proofs: c.proofs})
-		if err != nil {
-			return fmt.Errorf("gated open, %s: %w", c.name, err)
-		}
-		recvCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		_, err = stream.Recv(recvCtx)
-		cancel()
-		_ = stream.Close()
-		fmt.Printf("gated open, %s: %s\n", c.name, outcome(err))
-		if got := refusedWith(err); got != c.want {
-			return fmt.Errorf("gated open, %s: %v, want %q", c.name, err, c.want)
-		}
+}
+
+// checkGatedCase presents one case as a call and as an open, and wants the
+// same answer to both.
+func checkGatedCase(ctx context.Context, caller *pool.Pool, realm [32]byte, call, watch string, c gatedCase) error {
+	_, err := caller.Call(ctx, pool.Call{Realm: realm, Procedure: call, Payload: cbor.Map(nil), Timeout: 10 * time.Second,
+		Token: c.token, Proofs: c.proofs})
+	fmt.Printf("gated call, %s: %s\n", c.name, outcome(err))
+	if got := refusedWith(err); got != c.want {
+		return fmt.Errorf("gated call, %s: %v, want %q", c.name, err, c.want)
+	}
+	recvCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	stream, err := caller.OpenStream(ctx, pool.StreamCall{Realm: realm, Procedure: watch, Mode: frame.ServerStream,
+		Payload: cbor.Map(nil), Token: c.token, Proofs: c.proofs})
+	if err != nil {
+		return fmt.Errorf("gated open, %s: %w", c.name, err)
+	}
+	_, err = stream.Recv(recvCtx)
+	_ = stream.Close()
+	fmt.Printf("gated open, %s: %s\n", c.name, outcome(err))
+	if got := refusedWith(err); got != c.want {
+		return fmt.Errorf("gated open, %s: %v, want %q", c.name, err, c.want)
 	}
 	return nil
 }

@@ -382,33 +382,14 @@ func TestABidiStreamEndsWhenBothSidesEndSending(t *testing.T) {
 	w := newStreamWorld(t, "bidi ends")
 	served := make(chan *stationlink.Stream, 2)
 	w.serve(t, frame.Bidi, func(ctx context.Context, s *stationlink.Stream) error {
-		served <- s
-		for {
-			event, err := s.Recv(ctx)
-			if err != nil {
-				return err
-			}
-			if event.Kind == stationlink.StreamEnd {
-				if err := s.CloseSend(); err != nil {
-					return err
-				}
-				<-s.Done()
-				return nil
-			}
-		}
+		return endSendingWhenTheCallerDoes(ctx, s, served)
 	})
 	stream := w.open(t, frame.Bidi, cbor.Map(nil))
 	if err := stream.CloseSend(); err != nil {
 		t.Fatalf("CloseSend: %v", err)
 	}
 	provider := <-served
-	for name, s := range map[string]*stationlink.Stream{"caller": stream, "provider": provider} {
-		select {
-		case <-s.Done():
-		case <-time.After(5 * time.Second):
-			t.Errorf("the %s's stream never ended", name)
-		}
-	}
+	assertBothEnded(t, stream, provider)
 	w.released(t)
 	next := w.open(t, frame.Bidi, cbor.Map(nil))
 	_ = next.Abort("done", "")
@@ -416,6 +397,38 @@ func TestABidiStreamEndsWhenBothSidesEndSending(t *testing.T) {
 	case <-served:
 	case <-time.After(5 * time.Second):
 		t.Error("the session place was not given back")
+	}
+}
+
+// endSendingWhenTheCallerDoes hands s to served, then ends the provider's
+// sending when the caller ends its own and waits for the stream to end.
+func endSendingWhenTheCallerDoes(ctx context.Context, s *stationlink.Stream, served chan<- *stationlink.Stream) error {
+	served <- s
+	for {
+		event, err := s.Recv(ctx)
+		if err != nil {
+			return err
+		}
+		if event.Kind != stationlink.StreamEnd {
+			continue
+		}
+		if err := s.CloseSend(); err != nil {
+			return err
+		}
+		<-s.Done()
+		return nil
+	}
+}
+
+// assertBothEnded checks both ends of a bidi stream end within five seconds.
+func assertBothEnded(t *testing.T, caller, provider *stationlink.Stream) {
+	t.Helper()
+	for name, s := range map[string]*stationlink.Stream{"caller": caller, "provider": provider} {
+		select {
+		case <-s.Done():
+		case <-time.After(5 * time.Second):
+			t.Errorf("the %s's stream never ended", name)
+		}
 	}
 }
 
@@ -557,10 +570,21 @@ func TestACallerFrameOfAnUnknownEncodingEndsTheSessionAsEnumUnknown(t *testing.T
 		}}}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
+	if _, err := s.RawStream(t.Context(), provider.NodeID(), unknownEncodingStream(t, realm.ID, provider.NodeID())); err != nil {
+		t.Fatalf("RawStream: %v", err)
+	}
+	assertSessionEndedAsEnumUnknownOnALiveLink(t, ended, provider)
+}
+
+// unknownEncodingStream is the caller's signed STREAM_OPEN and the held
+// stream_data whose encoding this library does not know, length-prefixed as a
+// stream carries its frames.
+func unknownEncodingStream(t *testing.T, realm, target [32]byte) []byte {
+	t.Helper()
 	callerKey := teststation.Key(t, profile.PQPure, "unknown encoding caller")
 	mode := frame.Bidi
-	open, err := frame.SignStreamOpen(frame.RequestSpec{RequestID: [16]byte{9}, Realm: realm.ID, Procedure: streamProcedure,
-		Target: provider.NodeID(), Deadline: uint64(time.Now().Add(time.Minute).UnixMilli()), Payload: cbor.Map(nil), Mode: &mode}, callerKey)
+	open, err := frame.SignStreamOpen(frame.RequestSpec{RequestID: [16]byte{9}, Realm: realm, Procedure: streamProcedure,
+		Target: target, Deadline: uint64(time.Now().Add(time.Minute).UnixMilli()), Payload: cbor.Map(nil), Mode: &mode}, callerKey)
 	if err != nil {
 		t.Fatalf("SignStreamOpen: %v", err)
 	}
@@ -591,9 +615,13 @@ func TestACallerFrameOfAnUnknownEncodingEndsTheSessionAsEnumUnknown(t *testing.T
 		encoded := cbor.Encode(v)
 		raw = append(binary.BigEndian.AppendUint32(raw, uint32(len(encoded))), encoded...)
 	}
-	if _, err := s.RawStream(t.Context(), provider.NodeID(), raw); err != nil {
-		t.Fatalf("RawStream: %v", err)
-	}
+	return raw
+}
+
+// assertSessionEndedAsEnumUnknownOnALiveLink checks the provider's session
+// ended with StreamError enum_unknown and the link stayed up.
+func assertSessionEndedAsEnumUnknownOnALiveLink(t *testing.T, ended <-chan error, provider *stationlink.Link) {
+	t.Helper()
 	select {
 	case err := <-ended:
 		var refused *stationlink.StreamError

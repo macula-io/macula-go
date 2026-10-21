@@ -59,7 +59,6 @@ func TestTheX509ScanSeesEveryWayToImportTheCertificatePackage(t *testing.T) {
 // of crypto/x509 that is not an RSA key encoding.
 func x509Refusals(t *testing.T, file string, source []byte) []string {
 	t.Helper()
-	keyEncodings := []string{"MarshalPKCS1PublicKey", "MarshalPKCS1PrivateKey", "ParsePKCS1PublicKey", "ParsePKCS1PrivateKey"}
 	var src any
 	if source != nil {
 		src = source
@@ -69,8 +68,17 @@ func x509Refusals(t *testing.T, file string, source []byte) []string {
 	if err != nil {
 		t.Fatalf("parse %s: %v", file, err)
 	}
-	var refusals []string
-	x509Name := ""
+	refusals, x509Name := importRefusals(file, parsed)
+	if x509Name == "" || x509Name == "." {
+		return refusals
+	}
+	return append(refusals, x509Uses(fileSet, parsed, x509Name)...)
+}
+
+// importRefusals lists each import of encoding/pem or crypto/x509/pkix and each
+// dot import of crypto/x509, and names the local name crypto/x509 was imported
+// under, empty when the file imports it under no name (or not at all).
+func importRefusals(file string, parsed *ast.File) (refusals []string, x509Name string) {
 	for _, spec := range parsed.Imports {
 		switch path, _ := strconv.Unquote(spec.Path.Value); path {
 		case "encoding/pem", "crypto/x509/pkix":
@@ -85,9 +93,14 @@ func x509Refusals(t *testing.T, file string, source []byte) []string {
 			}
 		}
 	}
-	if x509Name == "" || x509Name == "." {
-		return refusals
-	}
+	return refusals, x509Name
+}
+
+// x509Uses lists each use of the certificate package's local name that is not
+// an RSA key encoding.
+func x509Uses(fileSet *token.FileSet, parsed *ast.File, x509Name string) []string {
+	keyEncodings := []string{"MarshalPKCS1PublicKey", "MarshalPKCS1PrivateKey", "ParsePKCS1PublicKey", "ParsePKCS1PrivateKey"}
+	var refusals []string
 	ast.Inspect(parsed, func(node ast.Node) bool {
 		selector, isSelector := node.(*ast.SelectorExpr)
 		if !isSelector {

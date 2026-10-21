@@ -166,21 +166,28 @@ func TestVectorsKeys(t *testing.T) {
 	for name, p := range v.Profiles {
 		prof, _ := profile.Parse(name)
 		for keyName, k := range p.Keys {
-			carried, err := CarriedKey(k.DIDKey, prof)
-			if err != nil {
-				t.Fatalf("%s %s: %v", name, keyName, err)
-			}
-			if got := DIDKey(carried, prof); got != k.DIDKey {
-				t.Errorf("%s %s: did:key does not round trip", name, keyName)
-			}
-			if got := identity.KeyIDOf(carried, prof); hex.EncodeToString(got[:]) != k.KeyID {
-				t.Errorf("%s %s: key id %x, want %s", name, keyName, got, k.KeyID)
-			}
-			if k.NodeID != "" {
-				if got := identity.NodeIDOf(carried, prof); hex.EncodeToString(got[:]) != k.NodeID {
-					t.Errorf("%s %s: node_id %x, want %s", name, keyName, got, k.NodeID)
-				}
-			}
+			checkVectorKey(t, name, keyName, prof, k)
+		}
+	}
+}
+
+// checkVectorKey decodes a vector's did:key, checks its key id and, where it
+// has one, its node_id, and that it encodes back to the same did:key.
+func checkVectorKey(t *testing.T, name, keyName string, prof profile.Profile, k vectorKey) {
+	t.Helper()
+	carried, err := CarriedKey(k.DIDKey, prof)
+	if err != nil {
+		t.Fatalf("%s %s: %v", name, keyName, err)
+	}
+	if got := DIDKey(carried, prof); got != k.DIDKey {
+		t.Errorf("%s %s: did:key does not round trip", name, keyName)
+	}
+	if got := identity.KeyIDOf(carried, prof); hex.EncodeToString(got[:]) != k.KeyID {
+		t.Errorf("%s %s: key id %x, want %s", name, keyName, got, k.KeyID)
+	}
+	if k.NodeID != "" {
+		if got := identity.NodeIDOf(carried, prof); hex.EncodeToString(got[:]) != k.NodeID {
+			t.Errorf("%s %s: node_id %x, want %s", name, keyName, got, k.NodeID)
 		}
 	}
 }
