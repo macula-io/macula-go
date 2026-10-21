@@ -84,3 +84,12 @@ jobs:
 
   libmacula:
     uses: ./.github/workflows/libmacula.yml
+
+  # Every Go block in the README and guides builds against this module
+  # (macula-codebase-checks#8). release.yml runs this workflow, so a release
+  # waits on it too.
+  docs:
+    name: Go blocks in the docs
+    permissions:
+      contents: read
+    uses: macula-io/macula-ci-images/.github/workflows/doc-snippets-go.yml@9ee9724a6a5124602a37ae7378dd9b3b85447879

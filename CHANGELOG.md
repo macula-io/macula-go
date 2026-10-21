@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CI builds every Go block in the README and the guides against the module
+  (macula-codebase-checks#8), and a release waits on it through ci.yml.
+
 ## [0.28.0] - 2026-10-20
 
 A revoked realm member's endorsement stops admitting it within 24 hours, as
