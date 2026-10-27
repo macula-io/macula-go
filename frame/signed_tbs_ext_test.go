@@ -1,6 +1,7 @@
 package frame
 
 import (
+	"bytes"
 	"errors"
 	"slices"
 	"strings"
@@ -105,12 +106,13 @@ func TestARequestIgnoresAnUnknownNonCriticalExtension(t *testing.T) {
 }
 
 // And a stream frame: the seq-0 STREAM_DATA a provider sends first is exactly
-// where the sealed-by-default work (macula#135) carries its key.
+// where the sealed-by-default work (macula#135) carries its key, in an
+// extension of its own.
 func TestAStreamFrameCarriesAnUnknownNonCriticalExtension(t *testing.T) {
 	keys := requestKeysFor(t)
 	open := streamOpenOf(t, keys, ServerStream, idOf(7))
 	signer := keys.provider.KeyID()
-	name := "seal.kem_key"
+	name := "stream.hint"
 	before := WireCounters().ExtIgnored[name]
 	fields := withEntry(chunkTBS(open, signer, 0), "ext", unknownExt(name).Val)
 	stream, _, err := verifyProvider(t, crafted(frameTypeStreamData, "stream",
@@ -256,5 +258,46 @@ func TestANonCriticalBesideACriticalIsNotCounted(t *testing.T) {
 	}
 	if got := WireCounters().ExtIgnored[name]; got != before {
 		t.Errorf("wire_ext_ignored{%s} = %d, want %d: a refused object counts nothing", name, got, before)
+	}
+}
+
+// A keyed provider's sealed_required refusal carries the KEM key it holds in a
+// non-critical seal.kem_key entry of its tbs (DESIGN_E2E_SEALED_BY_DEFAULT.md
+// section 3, release A0). The reader recognises the name, so the entry is not
+// counted as ignored, and hands the key up for the link to check against its
+// profile.
+func TestASealedRequiredRefusalCarriesTheProvidersKEMKey(t *testing.T) {
+	keys := requestKeysFor(t)
+	request := verifiedCall(t, keys)
+	kemKey := bytes.Repeat([]byte{7}, 1568)
+	before := WireCounters().ExtIgnored[ExtSealKEMKey]
+	fields := withEntry(replyTBS(request, frameTypeError), "ext",
+		cbor.Map([]cbor.MapEntry{extension(ExtSealKEMKey, 0, cbor.Bytes(kemKey))}))
+	reply, err := VerifyReply(onWire(t, crafted(frameTypeError, "reply",
+		signedWith(t, replyLabel, fields, keys.provider))), request, profile.PQPure)
+	if err != nil {
+		t.Fatalf("a sealed_required carrying its key: %v, want it verified", err)
+	}
+	carried, ok := KEMKeyFromExt(reply.Ext)
+	if !ok || !bytes.Equal(carried, kemKey) {
+		t.Errorf("KEMKeyFromExt = %d bytes, %v; want the %d the refusal carried", len(carried), ok, len(kemKey))
+	}
+	if after := WireCounters().ExtIgnored[ExtSealKEMKey]; after != before {
+		t.Errorf("wire_ext_ignored{%s} = %d, want %d: a known extension is read, not ignored", ExtSealKEMKey, after, before)
+	}
+}
+
+// A value that is not bytes names no key: the refusal then surfaces as the
+// provider's own sealed_required.
+func TestAKEMKeyThatIsNotBytesNamesNoKey(t *testing.T) {
+	for name, value := range map[string]cbor.Value{
+		"a text value": cbor.Text("not a key"),
+		"an int value": cbor.Int(1),
+		"no entry":     cbor.Map([]cbor.MapEntry{extension("other.ext", 0, cbor.Bytes([]byte{1}))}),
+		"an empty map": cbor.Map(nil),
+	} {
+		if key, ok := KEMKeyFromExt(value); ok {
+			t.Errorf("%s: KEMKeyFromExt = %d bytes, true; want none", name, len(key))
+		}
 	}
 }

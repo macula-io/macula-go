@@ -35,6 +35,10 @@ type VerifiedReply struct {
 	// Sealed is a sealed RESULT's payload, or a sealed ERROR's code and
 	// detail (cbor([code, detail]) once opened); nil for a clear reply.
 	Sealed *Sealed
+	// Ext is the reply's own extension map from its signed tbs (WIRE_1_0.md
+	// section 3.2), nil when it carries none. A sealed_required refusal
+	// carries the provider's KEM key here (seal.kem_key).
+	Ext cbor.Value
 }
 
 // RelayErrorSpec is a station's relay error as it gives it to SignRelayError: an
@@ -166,7 +170,7 @@ func VerifyReply(v cbor.Value, request VerifiedRequest, p profile.Profile) (Veri
 		return VerifiedReply{}, err
 	}
 	reply := VerifiedReply{FrameType: frameType, Payload: fields["payload"], Code: textOf(fields["code"]), Detail: optionalText(fields, "detail"),
-		Sealed: sealedField(fields, sealedReply)}
+		Sealed: sealedField(fields, sealedReply), Ext: fields["ext"]}
 	fixedBytes(reply.RespondedBy[:], fields["responded_by"])
 	switch {
 	case reply.RespondedBy != identity.NodeIDOf(verified.Key, p):
