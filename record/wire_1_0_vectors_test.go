@@ -3,6 +3,7 @@ package record
 import (
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/macula-io/macula-go/frame"
@@ -73,6 +74,12 @@ func TestTheWireOneReaderVectors(t *testing.T) {
 	for _, class := range []string{"verify", "check_order"} {
 		for _, c := range readWireOneCases(t, class) {
 			if role := c.ExpectText("role"); role != "" && role != "reader" {
+				continue
+			}
+			if strings.HasPrefix(c.ID, "frame.") {
+				// A signed frame object is no record: package frame puts these
+				// cases to the reader of the frame that carries each one
+				// (wire_1_0_verify_vectors_test.go).
 				continue
 			}
 			t.Run(c.ID, func(t *testing.T) {
