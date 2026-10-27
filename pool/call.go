@@ -740,15 +740,15 @@ func (p *Pool) openAt(ctx context.Context, link *stationlink.Link, cand candidat
 	}
 	call := stationlink.StreamCall{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
 		Mode: c.Mode, Payload: c.Payload, Deadline: c.Deadline, Token: c.Token, Proofs: c.Proofs, SealTo: sealTo, Clear: sealTo == nil}
-	if sealTo != nil {
-		// Refused sealed_refused before it has sent anything, the stream
-		// reseals once to the key a fresh lookup confirms (amendment A1).
-		key := resolvedKey{c.Realm, c.Procedure, cand.Node}
-		call.Reseal = func(named *[seal.KeyIDSize]byte) ([]byte, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), stationlink.DefaultCallTimeout)
-			defer cancel()
-			return p.resealed(ctx, key, cand.Node, named)
-		}
+	// Refused sealed_refused before it has sent anything, the stream reseals
+	// once to the key a fresh lookup confirms (amendment A1). A clear stream
+	// takes it too once it has adopted the provider's key: a clear session that
+	// sent nothing starts the new one at seq 0, within the same three sends.
+	key := resolvedKey{c.Realm, c.Procedure, cand.Node}
+	call.Reseal = func(named *[seal.KeyIDSize]byte) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), stationlink.DefaultCallTimeout)
+		defer cancel()
+		return p.resealed(ctx, key, cand.Node, named)
 	}
 	return link.OpenStream(ctx, call)
 }

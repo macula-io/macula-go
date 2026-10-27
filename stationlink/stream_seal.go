@@ -136,8 +136,10 @@ var errNotOpened = errors.New("stationlink: a sealed stream frame that does not 
 
 // adoptionKey is the provider's KEM key a clear stream's first frame carries: a
 // seq-0 sealed_required it signed, naming the key it holds now in the frame's
-// tbs, of this profile's length. Anything else is no adoption, and surfaces as
-// the frame it is (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
+// tbs, of this profile's length. Seq 0 is the provider's first frame and no
+// other: a side numbers its frames from 0, and this is read only at the first
+// frame the provider sends. Anything else is no adoption, and surfaces as the
+// frame it is (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
 func adoptionKey(p profile.Profile, v frame.VerifiedStreamFrame) ([]byte, bool) {
 	if v.FrameType != "stream_error" || v.Seq != 0 || v.Code != codeSealedRequired {
 		return nil, false
@@ -165,9 +167,11 @@ func (s *Stream) resealed(refused *StreamError) bool {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
 	s.mu.Lock()
-	sent := s.sendSeq
+	sent, sealed := s.sendSeq, s.sealing != nil
 	s.mu.Unlock()
-	if sent != 0 {
+	// A1's reseal is a sealed stream's: a clear one takes no key from a
+	// sealed_refused, and adoption is where a clear stream becomes sealed.
+	if sent != 0 || !sealed {
 		return false
 	}
 	key, err := c.Reseal(refusedKey(&refused.Message))
