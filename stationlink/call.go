@@ -68,11 +68,11 @@ type Call struct {
 	// under a new request_id, and reports the key here for the pool to
 	// remember. A nil Adopted reseals the same and learns nothing.
 	//
-	// Adopted runs on the goroutine reading the call or stream, with that
-	// session's send mutex held, and must return before the reseal goes out:
-	// it reports the key, it does not act on it. It must not call back into
-	// the call or the stream it was handed for, which would wait on the
-	// mutex it is holding.
+	// Adopted runs before the resealed call or the stream's reopen goes out,
+	// and reports the key rather than acting on it. A unary call runs it on
+	// the calling goroutine, holding no lock. A stream runs it on the stream's
+	// reading goroutine with the stream's send mutex held, so there it must
+	// not call back into that stream, which would wait on the mutex it holds.
 	Adopted func(kemKey []byte)
 }
 

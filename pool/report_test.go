@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,22 +37,22 @@ func adKeyID(t *testing.T, w sealedPools, procedure string) [8]byte {
 
 func TestACallReportNamesTheKeyItWasSealedTo(t *testing.T) {
 	w := newSealedPools(t, "report keyed", true)
-	var sealed bool
+	var sealed atomic.Bool
 	w.serve(t, Offer{Procedure: procedure}, &sealed)
 	want := stationlink.Report{Sealed: 1, Provider: w.provider.NodeID(), SealKeyID: adKeyID(t, w, procedure)}
 	got, report, err := w.caller.CallReport(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("x")})
-	if text, _ := got.AsText(); err != nil || text != "x" || report != want || !sealed {
+	if text, _ := got.AsText(); err != nil || text != "x" || report != want || !sealed.Load() {
 		t.Errorf("a sealed call: %q, %+v, %v, want %+v", text, report, err, want)
 	}
 }
 
 func TestACallReportOfAClearCallIsSealed0(t *testing.T) {
 	w := newSealedPools(t, "report keyless", false)
-	var sealed bool
+	var sealed atomic.Bool
 	w.serve(t, Offer{Procedure: procedure}, &sealed)
 	got, report, err := w.caller.CallReport(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("x")})
 	want := stationlink.Report{Sealed: 0, Provider: w.provider.NodeID()}
-	if text, _ := got.AsText(); err != nil || text != "x" || report != want || sealed {
+	if text, _ := got.AsText(); err != nil || text != "x" || report != want || sealed.Load() {
 		t.Errorf("a clear call: %q, %+v, %v, want %+v", text, report, err, want)
 	}
 }

@@ -37,12 +37,12 @@ func newSealedPools(t *testing.T, name string, kemAdvertise bool) sealedPools {
 	return sealedPools{realm: realm, provider: provider, caller: connect(t, name+" caller", realm, s), station: s}
 }
 
-func (w sealedPools) serve(t *testing.T, o Offer, seen *bool) {
+func (w sealedPools) serve(t *testing.T, o Offer, seen *atomic.Bool) {
 	t.Helper()
 	o.Realm = w.realm.ID
 	if o.Handler == nil && o.Stream == nil {
 		o.Handler = func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
-			*seen = r.Sealed
+			seen.Store(r.Sealed)
 			return r.Payload, nil
 		}
 	}
@@ -53,11 +53,11 @@ func (w sealedPools) serve(t *testing.T, o Offer, seen *bool) {
 
 func TestAPoolSealsToAKeyedProvider(t *testing.T) {
 	w := newSealedPools(t, "sealed pool", true)
-	var sealed bool
+	var sealed atomic.Bool
 	w.serve(t, Offer{Procedure: procedure}, &sealed)
 	got, err := w.caller.Call(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("secret")})
-	if text, _ := got.AsText(); err != nil || text != "secret" || !sealed {
-		t.Fatalf("a preferred call: %q, %v, sealed %v", text, err, sealed)
+	if text, _ := got.AsText(); err != nil || text != "secret" || !sealed.Load() {
+		t.Fatalf("a preferred call: %q, %v, sealed %v", text, err, sealed.Load())
 	}
 	// Only an advertisement naming no key is called in the clear (design
 	// §8.1): off exists on an explicit target only, never at the pool, where
@@ -93,7 +93,7 @@ func TestAPoolSealsToAKeyedProvider(t *testing.T) {
 
 func TestARequiredCallRefusesAKeylessProvider(t *testing.T) {
 	w := newSealedPools(t, "keyless", false)
-	var sealed bool
+	var sealed atomic.Bool
 	w.serve(t, Offer{Procedure: procedure}, &sealed)
 	_, err := w.caller.Call(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("x"),
 		Confidential: stationlink.ConfidentialRequired})
@@ -101,8 +101,8 @@ func TestARequiredCallRefusesAKeylessProvider(t *testing.T) {
 	if !errors.As(err, &refused) || refused.Reason != stationlink.ReasonNoKEMKey {
 		t.Errorf("%v, want no_kem_key", err)
 	}
-	if _, err := w.caller.Call(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("x")}); err != nil || sealed {
-		t.Errorf("a preferred call to a keyless provider: %v, sealed %v", err, sealed)
+	if _, err := w.caller.Call(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("x")}); err != nil || sealed.Load() {
+		t.Errorf("a preferred call to a keyless provider: %v, sealed %v", err, sealed.Load())
 	}
 	if _, err := w.provider.Serve(t.Context(), Offer{Realm: w.realm.ID, Procedure: "mcl-echo/required",
 		Handler:      func(context.Context, stationlink.Request) (cbor.Value, error) { return cbor.Map(nil), nil },

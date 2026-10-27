@@ -53,6 +53,11 @@ type StreamCall struct {
 	// sealed_required naming its key makes the stream reopen sealed and
 	// replay what it sent, and the key is reported here for the pool to
 	// remember. A nil Adopted adopts the same and learns nothing.
+	//
+	// Adopted runs on the stream's reading goroutine, before the reopen goes
+	// out, with the stream's send mutex held: it reports the key rather than
+	// acting on it, and must not call back into the stream, which would wait
+	// on the mutex it holds.
 	Adopted func(kemKey []byte)
 }
 

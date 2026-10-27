@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -176,7 +177,7 @@ func TestASealedCallIsAnsweredSealed(t *testing.T) {
 func assertASealedCallIsAnsweredSealed(t *testing.T, p profile.Profile) {
 	t.Helper()
 	link, s, fixture, ring := startSealedServing(t, p)
-	var sawSealed bool
+	var sawSealed atomic.Bool
 	serveEcho(t, link, fixture, func(_ context.Context, r Request) (cbor.Value, error) {
 		return sealedEchoHandler(&sawSealed, r)
 	})
@@ -194,7 +195,7 @@ func assertASealedCallIsAnsweredSealed(t *testing.T, p profile.Profile) {
 			t.Errorf("%s: opened %q, %q, %q", c.name, text, code, detail)
 		}
 	}
-	if !sawSealed {
+	if !sawSealed.Load() {
 		t.Error("the handler was not told its request came sealed")
 	}
 }
@@ -222,8 +223,8 @@ func sealedCallAnswers() []sealedCallAnswer {
 
 // sealedEchoHandler echoes the payload back, records whether the request came
 // sealed, and fails or crashes on the payloads that ask it to.
-func sealedEchoHandler(sawSealed *bool, r Request) (cbor.Value, error) {
-	*sawSealed = r.Sealed
+func sealedEchoHandler(sawSealed *atomic.Bool, r Request) (cbor.Value, error) {
+	sawSealed.Store(r.Sealed)
 	if text, _ := r.Payload.AsText(); text == "fail" {
 		return cbor.Value{}, errors.New("refused by the handler")
 	}

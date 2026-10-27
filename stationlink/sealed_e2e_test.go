@@ -98,9 +98,9 @@ func TestASealedCallEndToEnd(t *testing.T) {
 	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
 		t.Run(string(p), func(t *testing.T) {
 			w := newSealedWorld(t, p, "sealed call")
-			var sealed bool
+			var sealed atomic.Bool
 			w.serve(t, stationlink.Offer{Procedure: "mcl-vault/open", Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
-				sealed = r.Sealed
+				sealed.Store(r.Sealed)
 				return cbor.Map([]cbor.MapEntry{{Key: cbor.Text("got"), Val: r.Payload}}), nil
 			}})
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -111,8 +111,8 @@ func TestASealedCallEndToEnd(t *testing.T) {
 				t.Fatalf("Call: %v", err)
 			}
 			echoed, _ := got.Get("got")
-			if text, _ := echoed.AsText(); text != "the secret" || !sealed {
-				t.Errorf("got %v, the handler saw it sealed: %v", got, sealed)
+			if text, _ := echoed.AsText(); text != "the secret" || !sealed.Load() {
+				t.Errorf("got %v, the handler saw it sealed: %v", got, sealed.Load())
 			}
 		})
 	}
