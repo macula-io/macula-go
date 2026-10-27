@@ -150,6 +150,9 @@ type Stream struct {
 
 	// settled is whether a caller's seal report has settled (Report).
 	settled bool
+	// ended is whether this side ended the stream: an adoption in flight then
+	// releases the session it opened instead of installing it.
+	ended bool
 }
 
 func newStream(link *Link, qs *quic.Stream, open frame.VerifiedRequest, caller bool) *Stream {
@@ -349,7 +352,19 @@ func (s *Stream) firstPeerFrame(v frame.VerifiedStreamFrame) ([]retainedAction, 
 // and adopts when that frame carries a key: it holds the send mutex across
 // taking the copy and the reopen, so an owner write either lands in the copy
 // or waits for the new session, and is never written on the refused one.
+//
+// Only an adoption takes the send mutex. Every other frame, on every other
+// stream, leaves the owner's sends alone: a send holds sendMu across its write,
+// and a write blocked on flow control reopens only when this reader reads, so a
+// reader that waited for the mutex would deadlock the stream it is reading.
 func (s *Stream) adopting(v frame.VerifiedStreamFrame) bool {
+	if !s.retaining() {
+		return false
+	}
+	if _, ok := adoptionKey(s.link.profile, v); !ok {
+		s.dropRetention()
+		return false
+	}
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
 	actions, key := s.firstPeerFrame(v)
@@ -358,6 +373,22 @@ func (s *Stream) adopting(v frame.VerifiedStreamFrame) bool {
 	}
 	s.adopt(actions, key)
 	return true
+}
+
+// retaining reports whether this stream may still adopt, which only a clear
+// stream with a copy does, and only until the provider's first frame.
+func (s *Stream) retaining() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retained != nil
+}
+
+// dropRetention ends a clear stream's retention at the provider's first frame
+// when that frame is not the refusal an adoption replays into.
+func (s *Stream) dropRetention() {
+	s.mu.Lock()
+	s.retained = nil
+	s.mu.Unlock()
 }
 
 // adopt reopens a clear stream sealed to the key a sealed_required refusal
@@ -388,6 +419,13 @@ func (s *Stream) adopt(actions []retainedAction, key []byte) {
 		return
 	}
 	s.mu.Lock()
+	if s.ended {
+		// The owner ended the stream while the reopen was in flight: the new
+		// session is nobody's, and is released rather than installed.
+		s.mu.Unlock()
+		abandon(opened.qs)
+		return
+	}
 	old := s.qs
 	s.qs, s.writer, s.open, s.sealing = opened.qs, &frameWriter{w: opened.qs}, opened.open, opened.sealing
 	s.sendSeq, s.sentEnd = 0, false
@@ -656,6 +694,7 @@ func (s *Stream) fail(code string, cause error) {
 func (s *Stream) end(err error) {
 	s.endOnce.Do(func() {
 		s.mu.Lock()
+		s.ended = true
 		if s.err == nil {
 			s.err = err
 		}

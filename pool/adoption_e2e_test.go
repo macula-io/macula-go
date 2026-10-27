@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,4 +170,78 @@ func rotatingClock() func() time.Time {
 		now = now.Add(seal.KeyLifetime + seal.RetiredKeyKept + time.Minute)
 		return at
 	}
+}
+
+// A key the pool learnt from a refusal is dropped when a later call is refused
+// sealed_refused: that refusal is the provider's own and signed, so the key it
+// beat is stale, and keeping it would seal every later call to a key the
+// provider no longer opens, with no way back to the clear that learns the new
+// one.
+func TestAPoolForgetsAKeyTheProviderRefused(t *testing.T) {
+	s := teststation.Start(t, profile.PQPure, "adopt rotated")
+	realm := teststation.NewRealm(t, profile.PQPure, "sealed-pools", org)
+	clock := &switchableClock{now: time.Now()}
+	provider := newAdoptingProvider(t, s, realm, "adopt rotated provider", clock.Now)
+	provider.serve(t, realm, stationlink.Offer{Procedure: procedure, Confidential: stationlink.ConfidentialRequired,
+		Handler: echo})
+	caller := connect(t, "adopt rotated caller", realm, s)
+	assertCallEchoes(t, caller, realm, "one")
+	// The provider rotates its keys: the key the pool learnt is gone, while its
+	// advertisement still names none.
+	clock.jump()
+	_, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("two")})
+	var refused *stationlink.ConfidentialityError
+	if !errors.As(err, &refused) || refused.Reason != stationlink.ReasonNoKEMKey {
+		t.Fatalf("the stale key's call: %v, want no_kem_key", err)
+	}
+	// Its key dropped, the next call goes clear again and learns the key the
+	// provider holds now.
+	clock.freeze()
+	assertCallEchoes(t, caller, realm, "three")
+	if n := provider.refused("sealed_required"); n != 2 {
+		t.Errorf("the provider refused %d clear calls, want 2: the learnt key was not dropped", n)
+	}
+}
+
+// assertCallEchoes calls the provider and checks the payload came back.
+func assertCallEchoes(t *testing.T, caller *Pool, realm teststation.Realm, payload string) {
+	t.Helper()
+	got, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text(payload)})
+	if text, _ := got.AsText(); err != nil || text != payload {
+		t.Fatalf("the call %q: %q, %v", payload, text, err)
+	}
+}
+
+// switchableClock reads a fixed time until it is switched into jumping, and
+// then advances by a key lifetime and a retirement on every reading, so a
+// keyring it drives rotates and forgets its keys between two of them.
+type switchableClock struct {
+	mu      sync.Mutex
+	now     time.Time
+	jumping bool
+}
+
+// Now reads the clock, advancing it first while it is jumping.
+func (c *switchableClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.jumping {
+		c.now = c.now.Add(seal.KeyLifetime + seal.RetiredKeyKept + time.Minute)
+	}
+	return c.now
+}
+
+// jump sets the clock jumping: every later reading is a rotation and a
+// retirement on from the one before.
+func (c *switchableClock) jump() {
+	c.mu.Lock()
+	c.jumping = true
+	c.mu.Unlock()
+}
+
+// freeze stops the clock jumping, keeping the time it reached.
+func (c *switchableClock) freeze() {
+	c.mu.Lock()
+	c.jumping = false
+	c.mu.Unlock()
 }

@@ -404,6 +404,10 @@ func (p *Pool) sealTo(cand candidate, conf stationlink.Confidentiality) ([]byte,
 // pool remembers, and gives the key to seal to again (resealKey).
 func (p *Pool) resealed(ctx context.Context, key resolvedKey, node [32]byte, named *[seal.KeyIDSize]byte) ([]byte, error) {
 	p.forget(key)
+	// The refusal is the provider's own, signed: the key it beat is stale, and
+	// keeping it would seal every later call to a key the provider no longer
+	// opens, with no way back to the clear that learns the new one.
+	p.forgetLearnt(resolvedKey{key.realm, key.procedure, node})
 	// A lookup that fails finds nothing, as macula's providers_ads/5 reads
 	// it: resealKey then fails closed, no_kem_key, and the call ends.
 	var fresh []candidate
@@ -411,6 +415,14 @@ func (p *Pool) resealed(ctx context.Context, key resolvedKey, node [32]byte, nam
 		fresh, _ = p.resolve(ctx, key, realmKey)
 	}
 	return resealKey(node, named, fresh)
+}
+
+// forgetLearnt drops the key a refusal taught the pool for key, so the next
+// call goes out clear and learns the key the provider holds now.
+func (p *Pool) forgetLearnt(key resolvedKey) {
+	p.mu.Lock()
+	delete(p.learnt, key)
+	p.mu.Unlock()
 }
 
 // resealKey is the key a call refused sealed_refused is sealed to again, from
