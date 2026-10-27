@@ -146,6 +146,13 @@ func (e *ExtensionUnsupportedError) Error() string {
 // Is makes an ExtensionUnsupportedError match ErrExtensionUnsupported.
 func (e *ExtensionUnsupportedError) Is(target error) bool { return target == ErrExtensionUnsupported }
 
+// extOf judges an extension map's shape alone, as a signed object's tbs holds
+// it (WIRE_1_0.md section 3.2): 1 to 16 well-formed entries. What the receiver
+// does with them is readTBSExt's, once the object's own fields have read.
+func extOf(v cbor.Value) bool {
+	return CheckExt(v) == nil
+}
+
 // ActOnExt acts on a well-formed ext map as a receiver that knows no
 // extension: an unknown critical one is ErrExtensionUnsupported, and only when
 // none is, each unknown non-critical one is counted under its name.
@@ -185,12 +192,11 @@ func extEntries(v cbor.Value) (map[string]bool, error) {
 		if !isText || seen || !extensionName(name) {
 			return nil, fmt.Errorf("%w: an extension name", ErrMalformedFrame)
 		}
-		fields, ok := readFields(e.Val, map[string]fieldRule{"critical": zeroOrOne, "value": anyValue})
-		if !ok || !hasFields(fields, "critical", "value") {
+		isCritical, ok := extensionCriticality(e.Val)
+		if !ok {
 			return nil, fmt.Errorf("%w: extension %s", ErrMalformedFrame, name)
 		}
-		flag, _ := fields["critical"].AsInt64()
-		critical[name] = flag == 1
+		critical[name] = isCritical
 	}
 	return critical, nil
 }
@@ -198,6 +204,32 @@ func extEntries(v cbor.Value) (map[string]bool, error) {
 func zeroOrOne(v cbor.Value) bool {
 	n, isInt := v.AsInt64()
 	return isInt && (n == 0 || n == 1)
+}
+
+// extensionCriticality is an extension's criticality: a map of exactly
+// {critical: 0 or 1, value: anything}. The value is an extension's own, so the
+// decoding rule that refuses CBOR null in a protocol field does not reach it,
+// as it does not reach a payload (WIRE_1_0.md sections 3.1 and 3.2).
+func extensionCriticality(v cbor.Value) (bool, bool) {
+	entries, isMap := v.AsMap()
+	if !isMap || len(entries) != 2 {
+		return false, false
+	}
+	var flag int64
+	var hasCritical, hasValue bool
+	for _, e := range entries {
+		name, _ := e.Key.AsText()
+		switch name {
+		case "critical":
+			n, isInt := e.Val.AsInt64()
+			flag, hasCritical = n, isInt && (n == 0 || n == 1)
+		case "value":
+			hasValue = true
+		default:
+			return false, false
+		}
+	}
+	return flag == 1, hasCritical && hasValue
 }
 
 func extensionName(name string) bool {

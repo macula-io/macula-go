@@ -178,12 +178,46 @@ func readFields(v cbor.Value, table map[string]fieldRule) (map[string]cbor.Value
 		name, isText := e.Key.AsText()
 		rule, known := table[name]
 		_, seen := fields[name]
-		if !isText || !known || seen || !rule(e.Val) || (name != "payload" && holdsNull(e.Val)) {
+		if !isText || !known || seen || !rule(e.Val) || (name != "payload" && name != "ext" && holdsNull(e.Val)) {
 			return nil, false
 		}
 		fields[name] = e.Val
 	}
 	return fields, true
+}
+
+// readTBSExt acts on a signed object's own extension map (WIRE_1_0.md section
+// 3.2): the signature covers each entry's criticality, so an object that
+// carries a critical extension is refused (ErrExtensionUnsupported), and an
+// extension this library does not know that is not critical is ignored and
+// counted under its name. An ext map of the wrong shape is ErrMalformedFrame,
+// refused by its field's rule before this. An object with no ext reads as
+// before.
+func readTBSExt(fields map[string]cbor.Value) error {
+	ext, has := fields["ext"]
+	if !has {
+		return nil
+	}
+	critical, err := extEntries(ext)
+	if err != nil {
+		return err
+	}
+	var refused []string
+	for name, isCritical := range critical {
+		if isCritical {
+			refused = append(refused, name)
+		}
+	}
+	if refused != nil {
+		slices.Sort(refused)
+		return &ExtensionUnsupportedError{Names: refused}
+	}
+	for name := range critical {
+		if !knownExtensions[name] {
+			countExtIgnored(name)
+		}
+	}
+	return nil
 }
 
 // holdsNull reports whether v is CBOR null or holds one at any depth. Absent

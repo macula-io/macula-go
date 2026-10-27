@@ -567,6 +567,9 @@ func streamRead(frameType string, tbs cbor.Value, context sealedContext) (map[st
 	if _, hasAlg := fields["alg"]; hasAlg {
 		carried++
 	}
+	if _, hasExt := fields["ext"]; hasExt {
+		carried++
+	}
 	if !hasFields(fields, typeFields...) || len(fields) != carried {
 		return nil, ErrMalformedFrame
 	}
@@ -580,6 +583,9 @@ func streamRead(frameType string, tbs cbor.Value, context sealedContext) (map[st
 		if _, isBytes := fields["body"].AsBytes(); !isBytes {
 			return nil, ErrMalformedFrame
 		}
+	}
+	if err := readTBSExt(fields); err != nil {
+		return nil, err
 	}
 	return fields, nil
 }
@@ -599,6 +605,7 @@ func streamTable(frameType string, context sealedContext) map[string]fieldRule {
 		"message":      textWithin(maxErrorTextBytes),
 		"payload":      anyValue,
 		"sealed":       sealedRule(context),
+		"ext":          extOf,
 	}
 }
 

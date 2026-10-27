@@ -228,6 +228,9 @@ func VerifyRequest(v cbor.Value, p profile.Profile) (VerifiedRequest, error) {
 	if err := tbsEnum(fields, "mode", ServerStream.Name(), ClientStream.Name(), Bidi.Name()); err != nil {
 		return VerifiedRequest{}, err
 	}
+	if err := readTBSExt(fields); err != nil {
+		return VerifiedRequest{}, err
+	}
 	request := verifiedRequest(frameType, verified, fields)
 	if request.Caller != identity.NodeIDOf(verified.Key, p) {
 		return VerifiedRequest{}, ErrKeyIDMismatch
@@ -315,5 +318,6 @@ func requestTable(frameType string) map[string]fieldRule {
 		"mode":       enumText,
 		"token":      anyBytes,
 		"proofs":     proofsWithinBound,
+		"ext":        extOf,
 	}
 }
