@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A signed object reads its own `ext` (macula-go#42).** Wire 1.0 §3.2 puts
   `ext` inside a signed object's tbs: a receiver that does not know a
-  non-critical entry ignores it and counts `wire_ext_ignored`, and one that
-  knows a critical entry it cannot honour refuses it. This library refused
+  non-critical entry ignores it and counts `wire_ext_ignored`, and an entry
+  marked critical refuses the object (no extension is defined critical). This
+  library refused
   every signed object that carried one with `ErrMalformedFrame`, because no
   tbs table named `ext`. Erlang's five signed tables now each have their Go
   counterpart (request, reply, relay error, stream and publication), and each
