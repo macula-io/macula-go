@@ -162,6 +162,9 @@ func VerifyReply(v cbor.Value, request VerifiedRequest, p profile.Profile) (Veri
 	if !ok || !hasFields(fields, "frame_type", "request_id", "request_hash", "responded_by") || !replyShaped(frameType, fields) {
 		return VerifiedReply{}, ErrMalformedFrame
 	}
+	if err := readTBSExt(fields); err != nil {
+		return VerifiedReply{}, err
+	}
 	reply := VerifiedReply{FrameType: frameType, Payload: fields["payload"], Code: textOf(fields["code"]), Detail: optionalText(fields, "detail"),
 		Sealed: sealedField(fields, sealedReply)}
 	fixedBytes(reply.RespondedBy[:], fields["responded_by"])
@@ -205,6 +208,7 @@ func replyTable(frameType string) map[string]fieldRule {
 		"sealed":       sealedRule(sealedReply),
 		"code":         textWithin(maxErrorCodeBytes),
 		"detail":       textWithin(maxErrorTextBytes),
+		"ext":          extOf,
 	}
 }
 
@@ -267,6 +271,9 @@ func VerifyRelayError(v cbor.Value, request VerifiedRequest, p profile.Profile, 
 	if err := tbsEnum(fields, "code", relayCodes...); err != nil {
 		return VerifiedRelayError{}, err
 	}
+	if err := readTBSExt(fields); err != nil {
+		return VerifiedRelayError{}, err
+	}
 	relayError := VerifiedRelayError{FrameType: frameType, Code: textOf(fields["code"])}
 	fixedBytes(relayError.ReportedBy[:], fields["reported_by"])
 	if hop, has := fields["offending_hop"]; has {
@@ -293,6 +300,7 @@ func relayErrorTable(frameType string) map[string]fieldRule {
 		"reported_by":   bytesOf(32),
 		"code":          enumText,
 		"offending_hop": bytesOf(32),
+		"ext":           extOf,
 	}
 }
 
