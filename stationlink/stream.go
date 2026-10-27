@@ -115,8 +115,13 @@ type Stream struct {
 	sealing *streamSeal
 	plain   cbor.Value
 	// reopen is a sealed caller stream's call, while it may still reseal
-	// once on sealed_refused (StreamCall.Reseal); nil after, or never.
+	// once on sealed_refused (StreamCall.Reseal); nil after, or never. A clear
+	// caller stream keeps it as the template an adoption reopens under.
 	reopen *StreamCall
+	// retained is a clear caller stream's ordered copy of what it sent, until
+	// the provider's first frame: the actions an adoption replays sealed, and
+	// nil once retention ends (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
+	retained *retainedStream
 	// onEnd, when set, runs once when the stream ends: it gives back the
 	// session's place and what its inbox held against the node's budgets.
 	onEnd  func()
@@ -223,6 +228,13 @@ func (s *Stream) Abort(code, message string) error {
 func (s *Stream) send(fields frame.StreamFields, last bool) error {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
+	return s.write(fields, last)
+}
+
+// write is send under a sendMu the caller already holds, which an adoption's
+// replay needs: it writes the copy it took, in order, before any send that was
+// waiting on the reopen.
+func (s *Stream) write(fields frame.StreamFields, last bool) error {
 	s.mu.Lock()
 	ended, seq := s.sentEnd, s.sendSeq
 	s.mu.Unlock()
@@ -230,6 +242,7 @@ func (s *Stream) send(fields frame.StreamFields, last bool) error {
 		return ErrStreamClosed
 	}
 	fields = withSeq(fields, seq)
+	kept := fields
 	if s.sealing != nil {
 		sealed, err := s.sealing.sealed(fields, seq)
 		if err != nil {
@@ -247,7 +260,9 @@ func (s *Stream) send(fields frame.StreamFields, last bool) error {
 	if err != nil {
 		return err
 	}
-	err = s.writer.write(cbor.Encode(signed), MaxFrameBytes)
+	encoded := cbor.Encode(signed)
+	s.retain(kept, last, len(encoded))
+	err = s.writer.write(encoded, MaxFrameBytes)
 	s.mu.Lock()
 	if err != nil {
 		s.sentEnd = true
@@ -268,6 +283,102 @@ func (s *Stream) send(fields frame.StreamFields, last bool) error {
 	}
 	return nil
 }
+
+// retainedStream is a clear caller stream's copy of what it has sent, and the
+// bytes it holds. It is charged to no inbox: the stream's own bound, streamInbox,
+// caps it, and past that retention stops and the copy is dropped.
+type retainedStream struct {
+	actions []retainedAction
+	bytes   int
+}
+
+// retainedAction is one action a clear stream sent, kept for an adoption's
+// replay: the fields it carried, renumbered from 0 there, and whether it was
+// this side's last.
+type retainedAction struct {
+	fields frame.StreamFields
+	last   bool
+}
+
+// retain copies fields into the stream's retention while it lives, and ends
+// retention at size past its bound (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
+func (s *Stream) retain(fields frame.StreamFields, last bool, size int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.retained
+	if r == nil {
+		return
+	}
+	if r.bytes+size > streamInbox {
+		s.retained = nil
+		return
+	}
+	r.actions = append(r.actions, retainedAction{fields: fields, last: last})
+	r.bytes += size
+}
+
+// firstPeerFrame is a clear stream's retained copy taken at the provider's
+// first frame, and the key to adopt when that frame is a sealed_required
+// carrying one: any other first frame drops the copy, and so does a refusal
+// naming no key or a key of another profile's length, which then surfaces as
+// the provider's own refusal.
+func (s *Stream) firstPeerFrame(v frame.VerifiedStreamFrame) ([]retainedAction, []byte) {
+	s.mu.Lock()
+	r := s.retained
+	s.retained = nil
+	s.mu.Unlock()
+	if r == nil {
+		return nil, nil
+	}
+	key, ok := adoptionKey(s.link.profile, v)
+	if !ok {
+		return nil, nil
+	}
+	return r.actions, key
+}
+
+// adopt reopens a clear stream sealed to the key a sealed_required refusal
+// carried, sends the copy first and then what the owner wrote while the reopen
+// was in flight - sends wait on sendMu across both - and keeps the session:
+// one stream, all of it sealed from here. The replay is numbered from 0 on the
+// new session, and carries the copied STREAM_END even though the owner had
+// closed its side.
+func (s *Stream) adopt(actions []retainedAction, key []byte) {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	c := s.reopen
+	if c == nil {
+		s.end(errNotAdopted)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultCallTimeout)
+	s.mu.Lock()
+	deadline := s.open.Deadline
+	s.mu.Unlock()
+	opened, err := s.link.openOn(ctx, *c, key, deadline)
+	cancel()
+	if err != nil {
+		s.end(err)
+		return
+	}
+	s.mu.Lock()
+	old := s.qs
+	s.qs, s.writer, s.open, s.sealing = opened.qs, &frameWriter{w: opened.qs}, opened.open, opened.sealing
+	s.sendSeq, s.sentEnd = 0, false
+	s.mu.Unlock()
+	abandon(old)
+	go s.read(opened.state)
+	for _, action := range actions {
+		if err := s.write(action.fields, action.last); err != nil {
+			s.end(err)
+			return
+		}
+	}
+}
+
+// errNotAdopted is a clear stream an adoption had no call to reopen under: a
+// stream opened without the call it was opened with.
+var errNotAdopted = errors.New("stationlink: this stream keeps no call to reopen under")
 
 func withSeq(fields frame.StreamFields, seq uint64) frame.StreamFields {
 	switch f := fields.(type) {
@@ -368,6 +479,12 @@ func (s *Stream) readEnded(err error) {
 func (s *Stream) received(payload []byte, state frame.StreamState) (frame.StreamState, bool) {
 	verified, state, ok := s.verifiedFrame(payload, state)
 	if !ok {
+		return state, true
+	}
+	if actions, key := s.firstPeerFrame(verified); key != nil {
+		// The provider refused the clear open sealed_required and named its
+		// key: the session reopens sealed, and reads on from there.
+		s.adopt(actions, key)
 		return state, true
 	}
 	if s.caller {

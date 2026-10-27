@@ -79,8 +79,14 @@ func (l *Link) OpenStream(ctx context.Context, c StreamCall) (*Stream, error) {
 	}
 	s := newStream(l, opened.qs, opened.open, true)
 	s.sealing = opened.sealing
-	if c.SealTo != nil && c.Reseal != nil {
+	switch {
+	case c.SealTo != nil && c.Reseal != nil:
 		s.reopen = &c
+	case c.SealTo == nil:
+		// A clear open sends at once and keeps a copy of what it sent, so a
+		// sealed_required refusal can replay it sealed under the key the
+		// refusal carries (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
+		s.reopen, s.retained = &c, &retainedStream{}
 	}
 	if !l.holdStream(s) {
 		abandon(opened.qs)
