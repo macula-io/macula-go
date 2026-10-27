@@ -96,6 +96,13 @@ type Config struct {
 	// station runs macula 12.11 or later, which stores and routes a keyed
 	// advertisement, and every caller runs 13 (the station floor).
 	KEMAdvertise bool
+	// KEMKeyInRefusal carries this node's KEM key in a sealed_required refusal,
+	// in the reply's and the stream frame's signed tbs under seal.kem_key, so
+	// the caller seals to it at once (DESIGN_E2E_SEALED_BY_DEFAULT.md section
+	// 3). Off by default, and it is release A: a caller that has not read the
+	// extension yet refuses the refusal as malformed and waits out its
+	// deadline, so it goes on only once every caller is on A0.
+	KEMKeyInRefusal bool
 	// Dedup delivers each publication once; nil gives the link its own.
 	// Links of one node share one.
 	Dedup *EventDedup
@@ -132,11 +139,13 @@ type Link struct {
 	share        string
 	keyring      *seal.Keyring
 	kemAdvertise bool
-	self         [32]byte
-	seq          *PublicationSeq
-	done         chan struct{}
-	err          error
-	endOnce      sync.Once
+	// kemKeyInRefusal carries the key in a sealed_required refusal (release A).
+	kemKeyInRefusal bool
+	self            [32]byte
+	seq             *PublicationSeq
+	done            chan struct{}
+	err             error
+	endOnce         sync.Once
 }
 
 // Dial dials cfg.Target, runs the wire 1.0 handshake as a client, and returns
@@ -252,7 +261,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		unsubscribe: unsubscribe, unrouted: map[string]uint64{}, refusals: map[string]uint64{}, awaiting: map[registration]chan frame.RegisterAck{}, subscribing: map[topicKey]*pendingSubscribe{}, pending: map[[16]byte]*pendingCall{},
 		subs: map[topicKey][]*Subscription{}, dedup: dedup, self: self, seq: seq,
 		served: map[servedKey]*Served{}, streams: map[*Stream]struct{}{}, openWait: streamOpenWait, admission: admission, share: share,
-		keyring: cfg.Keyring, kemAdvertise: cfg.KEMAdvertise,
+		keyring: cfg.Keyring, kemAdvertise: cfg.KEMAdvertise, kemKeyInRefusal: cfg.KEMKeyInRefusal,
 		done: make(chan struct{}),
 	}
 	// Under the link's lock: end reads the timers under the same lock.

@@ -634,11 +634,33 @@ func withoutCaller(payload cbor.Value) cbor.Value {
 // with this node as its target, so signing it cannot fail on the key; a code
 // or detail out of bounds is a bug in this package and panics.
 func (l *Link) providerError(request frame.VerifiedRequest, code string, detail *string) cbor.Value {
-	reply, err := frame.SignProviderError(request, code, detail, nil, l.key)
+	reply, err := frame.SignProviderErrorWithExt(request, code, detail, l.refusalExt(code), nil, l.key)
 	if err != nil {
 		panic(fmt.Sprintf("stationlink: a provider error that does not sign: %v", err))
 	}
 	return reply
+}
+
+// refusalExt is what a refusal carries besides its code: the KEM key this node
+// holds now, under seal.kem_key, when it is a sealed_required and the node is
+// built to carry it (release A, DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
+func (l *Link) refusalExt(code string) []frame.Ext {
+	if code != codeSealedRequired || !l.kemKeyInRefusal {
+		return nil
+	}
+	key := l.currentKEMKey()
+	if key == nil {
+		return nil
+	}
+	return []frame.Ext{{Name: frame.ExtSealKEMKey, Value: cbor.Bytes(key)}}
+}
+
+// currentKEMKey is the key this node holds now, nil without a keyring.
+func (l *Link) currentKEMKey() []byte {
+	if l.keyring == nil {
+		return nil
+	}
+	return l.keyring.Current().PublicKey().Carried()
 }
 
 func (l *Link) sendReply(reply cbor.Value) {

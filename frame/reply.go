@@ -127,7 +127,7 @@ func SignProviderErrorWithExt(request VerifiedRequest, code string, detail *stri
 		}
 		fields = append(fields, textEntry("detail", *detail))
 	}
-	if exts != nil {
+	if len(exts) > 0 {
 		ext, err := ExtMap(exts)
 		if err != nil {
 			return cbor.Value{}, err

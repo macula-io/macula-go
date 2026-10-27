@@ -57,7 +57,7 @@ func (l *Link) incoming(qs *quic.Stream) {
 	offer, code, message := l.servedStream(s, open)
 	if code != "" {
 		release()
-		s.refuseWith(code, message)
+		s.refuseCarrying(code, message, l.refusalExt(code))
 		return
 	}
 	s.onEnd = release
@@ -169,8 +169,15 @@ func (s *Stream) refuse(code string) {
 // refuseWith is refuse with a message: sealed_refused names the key this node
 // holds now in it.
 func (s *Stream) refuseWith(code, message string) {
+	s.refuseCarrying(code, message, nil)
+}
+
+// refuseCarrying is refuseWith carrying the extensions the refusal's signed tbs
+// names: a sealed_required hands the caller the key this node holds now, under
+// seal.kem_key (release A, DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
+func (s *Stream) refuseCarrying(code, message string, exts []frame.Ext) {
 	s.link.count("stream_refused_" + code)
-	_ = s.send(frame.StreamErrorFields{Code: code, Message: message}, true)
+	_ = s.write(frame.StreamErrorFields{Code: code, Message: message}, true, exts)
 	s.end(&StreamError{Code: code, Message: message})
 }
 

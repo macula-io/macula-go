@@ -237,28 +237,44 @@ func (p *Pool) Providers(ctx context.Context, realm [32]byte, procedure string) 
 func (p *Pool) candidates(ctx context.Context, key resolvedKey, realmKey []byte) ([]candidate, error) {
 	remembered, held := p.remembered(key)
 	if held && remembered.expiresAt > time.Now().UnixMilli() && p.linkedTo(remembered.Station) != nil {
-		return []candidate{remembered}, nil
+		return []candidate{p.withLearnt(key.realm, key.procedure, remembered)}, nil
 	}
-	return p.resolve(ctx, key, realmKey)
+	found, err := p.resolve(ctx, key, realmKey)
+	if err != nil {
+		return nil, err
+	}
+	for i := range found {
+		found[i] = p.withLearnt(key.realm, key.procedure, found[i])
+	}
+	return found, nil
 }
 
-// remembered is the candidate the pool holds for key, with the key a provider's
-// signed refusal named while it lives: a keyless advertisement does not take a
-// call clear again while a key is known for its provider, so the next call
-// seals at once (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
+// withLearnt is cand with the key a provider's signed refusal named, while the
+// advertisement that key beat lives: a keyless advertisement, the remembered
+// one or one resolved afresh, does not take a call clear again
+// (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3). The learnt key is filed under
+// the provider the refusal came from, so it applies whatever provider the
+// caller named - none, usually.
+func (p *Pool) withLearnt(realm [32]byte, procedure string, cand candidate) candidate {
+	if cand.kemKey != nil {
+		return cand
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	learnt, known := p.learnt[resolvedKey{realm, procedure, cand.Node}]
+	if !known || time.Now().UnixMilli() >= learnt.expiresAt {
+		return cand
+	}
+	cand.kemKey, cand.kemKeyID = learnt.key, seal.KeyID(learnt.key)
+	return cand
+}
+
+// remembered is the candidate the pool holds for key.
 func (p *Pool) remembered(key resolvedKey) (candidate, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	cand, held := p.remember[key]
-	if !held {
-		return candidate{}, false
-	}
-	learnt, known := p.learnt[key]
-	if !known || cand.kemKey != nil || time.Now().UnixMilli() >= learnt.expiresAt {
-		return cand, true
-	}
-	cand.kemKey, cand.kemKeyID = learnt.key, seal.KeyID(learnt.key)
-	return cand, true
+	return cand, held
 }
 
 // learnKEMKey keeps the key a provider's signed refusal named for that
@@ -266,9 +282,15 @@ func (p *Pool) remembered(key resolvedKey) (candidate, bool) {
 // refusal is the provider's own, signed and bound to the request it answers, so
 // it is fresher than any keyless advertisement still in the DHT.
 func (p *Pool) learnKEMKey(key resolvedKey, cand candidate, kemKey []byte) {
+	now := time.Now().UnixMilli()
 	p.mu.Lock()
-	p.learnt[key] = learntKey{key: kemKey, expiresAt: cand.expiresAt}
-	p.mu.Unlock()
+	defer p.mu.Unlock()
+	for held, learnt := range p.learnt {
+		if now >= learnt.expiresAt {
+			delete(p.learnt, held)
+		}
+	}
+	p.learnt[resolvedKey{key.realm, key.procedure, cand.Node}] = learntKey{key: kemKey, expiresAt: cand.expiresAt}
 }
 
 // resolve finds the procedure's advertisements and keeps the ones the realm
@@ -329,7 +351,9 @@ func (p *Pool) callAt(ctx context.Context, link *stationlink.Link, cand candidat
 			p.learnKEMKey(key, cand, kemKey)
 			// The report names the key the request that produced the result
 			// was sealed to: the adopted one, never the clear it started as.
-			call.SealTo = kemKey
+			// And the call is sealed now: A1's reseal on sealed_refused is a
+			// third send of a sealed call, not a clear one that states both.
+			call.SealTo, call.Clear = kemKey, false
 		}
 	}
 	result, err := link.Call(ctx, call)
@@ -750,5 +774,8 @@ func (p *Pool) openAt(ctx context.Context, link *stationlink.Link, cand candidat
 		defer cancel()
 		return p.resealed(ctx, key, cand.Node, named)
 	}
+	// A clear open a provider refuses sealed_required carrying its key has
+	// taught the pool that key: the next open seals from the start.
+	call.Adopted = func(kemKey []byte) { p.learnKEMKey(key, cand, kemKey) }
 	return link.OpenStream(ctx, call)
 }

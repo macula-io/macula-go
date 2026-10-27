@@ -228,13 +228,13 @@ func (s *Stream) Abort(code, message string) error {
 func (s *Stream) send(fields frame.StreamFields, last bool) error {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
-	return s.write(fields, last)
+	return s.write(fields, last, nil)
 }
 
 // write is send under a sendMu the caller already holds, which an adoption's
 // replay needs: it writes the copy it took, in order, before any send that was
 // waiting on the reopen.
-func (s *Stream) write(fields frame.StreamFields, last bool) error {
+func (s *Stream) write(fields frame.StreamFields, last bool, exts []frame.Ext) error {
 	s.mu.Lock()
 	ended, seq := s.sentEnd, s.sendSeq
 	s.mu.Unlock()
@@ -252,9 +252,12 @@ func (s *Stream) write(fields frame.StreamFields, last bool) error {
 	}
 	var signed cbor.Value
 	var err error
-	if s.caller {
+	switch {
+	case s.caller:
 		signed, err = frame.SignCallerStream(fields, s.open, s.link.key)
-	} else {
+	case len(exts) > 0:
+		signed, err = frame.SignProviderStreamWithExt(fields, s.open, exts, s.link.key)
+	default:
 		signed, err = frame.SignProviderStream(fields, s.open, s.link.key)
 	}
 	if err != nil {
@@ -265,7 +268,12 @@ func (s *Stream) write(fields frame.StreamFields, last bool) error {
 	err = s.writer.write(encoded, MaxFrameBytes)
 	s.mu.Lock()
 	if err != nil {
-		s.sentEnd = true
+		// A write that fails on a clear session a provider may have refused
+		// does not close this side: the owner's actions live in the copy, and
+		// its STREAM_END still has to reach the session adoption opens.
+		if s.retained == nil {
+			s.sentEnd = true
+		}
 		s.mu.Unlock()
 		return err
 	}
@@ -337,19 +345,37 @@ func (s *Stream) firstPeerFrame(v frame.VerifiedStreamFrame) ([]retainedAction, 
 	return r.actions, key
 }
 
+// adopting takes a clear stream's retained copy at the provider's first frame
+// and adopts when that frame carries a key: it holds the send mutex across
+// taking the copy and the reopen, so an owner write either lands in the copy
+// or waits for the new session, and is never written on the refused one.
+func (s *Stream) adopting(v frame.VerifiedStreamFrame) bool {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	actions, key := s.firstPeerFrame(v)
+	if key == nil {
+		return false
+	}
+	s.adopt(actions, key)
+	return true
+}
+
 // adopt reopens a clear stream sealed to the key a sealed_required refusal
 // carried, sends the copy first and then what the owner wrote while the reopen
 // was in flight - sends wait on sendMu across both - and keeps the session:
 // one stream, all of it sealed from here. The replay is numbered from 0 on the
 // new session, and carries the copied STREAM_END even though the owner had
-// closed its side.
+// closed its side. The caller holds sendMu.
 func (s *Stream) adopt(actions []retainedAction, key []byte) {
-	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
 	c := s.reopen
 	if c == nil {
 		s.end(errNotAdopted)
 		return
+	}
+	if c.Adopted != nil {
+		// The key is the provider's own, signed and bound to the open: report
+		// it before the reopen, so a reopen that fails still leaves it learnt.
+		c.Adopted(key)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultCallTimeout)
 	s.mu.Lock()
@@ -369,7 +395,7 @@ func (s *Stream) adopt(actions []retainedAction, key []byte) {
 	abandon(old)
 	go s.read(opened.state)
 	for _, action := range actions {
-		if err := s.write(action.fields, action.last); err != nil {
+		if err := s.write(action.fields, action.last, nil); err != nil {
 			s.end(err)
 			return
 		}
@@ -481,10 +507,9 @@ func (s *Stream) received(payload []byte, state frame.StreamState) (frame.Stream
 	if !ok {
 		return state, true
 	}
-	if actions, key := s.firstPeerFrame(verified); key != nil {
+	if s.adopting(verified) {
 		// The provider refused the clear open sealed_required and named its
 		// key: the session reopens sealed, and reads on from there.
-		s.adopt(actions, key)
 		return state, true
 	}
 	if s.caller {

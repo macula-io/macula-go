@@ -169,9 +169,25 @@ func OpenStream(open VerifiedRequest) (StreamState, error) {
 // outside its set, a Raw body that is not a byte string, or fields that are not
 // one of the four StreamFields values (ErrOutOfRange).
 func SignProviderStream(fields StreamFields, open VerifiedRequest, key *identity.NodeKey) (cbor.Value, error) {
+	return SignProviderStreamWithExt(fields, open, nil, key)
+}
+
+// SignProviderStreamWithExt signs a provider's stream frame as
+// SignProviderStream does, with the extensions its signed tbs carries: a
+// sealed_required refusal names the provider's KEM key there, under
+// seal.kem_key (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3). No extension for
+// none, which omits the key.
+func SignProviderStreamWithExt(fields StreamFields, open VerifiedRequest, exts []Ext, key *identity.NodeKey) (cbor.Value, error) {
 	frameType, tbs, seq, err := streamBuild(fields, open, key, false)
 	if err != nil {
 		return cbor.Value{}, err
+	}
+	if len(exts) > 0 {
+		ext, err := ExtMap(exts)
+		if err != nil {
+			return cbor.Value{}, err
+		}
+		tbs = append(tbs, cbor.MapEntry{Key: cbor.Text("ext"), Val: ext})
 	}
 	if seq == 0 {
 		stream, err := identity.SignObject(streamLabel, tbs, key)

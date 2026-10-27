@@ -17,27 +17,44 @@ func TestALearntKeyBeatsAKeylessAdvertisement(t *testing.T) {
 	carried := carriedKey(t)
 	now := time.Now().UnixMilli()
 	node, station := [32]byte{1}, [32]byte{2}
-	key := resolvedKey{procedure: "mcl-vault/open", provider: node}
+	realm, procedure := [32]byte{9}, "mcl-vault/open"
+	// The pool is asked for a procedure, not for a provider: the key is filed
+	// under the provider the refusal came from, which is the candidate's node.
+	asked := resolvedKey{realm: realm, procedure: procedure}
+	refused := resolvedKey{realm: realm, procedure: procedure, provider: node}
 	p := &Pool{remember: map[resolvedKey]candidate{}, learnt: map[resolvedKey]learntKey{}}
 	advertisement := candidate{Provider: Provider{Node: node, Station: station}, expiresAt: now + time.Minute.Milliseconds()}
-	p.remember[key] = advertisement
-	p.learnKEMKey(key, advertisement, carried)
-	held, ok := p.remembered(key)
-	if !ok || !bytes.Equal(held.kemKey, carried) {
-		t.Fatalf("the remembered candidate names key %x, want the learnt %x", held.kemKey, carried)
+	p.remember[asked] = advertisement
+	p.learnKEMKey(refused, advertisement, carried)
+
+	held, ok := p.remembered(asked)
+	if !ok {
+		t.Fatal("the asked-for key holds no candidate")
 	}
-	// Past the advertisement the pool resolves afresh.
-	p.learnKEMKey(key, candidate{Provider: Provider{Node: node, Station: station}, expiresAt: now - 1}, carried)
-	if held, _ := p.remembered(key); held.kemKey != nil {
-		t.Errorf("a learnt key outlived its advertisement: %x", held.kemKey)
+	// candidates() wraps what it returns - remembered or resolved - in
+	// withLearnt; this is that step.
+	if got := p.withLearnt(asked.realm, asked.procedure, held); !bytes.Equal(got.kemKey, carried) {
+		t.Fatalf("the remembered candidate names key %x, want the learnt %x", got.kemKey, carried)
+	}
+
+	// A candidate resolved afresh, with the same keyless advertisement, takes
+	// the learnt key too.
+	if got := p.withLearnt(realm, procedure, advertisement); !bytes.Equal(got.kemKey, carried) {
+		t.Errorf("a freshly resolved candidate names key %x, want the learnt %x", got.kemKey, carried)
+	}
+	// Past the advertisement it beat, the key is not applied.
+	expired := candidate{Provider: Provider{Node: node, Station: station}, expiresAt: now - 1}
+	p.learnKEMKey(refused, expired, carried)
+	if got := p.withLearnt(realm, procedure, advertisement); got.kemKey != nil {
+		t.Errorf("a learnt key outlived its advertisement: %x", got.kemKey)
 	}
 	// An advertisement that names its own key is signed and fresher: it wins.
 	named := carriedKey(t)
-	p.learnKEMKey(key, advertisement, carried)
-	p.remember[key] = candidate{Provider: Provider{Node: node, Station: station},
-		expiresAt: advertisement.expiresAt, kemKey: named, kemKeyID: seal.KeyID(named)}
-	if held, _ := p.remembered(key); !bytes.Equal(held.kemKey, named) {
-		t.Errorf("the advertisement's own key lost to the learnt one: %x", held.kemKey)
+	p.learnKEMKey(refused, advertisement, carried)
+	own := advertisement
+	own.kemKey, own.kemKeyID = named, seal.KeyID(named)
+	if got := p.withLearnt(realm, procedure, own); !bytes.Equal(got.kemKey, named) {
+		t.Errorf("the advertisement's own key lost to the learnt one: %x", got.kemKey)
 	}
 }
 

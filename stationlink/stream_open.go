@@ -48,6 +48,12 @@ type StreamCall struct {
 	// no key (no_kem_key), ends the stream: a refused sealed open is never
 	// sent again in the clear. Without it, the refusal ends the stream.
 	Reseal func(named *[seal.KeyIDSize]byte) ([]byte, error)
+	// Adopted, when set, is handed the provider's carried KEM key once this
+	// clear open is sealed to it: a provider that refuses the clear open
+	// sealed_required naming its key makes the stream reopen sealed and
+	// replay what it sent, and the key is reported here for the pool to
+	// remember. A nil Adopted adopts the same and learns nothing.
+	Adopted func(kemKey []byte)
 }
 
 // String writes the StreamCall without its credential: the grant and proofs
