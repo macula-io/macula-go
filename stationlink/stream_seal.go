@@ -6,6 +6,7 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
+	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/seal"
 )
 
@@ -133,6 +134,21 @@ func (ss *streamSeal) opened(v frame.VerifiedStreamFrame) (frame.VerifiedStreamF
 
 var errNotOpened = errors.New("stationlink: a sealed stream frame that does not open")
 
+// adoptionKey is the provider's KEM key a clear stream's first frame carries: a
+// seq-0 sealed_required it signed, naming the key it holds now in the frame's
+// tbs, of this profile's length. Anything else is no adoption, and surfaces as
+// the frame it is (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
+func adoptionKey(p profile.Profile, v frame.VerifiedStreamFrame) ([]byte, bool) {
+	if v.FrameType != "stream_error" || v.Seq != 0 || v.Code != codeSealedRequired {
+		return nil, false
+	}
+	key, _ := frame.KEMKeyFromExt(v.Ext)
+	if len(key) != seal.CarriedSize(p) {
+		return nil, false
+	}
+	return key, true
+}
+
 // resealed reopens a sealed caller stream that the provider refused
 // sealed_refused before this side sent anything: sealed once more, to the key
 // StreamCall.Reseal gives for the key the refusal names, under a new request
@@ -143,7 +159,7 @@ var errNotOpened = errors.New("stationlink: a sealed stream frame that does not 
 func (s *Stream) resealed(refused *StreamError) bool {
 	c := s.reopen
 	s.reopen = nil
-	if c == nil {
+	if c == nil || c.Reseal == nil {
 		return false
 	}
 	s.sendMu.Lock()
