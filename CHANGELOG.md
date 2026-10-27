@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0-rc.1] - 2026-10-27
+
 ### Added
 
+- **A signed object reads its own `ext` (macula-go#42).** Wire 1.0 §3.2 puts
+  `ext` inside a signed object's tbs: a receiver that does not know a
+  non-critical entry ignores it and counts `wire_ext_ignored`, and one that
+  knows a critical entry it cannot honour refuses it. This library refused
+  every signed object that carried one with `ErrMalformedFrame`, because no
+  tbs table named `ext`. The reply, relay error, request and stream tables now
+  do, and read it as macula's `non_critical/1` does: an entry at criticality 1
+  is refused, `ErrExtensionUnsupported` naming it, and each unknown
+  non-critical entry is counted under its name. A malformed `ext` map is still
+  `ErrMalformedFrame`, an extension's value is the extension's own (so an
+  entry may hold null, §3.1), and a signed stream frame counts `ext` in its
+  fixed field count. No wire change. All four bindings inherit it through
+  libmacula.
 - CI builds every Go block in the README and the guides against the module
   (macula-codebase-checks#8), and a release waits on it through ci.yml.
 
