@@ -131,6 +131,8 @@ type Stream struct {
 
 	// sendMu orders this side's frames: each is numbered and written in
 	// turn. It is held across the write; mu, which a Recv needs, never is.
+	// The stream's reader takes it only to adopt a clear stream (adopting),
+	// never to handle a frame of a session it is already reading.
 	sendMu sync.Mutex
 
 	mu        sync.Mutex

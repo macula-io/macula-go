@@ -67,6 +67,12 @@ type Call struct {
 	// caller's side, so the link seals the same payload to that key once more,
 	// under a new request_id, and reports the key here for the pool to
 	// remember. A nil Adopted reseals the same and learns nothing.
+	//
+	// Adopted runs on the goroutine reading the call or stream, with that
+	// session's send mutex held, and must return before the reseal goes out:
+	// it reports the key, it does not act on it. It must not call back into
+	// the call or the stream it was handed for, which would wait on the
+	// mutex it is holding.
 	Adopted func(kemKey []byte)
 }
 
