@@ -91,6 +91,10 @@ type VerifiedStreamFrame struct {
 	// Sealed is a sealed frame's body, code and message, or payload, nil
 	// for a clear frame.
 	Sealed *Sealed
+	// Ext is the frame's own extension map from its signed tbs (WIRE_1_0.md
+	// section 3.2), nil when it carries none. A sealed_required
+	// STREAM_ERROR carries the provider's KEM key here (seal.kem_key).
+	Ext cbor.Value
 }
 
 // StreamState is what a verifier holds for one stream, as macula_frame's
@@ -619,6 +623,7 @@ func verifiedStreamFrame(frameType string, fields map[string]cbor.Value, context
 		Message:   textOf(fields["message"]),
 		Payload:   fields["payload"],
 		Sealed:    sealedField(fields, context),
+		Ext:       fields["ext"],
 	}
 	fixedBytes(frame.Signer[:], fields["signer"])
 	frame.Encoding, _ = streamEncodingFromName(textOf(fields["encoding"]))

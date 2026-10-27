@@ -26,8 +26,66 @@ const (
 )
 
 // knownExtensions are the extensions this library acts on. Wire 1.0 defines
-// none; each one arrives with the capability bit that announces it.
-var knownExtensions = map[string]bool{}
+// none; each one arrives with the capability bit that announces it. A known
+// extension is read, so it is not counted as ignored.
+var knownExtensions = map[string]bool{
+	// A keyed provider's sealed_required ERROR and STREAM_ERROR carry the
+	// KEM key it holds, so a caller that was refused in the clear reseals
+	// instead of failing (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
+	ExtSealKEMKey: true,
+}
+
+// The extension names this library reads.
+const (
+	// ExtSealKEMKey is the provider's carried KEM key in a sealed_required
+	// refusal's tbs (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3): bytes, the
+	// key as carried, 1568 or 1665 by profile.
+	ExtSealKEMKey = "seal.kem_key"
+)
+
+// KEMKeyFromExt is the carried KEM key an extension map names under
+// ExtSealKEMKey, nil and false when it carries none or its value is not bytes.
+// Its length is the caller's to check against the profile: a key of another
+// profile's length opens nothing.
+func KEMKeyFromExt(ext cbor.Value) ([]byte, bool) {
+	entries, isMap := ext.AsMap()
+	if !isMap {
+		return nil, false
+	}
+	for _, e := range entries {
+		if name, _ := e.Key.AsText(); name != ExtSealKEMKey {
+			continue
+		}
+		critical, ok := extensionCriticality(e.Val)
+		if !ok || critical {
+			return nil, false
+		}
+		value, hasValue := extensionValue(e.Val)
+		if !hasValue {
+			return nil, false
+		}
+		key, isBytes := value.AsBytes()
+		if !isBytes {
+			return nil, false
+		}
+		return key, true
+	}
+	return nil, false
+}
+
+// extensionValue is an extension entry's value.
+func extensionValue(v cbor.Value) (cbor.Value, bool) {
+	entries, isMap := v.AsMap()
+	if !isMap {
+		return cbor.Value{}, false
+	}
+	for _, e := range entries {
+		if name, _ := e.Key.AsText(); name == "value" {
+			return e.Val, true
+		}
+	}
+	return cbor.Value{}, false
+}
 
 // Envelope is a received frame as wire 1.0 reads it: its type, and the frame
 // with any ignored extensions read past, so the type's own table never sees
