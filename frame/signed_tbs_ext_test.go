@@ -2,6 +2,7 @@ package frame
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -141,6 +142,10 @@ func TestAMalformedTBSExtensionIsAMalformedFrame(t *testing.T) {
 		"seventeen extensions": cbor.Map(seventeen),
 		"an upper-case name":   cbor.Map([]cbor.MapEntry{extension("Trace", 0, cbor.Int(1))}),
 		"a criticality of 2":   cbor.Map([]cbor.MapEntry{extension("e", 2, cbor.Int(1))}),
+		"a criticality of null": cbor.Map([]cbor.MapEntry{{Key: cbor.Text("e"), Val: cbor.Map([]cbor.MapEntry{
+			{Key: cbor.Text("critical"), Val: cbor.Null()},
+			{Key: cbor.Text("value"), Val: cbor.Int(1)},
+		})}}),
 		"a name over 64 bytes": cbor.Map([]cbor.MapEntry{extension(strings.Repeat("a", 65), 0, cbor.Int(1))}),
 		"an entry with no value": cbor.Map([]cbor.MapEntry{{Key: cbor.Text("e"), Val: cbor.Map([]cbor.MapEntry{
 			{Key: cbor.Text("critical"), Val: cbor.Int(0)},
@@ -164,5 +169,92 @@ func TestAnExtensionsValueMayHoldNull(t *testing.T) {
 	if _, err := VerifyReply(onWire(t, crafted(frameTypeResult, "reply", signedWith(t, replyLabel, fields, keys.provider))),
 		request, profile.PQPure); err != nil {
 		t.Fatalf("a reply whose extension value is null: %v, want it verified", err)
+	}
+}
+
+// A publication reads it too. The origin station verifies one before fan-out
+// and every subscriber before delivery, so an Erlang or Rust publisher adding
+// an extension reached neither: it was ErrMalformedFrame, and a Go subscriber
+// dropped every PUBLISH, EVENT and GOSSIP that carried one.
+func TestAPublicationIgnoresAnUnknownNonCriticalExtension(t *testing.T) {
+	keys := requestKeysFor(t)
+	name := "replica.hint"
+	before := WireCounters().ExtIgnored[name]
+	fields := withEntry(publicationTBS(keys.caller, testNow), "ext", unknownExt(name).Val)
+	publication, err := verifyCraftedPublication(t, fields, keys.caller)
+	if err != nil {
+		t.Fatalf("a publication with an unknown non-critical extension: %v, want it verified", err)
+	}
+	if publication.Seq != 7 {
+		t.Errorf("the publication read at seq %d, want 7", publication.Seq)
+	}
+	if got := WireCounters().ExtIgnored[name]; got != before+1 {
+		t.Errorf("wire_ext_ignored{%s} = %d, want %d", name, got, before+1)
+	}
+}
+
+// Every signed object this library verifies refuses a critical extension, not
+// only the reply: a receiver that cannot honour one must not read the object.
+// Erlang carries ext in five tables (macula_frame.erl: request, reply, relay
+// error, publication, stream) and this is each of them.
+func TestEverySignedObjectRefusesACriticalExtension(t *testing.T) {
+	keys := requestKeysFor(t)
+	request := verifiedCall(t, keys)
+	open := streamOpenOf(t, keys, ServerStream, idOf(7))
+	state := streamStateOf(t, open)
+	name := "seal.critical.hint"
+	for _, tc := range []struct {
+		object string
+		verify func() error
+	}{
+		{"a request", func() error {
+			return verifyCraftedRequest(t, frameTypeCall, withEntry(requestTBS(keys), "ext", criticalExt(name).Val), keys.caller)
+		}},
+		{"a reply", func() error {
+			_, err := VerifyReply(onWire(t, crafted(frameTypeResult, "reply",
+				signedWith(t, replyLabel, withEntry(replyTBS(request, frameTypeResult), "ext", criticalExt(name).Val), keys.provider))),
+				request, profile.PQPure)
+			return err
+		}},
+		{"a relay error", func() error {
+			_, err := VerifyRelayError(onWire(t, crafted(frameTypeError, "relay_error",
+				signedWith(t, relayErrorLabel, withEntry(relayTBS(request, keys.station), "ext", criticalExt(name).Val), keys.station))),
+				request, profile.PQPure, keys.station.KeyID())
+			return err
+		}},
+		{"a stream frame", func() error {
+			_, _, err := verifyProvider(t, crafted(frameTypeStreamData, "stream",
+				signedWith(t, streamLabel, withEntry(chunkTBS(open, keys.provider.KeyID(), 0), "ext", criticalExt(name).Val), keys.provider)), state)
+			return err
+		}},
+		{"a publication", func() error {
+			_, err := verifyCraftedPublication(t, withEntry(publicationTBS(keys.caller, testNow), "ext", criticalExt(name).Val), keys.caller)
+			return err
+		}},
+	} {
+		var unsupported *ExtensionUnsupportedError
+		err := tc.verify()
+		if !errors.As(err, &unsupported) || !slices.Equal(unsupported.Names, []string{name}) {
+			t.Errorf("%s carrying a critical extension: %v, want it refused naming %s", tc.object, err, name)
+		}
+	}
+}
+
+// An ext map refused for one critical entry counts nothing: the count is for
+// extensions that were read past, and this object is not read at all.
+func TestANonCriticalBesideACriticalIsNotCounted(t *testing.T) {
+	keys := requestKeysFor(t)
+	request := verifiedCall(t, keys)
+	name := "replica.hint"
+	before := WireCounters().ExtIgnored[name]
+	ext := cbor.Map([]cbor.MapEntry{extension(name, 0, cbor.Text("x")), extension("no_such.extension", 1, cbor.Text("x"))})
+	_, err := VerifyReply(onWire(t, crafted(frameTypeResult, "reply",
+		signedWith(t, replyLabel, withEntry(replyTBS(request, frameTypeResult), "ext", ext), keys.provider))), request, profile.PQPure)
+	var unsupported *ExtensionUnsupportedError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("a reply with a critical extension beside a non-critical one: %v, want ErrExtensionUnsupported", err)
+	}
+	if got := WireCounters().ExtIgnored[name]; got != before {
+		t.Errorf("wire_ext_ignored{%s} = %d, want %d: a refused object counts nothing", name, got, before)
 	}
 }

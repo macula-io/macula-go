@@ -181,6 +181,7 @@ var publicationTable = map[string]fieldRule{
 	"ttl_ms":       protocolUint,
 	"payload":      anyValue,
 	"sealed":       sealedRule(sealedEvent),
+	"ext":          extOf,
 }
 
 // VerifyPublication verifies the publication a received PUBLISH, EVENT or
@@ -218,6 +219,9 @@ func VerifyPublication(v cbor.Value, p profile.Profile, nowMs int64) (VerifiedPu
 	fields, ok := readFields(verified.Fields, publicationTable)
 	if !ok || !hasFields(fields, "publisher", "realm", "topic", "seq", "published_at") || !payloadOrSealed(fields) {
 		return VerifiedPublication{}, ErrMalformedFrame
+	}
+	if err := readTBSExt(fields); err != nil {
+		return VerifiedPublication{}, err
 	}
 	publication := verifiedPublication(verified, fields)
 	// validFrom is the first moment a verifier accepts the publication: 5
