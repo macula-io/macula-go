@@ -132,9 +132,13 @@ type Pool struct {
 	subs     map[*Subscription]struct{}
 	served   map[*Served]struct{}
 	remember map[resolvedKey]candidate
-	closed   bool
-	ctx      context.Context
-	cancel   context.CancelFunc
+	// learnt holds the KEM key a provider's signed refusal named, per
+	// procedure and provider, until the advertisement it beat would expire
+	// (call.go, learnKEMKey).
+	learnt map[resolvedKey]learntKey
+	closed bool
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	// sharer is the content this node shares (content.go).
 	sharer contentSharer
@@ -173,7 +177,8 @@ func Connect(ctx context.Context, seeds []Seed, opts Opts) (*Pool, error) {
 			Keyring: keyring, KEMAdvertise: opts.KEMAdvertise,
 			Admission: stationlink.NewAdmission(opts.Admission), Dedup: stationlink.NewEventDedup()},
 		subs: map[*Subscription]struct{}{}, served: map[*Served]struct{}{}, remember: map[resolvedKey]candidate{},
-		ctx: runCtx, cancel: cancel}
+		learnt: map[resolvedKey]learntKey{},
+		ctx:    runCtx, cancel: cancel}
 	go issuer.Run(runCtx, opts.OnIssuerError)
 	for _, seed := range seeds {
 		p.startMember(seed.target(opts.IdentityKey), false)

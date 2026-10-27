@@ -191,6 +191,47 @@ func CheckExt(v cbor.Value) error {
 	return err
 }
 
+// Ext is one extension a frame or a signed object carries (WIRE_1_0.md
+// section 3.2): its name, whether a receiver that does not know it must refuse
+// the object rather than ignore and count it, and its value, which is the
+// extension's own.
+type Ext struct {
+	Name     string
+	Critical bool
+	Value    cbor.Value
+}
+
+// ExtMap is exts as the ext map a frame or a signed object carries, cbor.Null
+// for none, which a frame with no extensions omits. It refuses a list a
+// receiver could not read back - more than 16 entries, a name outside
+// [a-z0-9_.] or over 64 bytes, the same name twice - ErrMalformedFrame.
+func ExtMap(exts []Ext) (cbor.Value, error) {
+	if len(exts) == 0 {
+		return cbor.Null(), nil
+	}
+	entries := make([]cbor.MapEntry, 0, len(exts))
+	seen := make(map[string]bool, len(exts))
+	for _, x := range exts {
+		if seen[x.Name] || !extensionName(x.Name) {
+			return cbor.Null(), fmt.Errorf("%w: an extension name", ErrMalformedFrame)
+		}
+		seen[x.Name] = true
+		criticality := int64(0)
+		if x.Critical {
+			criticality = 1
+		}
+		entries = append(entries, cbor.MapEntry{Key: cbor.Text(x.Name), Val: cbor.Map([]cbor.MapEntry{
+			{Key: cbor.Text("critical"), Val: cbor.Int(criticality)},
+			{Key: cbor.Text("value"), Val: x.Value},
+		})})
+	}
+	ext := cbor.Map(entries)
+	if err := CheckExt(ext); err != nil {
+		return cbor.Null(), err
+	}
+	return ext, nil
+}
+
 // ExtensionUnsupportedError is ErrExtensionUnsupported naming every unknown
 // critical extension the ext map carries, ascending.
 type ExtensionUnsupportedError struct {
