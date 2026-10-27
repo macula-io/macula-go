@@ -3,6 +3,7 @@ package stationlink
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -10,6 +11,11 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
 )
+
+// refusalDrainWait bounds how long a refused stream keeps reading what the
+// caller still sends before it is released: long enough for a clear caller to
+// read the refusal and adopt.
+const refusalDrainWait = 5 * time.Second
 
 // The refusal codes of a STREAM_OPEN, besides the admission's own, as macula's
 // refuse_open sends them.
@@ -174,11 +180,37 @@ func (s *Stream) refuseWith(code, message string) {
 
 // refuseCarrying is refuseWith carrying the extensions the refusal's signed tbs
 // names: a sealed_required hands the caller the key this node holds now, under
-// seal.kem_key (release A, DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
+// seal.kem_key (release A, DESIGN_E2E_SEALED_BY_DEFAULT.md section 3). The
+// write holds the stream's send mutex, as every write does, so a refusal that
+// races an owner's send keeps the two in order.
 func (s *Stream) refuseCarrying(code, message string, exts []frame.Ext) {
 	s.link.count("stream_refused_" + code)
-	_ = s.write(frame.StreamErrorFields{Code: code, Message: message}, true, exts)
-	s.end(&StreamError{Code: code, Message: message})
+	s.sendMu.Lock()
+	err := s.write(frame.StreamErrorFields{Code: code, Message: message}, true, exts)
+	s.sendMu.Unlock()
+	refusal := &StreamError{Code: code, Message: message}
+	if err != nil {
+		s.end(refusal)
+		return
+	}
+	s.drainRefused(refusal)
+}
+
+// drainRefused reads and discards what the caller still sends and releases the
+// stream when its side ends, or at the bounds: streamInbox bytes, or
+// refusalDrainWait. A clear caller keeps writing until it reads the refusal -
+// a clear stream keeps an ordered copy of what it wrote for exactly that
+// (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3) - and a provider that stopped
+// reading at once would have the station reset the caller's stream, which
+// discards a refusal still in flight to it. Reading on instead keeps both the
+// refusal and the caller's writes flowing until the caller adopts.
+func (s *Stream) drainRefused(refusal *StreamError) {
+	go func() {
+		_ = s.qs.SetReadDeadline(time.Now().Add(refusalDrainWait))
+		_, _ = io.CopyN(io.Discard, s.qs, int64(streamInbox))
+		_ = s.qs.SetReadDeadline(time.Time{})
+		s.end(refusal)
+	}()
 }
 
 // serve runs the handler for the session, and ends the stream as the handler

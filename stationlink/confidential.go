@@ -92,6 +92,15 @@ func (l *Link) clearAllowed(o Offer, now time.Time) bool {
 	return !now.After(o.KeyedSince.Add(maxAdvertisementTTL + record.ClockToleranceMs*time.Millisecond))
 }
 
+// namesItsKey is whether a required procedure can tell a caller the key to seal
+// to: in its advertisement, with kem_advertise, or in a sealed_required
+// refusal, with KEMKeyInRefusal (release A's sending side,
+// DESIGN_E2E_SEALED_BY_DEFAULT.md section 3). One of the two is needed, or no
+// caller could ever reach it.
+func (l *Link) namesItsKey() bool {
+	return l.keyring != nil && (l.kemAdvertise || l.kemKeyInRefusal)
+}
+
 // callSeal is what a sealed request agreed: the reply key, or a stream's two
 // keys, and what the answers are bound to.
 type callSeal struct {

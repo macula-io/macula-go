@@ -3,6 +3,7 @@ package stationlink_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -96,7 +97,7 @@ func assertAClearStreamAdopts(t *testing.T, p profile.Profile, mode frame.Stream
 	_ = stream.Send([]byte("one"))
 	_ = stream.Send([]byte("two"))
 	_ = stream.CloseSend()
-	if got, want := takeRead(t, read), "one,two"; got != want {
+	if got, want := takeRead(t, stream, read), "one,two"; got != want {
 		t.Errorf("the provider read %q, want %q: the copy was not replayed", got, want)
 	}
 	event, err := recv(t, stream)
@@ -105,15 +106,101 @@ func assertAClearStreamAdopts(t *testing.T, p profile.Profile, mode frame.Stream
 	}
 }
 
-// takeRead is what the provider's handler read, or a failure if it never read.
-func takeRead(t *testing.T, read <-chan string) string {
+// A send that meets the refusal - the window adoption exists for - lands in the
+// replay, never on the refused session, and the provider reads every chunk the
+// owner wrote exactly once, in order, its end included. Repeated, so the writes
+// meet the refusal at different points: one round may have them all in the
+// copy, the next may have one waiting on the reopen.
+func TestASendRacingTheRefusalIsReplayedOnce(t *testing.T) {
+	for _, p := range []profile.Profile{profile.PQPure, profile.PQHybrid} {
+		t.Run(string(p), func(t *testing.T) { assertARacingSendIsDeliveredOnce(t, p) })
+	}
+}
+
+// raceRounds and raceChunks size the race: enough writes in flight to reach the
+// refusal on both sides of the copy.
+const (
+	raceRounds = 12
+	raceChunks = 8
+)
+
+func assertARacingSendIsDeliveredOnce(t *testing.T, p profile.Profile) {
+	t.Helper()
+	w := newAdoptingWorld(t, p, "adopt race")
+	read := make(chan string, raceRounds)
+	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count", Confidential: stationlink.ConfidentialRequired,
+		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: countingHandler(read)}})
+	for round := 0; round < raceRounds; round++ {
+		stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID,
+			Procedure: "mcl-vault/count", Target: w.provider.NodeID(), Mode: frame.Bidi,
+			Payload: cbor.Map(nil), Clear: true})
+		if err != nil {
+			t.Fatalf("round %d: OpenStream: %v", round, err)
+		}
+		chunks := racingChunks(round)
+		go writeAll(stream, chunks)
+		if got, want := takeRead(t, stream, read), strings.Join(chunks, ","); got != want {
+			t.Fatalf("round %d: the provider read %q, want %q", round, got, want)
+		}
+		assertRacingReply(t, round, stream, chunks)
+	}
+}
+
+// racingChunks is one round's writes, named so a dropped, reordered or replayed
+// chunk shows which one it was.
+func racingChunks(round int) []string {
+	chunks := make([]string, raceChunks)
+	for i := range chunks {
+		chunks[i] = fmt.Sprintf("r%d-c%d", round, i)
+	}
+	return chunks
+}
+
+// writeAll writes chunks and ends the caller's side, as an owner that does not
+// wait for the refusal would: every write is the owner's, so every one is
+// replayed exactly once whatever the session it met.
+func writeAll(stream *stationlink.Stream, chunks []string) {
+	for _, chunk := range chunks {
+		_ = stream.Send([]byte(chunk))
+	}
+	_ = stream.CloseSend()
+}
+
+// assertRacingReply checks the provider answered with the total size of the
+// chunks it read.
+func assertRacingReply(t *testing.T, round int, stream *stationlink.Stream, chunks []string) {
+	t.Helper()
+	want := 0
+	for _, chunk := range chunks {
+		want += len(chunk)
+	}
+	event, err := recv(t, stream)
+	if total, _ := event.Payload.AsInt64(); err != nil || event.Kind != stationlink.StreamReply || total != int64(want) {
+		t.Errorf("round %d: the reply: %+v, %v", round, event, err)
+	}
+}
+
+// takeRead is what the provider's handler read, or a failure if it never read,
+// naming what the caller's stream was doing at that point.
+func takeRead(t *testing.T, stream *stationlink.Stream, read <-chan string) string {
 	t.Helper()
 	select {
 	case got := <-read:
 		return got
 	case <-time.After(30 * time.Second):
-		t.Fatal("the provider never finished reading the replayed chunks")
+		t.Fatalf("the provider never finished reading the replayed chunks: the stream's error %v, ended %v",
+			stream.Err(), streamEnded(stream))
 		return ""
+	}
+}
+
+// streamEnded reports whether the stream has been released.
+func streamEnded(stream *stationlink.Stream) bool {
+	select {
+	case <-stream.Done():
+		return true
+	default:
+		return false
 	}
 }
 

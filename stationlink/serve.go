@@ -180,6 +180,8 @@ type Served struct {
 // *RefusedError and no answer an *UnacknowledgedError, and neither leaves the
 // procedure served. The advertisement is renewed at half its lifetime; a
 // renewal waits for no ack, and a refused one is counted in RegisterRefusals.
+// A procedure that requires sealing must tell a caller the key to seal to, in
+// its advertisement or in its refusal (namesItsKey).
 func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 	own := record.InOwnNamespace(o.Procedure)
 	if (o.Handler == nil) == (o.Stream == nil || o.Stream.Handler == nil) || (!own && len(o.RealmKey) == 0) || !validPolicy(o.Policy) {
@@ -191,7 +193,7 @@ func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 	switch {
 	case o.Confidential < ConfidentialPreferred || o.Confidential > ConfidentialOff:
 		return nil, ErrInvalidOffer
-	case o.Confidential == ConfidentialRequired && !(l.kemAdvertise && l.keyring != nil):
+	case o.Confidential == ConfidentialRequired && !l.namesItsKey():
 		return nil, ErrKEMAdvertiseDisabled
 	case l.keyed(o) && o.KeyedSince.IsZero():
 		o.KeyedSince = time.Now()
@@ -511,17 +513,21 @@ func (l *Link) answer(request frame.VerifiedRequest) {
 }
 
 // reply is the signed reply to request, served by served (nil when this link
-// serves no such procedure).
+// serves no such procedure). A confidentiality refusal is counted under
+// call_refused_<code>, as a stream's is under stream_refused_<code>, so a
+// provider can be seen to refuse what it should.
 func (l *Link) reply(request frame.VerifiedRequest, served *Served) cbor.Value {
 	payload := request.Payload
 	var sealed *callSeal
 	if request.Sealed != nil {
 		plain, s, refused := l.openRequest(request)
 		if s == nil {
+			l.count("call_refused_" + codeSealedRefused)
 			return l.providerError(request, codeSealedRefused, &refused)
 		}
 		payload, sealed = plain, s
 	} else if served != nil && !l.clearAllowed(served.offer, time.Now()) {
+		l.count("call_refused_" + codeSealedRequired)
 		return l.providerError(request, codeSealedRequired, nil)
 	}
 	if served == nil || served.offer.Handler == nil {
