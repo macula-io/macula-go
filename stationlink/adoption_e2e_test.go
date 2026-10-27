@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -234,6 +235,7 @@ func countingHandler(read chan<- string) stationlink.StreamHandler {
 // it in the clear.
 type adoptingWorld struct {
 	realm    teststation.Realm
+	station  *teststation.Station
 	provider *stationlink.Link
 	caller   *stationlink.Link
 	ring     *seal.Keyring
@@ -251,11 +253,126 @@ func newAdoptingWorld(t *testing.T, p profile.Profile, name string) adoptingWorl
 		cfg.Keyring, cfg.KEMAdvertise, cfg.KEMKeyInRefusal = ring, true, true
 	})
 	realm.Admit(t, s, provider.NodeID())
-	return adoptingWorld{realm: realm, provider: provider, caller: dialIn(t, s, p, name+" caller"), ring: ring}
+	return adoptingWorld{realm: realm, station: s, provider: provider, caller: dialIn(t, s, p, name+" caller"), ring: ring}
 }
 
 // carried is the key the provider holds now, as a refusal carries it.
 func (w adoptingWorld) carried() []byte { return w.ring.Current().PublicKey().Carried() }
+
+// adoptOpen opens a clear bidi stream to the provider, the shape every test
+// here starts from.
+func (w adoptingWorld) adoptOpen(t *testing.T, link *stationlink.Link) (*stationlink.Stream, error) {
+	t.Helper()
+	return link.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-vault/count",
+		Target: w.provider.NodeID(), Mode: frame.Bidi, Payload: cbor.Map(nil), Clear: true})
+}
+
+// floodOpens is how many streams a flooding caller opens: more than the
+// provider's link takes at once (quic-go's MaxIncomingStreams, 100), so a
+// refusal that lingers past its place would exhaust them.
+const floodOpens = 400
+
+// floodGoroutines is how many callers hold open streams at once during a
+// flood.
+const floodGoroutines = 8
+
+// A caller that keeps opening streams the provider must refuse, from eight
+// goroutines at once, cannot starve another caller. Both halves of the rule are
+// checked: a stream refused because the caller is at its session cap gives its
+// place back at once (the peak stays within the link's drain cap, where before
+// the cap it reached 39 of quic-go's 100 incoming streams), and the keyed
+// sealed_required an adoption replays into is the only refusal that lingers,
+// charged to the caller's own admission sessions.
+func TestAFloodOfRefusedOpensCannotStarveAnotherCaller(t *testing.T) {
+	w := newAdoptingWorld(t, profile.PQPure, "adopt flood")
+	entered := make(chan [32]byte, floodOpens)
+	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count", Confidential: stationlink.ConfidentialRequired,
+		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: holdingHandler(entered)}})
+	flooder := dialIn(t, w.station, profile.PQPure, "adopt flood flooder")
+	other := dialIn(t, w.station, profile.PQPure, "adopt flood other")
+	if peak := floodRefusedOpens(t, w, flooder); peak > maxRefusalDrains {
+		t.Errorf("the link drained %d refusals at once, cap %d", peak, maxRefusalDrains)
+	}
+	assertAnotherCallerIsServed(t, w, other, entered)
+}
+
+// floodRefusedOpens opens floodOpens clear streams, from floodGoroutines at
+// once, and never reads them: the provider refuses every one past the caller's
+// session cap, and the drains stay within their cap.
+func floodRefusedOpens(t *testing.T, w adoptingWorld, flooder *stationlink.Link) int {
+	t.Helper()
+	var wg sync.WaitGroup
+	for g := 0; g < floodGoroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < floodOpens/floodGoroutines; n++ {
+				if _, err := flooder.OpenStream(context.Background(), stationlink.StreamCall{Realm: w.realm.ID,
+					Procedure: "mcl-vault/count", Target: w.provider.NodeID(), Mode: frame.Bidi,
+					Payload: cbor.Map(nil), Clear: true}); err != nil {
+					return
+				}
+			}
+		}()
+	}
+	peak := watchDrains(w.provider, &wg)
+	if n := w.provider.Unrouted()["stream_refused_too_many_sessions"]; n == 0 {
+		t.Fatalf("the flood drew %d too_many_sessions refusals, want some", n)
+	}
+	return peak
+}
+
+// watchDrains samples the link's drains until every flood goroutine is done,
+// and reports the most it saw at once.
+func watchDrains(provider *stationlink.Link, wg *sync.WaitGroup) int {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	peak := 0
+	for {
+		if n := provider.RefusalDrains(); n > peak {
+			peak = n
+		}
+		select {
+		case <-done:
+			return peak
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+// assertAnotherCallerIsServed checks that another caller's clear open still
+// reaches the provider's handler while the first caller's flood is refused.
+func assertAnotherCallerIsServed(t *testing.T, w adoptingWorld, other *stationlink.Link, entered <-chan [32]byte) {
+	t.Helper()
+	if _, err := w.adoptOpen(t, other); err != nil {
+		t.Fatalf("another caller's open: %v", err)
+	}
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case caller := <-entered:
+			if caller == other.NodeID() {
+				return
+			}
+		case <-deadline:
+			t.Fatal("another caller's open never reached the provider: a refusal held its place")
+		}
+	}
+}
+
+// holdingHandler reports each session's caller and holds the session until the
+// stream ends, so the sessions a flood takes stay taken.
+func holdingHandler(entered chan<- [32]byte) stationlink.StreamHandler {
+	return func(ctx context.Context, s *stationlink.Stream) error {
+		entered <- s.Request().Caller
+		<-ctx.Done()
+		return nil
+	}
+}
+
+// maxRefusalDrains is the link's own cap on concurrent refusal drains, which a
+// flood must never exceed (stationlink's maxRefusalDrains).
+const maxRefusalDrains = 16
 
 func (w adoptingWorld) serve(t *testing.T, o stationlink.Offer) {
 	t.Helper()

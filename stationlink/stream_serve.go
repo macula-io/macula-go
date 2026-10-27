@@ -17,6 +17,39 @@ import (
 // read the refusal and adopt.
 const refusalDrainWait = 5 * time.Second
 
+// maxRefusalDrains bounds the refusal drains one link runs at once, a sixth of
+// quic-go's default MaxIncomingStreams (100): a flood of refused opens cannot
+// hold the incoming streams another caller's session needs.
+const maxRefusalDrains = 16
+
+// takeDrain claims one of the link's drain places, and reports whether it got
+// one.
+func (l *Link) takeDrain() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.drains >= maxRefusalDrains {
+		return false
+	}
+	l.drains++
+	return true
+}
+
+// giveDrain gives a drain place back.
+func (l *Link) giveDrain() {
+	l.mu.Lock()
+	l.drains--
+	l.mu.Unlock()
+}
+
+// RefusalDrains is how many refusal drains this link is running now: a refused
+// stream a clear caller's adoption may still replay into, reading what that
+// caller writes until it adopts.
+func (l *Link) RefusalDrains() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.drains
+}
+
 // The refusal codes of a STREAM_OPEN, besides the admission's own, as macula's
 // refuse_open sends them.
 const (
@@ -62,7 +95,10 @@ func (l *Link) incoming(qs *quic.Stream) {
 	}
 	offer, code, message := l.servedStream(s, open)
 	if code != "" {
-		release()
+		// The session's place is given back when the stream ends, which is at
+		// once for most refusals and at the end of a drain for the refusal an
+		// adoption replays into: the caller's own session cap bounds those.
+		s.onEnd = release
 		s.refuseCarrying(code, message, l.refusalExt(code))
 		return
 	}
@@ -189,11 +225,20 @@ func (s *Stream) refuseCarrying(code, message string, exts []frame.Ext) {
 	err := s.write(frame.StreamErrorFields{Code: code, Message: message}, true, exts)
 	s.sendMu.Unlock()
 	refusal := &StreamError{Code: code, Message: message}
-	if err != nil {
+	if err != nil || !replayableRefusal(code, exts) || !s.link.takeDrain() {
+		// Every other refusal ends at once, and so does this one past the
+		// link's drain cap: a refusal never waits for a place to drain in.
 		s.end(refusal)
 		return
 	}
 	s.drainRefused(refusal)
+}
+
+// replayableRefusal reports whether a refusal is the one a clear caller replays
+// its copy into: a sealed_required carrying the provider's key. Only that one
+// has a caller that keeps writing until it reads the refusal.
+func replayableRefusal(code string, exts []frame.Ext) bool {
+	return code == codeSealedRequired && len(exts) > 0
 }
 
 // drainRefused reads and discards what the caller still sends and releases the
@@ -203,9 +248,12 @@ func (s *Stream) refuseCarrying(code, message string, exts []frame.Ext) {
 // (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3) - and a provider that stopped
 // reading at once would have the station reset the caller's stream, which
 // discards a refusal still in flight to it. Reading on instead keeps both the
-// refusal and the caller's writes flowing until the caller adopts.
+// refusal and the caller's writes flowing until the caller adopts. The space it
+// holds is the caller's admission session, kept until the stream ends, and one
+// of the link's drain places.
 func (s *Stream) drainRefused(refusal *StreamError) {
 	go func() {
+		defer s.link.giveDrain()
 		_ = s.qs.SetReadDeadline(time.Now().Add(refusalDrainWait))
 		_, _ = io.CopyN(io.Discard, s.qs, int64(streamInbox))
 		_ = s.qs.SetReadDeadline(time.Time{})

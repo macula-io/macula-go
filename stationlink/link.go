@@ -141,11 +141,13 @@ type Link struct {
 	kemAdvertise bool
 	// kemKeyInRefusal carries the key in a sealed_required refusal (release A).
 	kemKeyInRefusal bool
-	self            [32]byte
-	seq             *PublicationSeq
-	done            chan struct{}
-	err             error
-	endOnce         sync.Once
+	// drains counts the refusal drains this link runs now (stream_serve.go).
+	drains  int
+	self    [32]byte
+	seq     *PublicationSeq
+	done    chan struct{}
+	err     error
+	endOnce sync.Once
 }
 
 // Dial dials cfg.Target, runs the wire 1.0 handshake as a client, and returns
