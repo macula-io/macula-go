@@ -48,49 +48,69 @@ func refusedClearely(t *testing.T, r frame.VerifiedRequest, code string, carried
 // key and sent again, and the pool is handed the key.
 func TestAClearCallResealsToTheKeyTheRefusalCarries(t *testing.T) {
 	for _, p := range profiles {
-		t.Run(string(p), func(t *testing.T) {
-			link, s := linkWithStation(t, p)
-			provider, carried := keyedProvider(t, p, "a keyed provider")
-			var mu sync.Mutex
-			var sent []frame.VerifiedRequest
-			s.answerCalls(func(r frame.VerifiedRequest) (cbor.Value, bool) {
-				mu.Lock()
-				sent = append(sent, r)
-				n := len(sent)
-				mu.Unlock()
-				if n == 1 {
-					return refusedClearely(t, r, codeSealedRequired, carried, provider)
-				}
-				// A clear refusal from the closed set, which a sealed call may
-				// take: the call ends here, whatever the answer is.
-				return refusedClearely(t, r, "unavailable", nil, provider)
-			})
-			var adopted []byte
-			_, err := callWithin(t, link, Call{Procedure: "mcl-vault/open", Target: provider.KeyID(), Payload: cbor.Text("a secret"),
-				Clear: true, Timeout: 5 * time.Second, Adopted: func(key []byte) { adopted = key }})
-			var refused *ProviderError
-			if !errors.As(err, &refused) || refused.Code != "unavailable" {
-				t.Fatalf("Call: %v, want the second call's own refusal", err)
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			if len(sent) != 2 {
-				t.Fatalf("the provider answered %d calls, want 2", len(sent))
-			}
-			first, second := sent[0], sent[1]
-			if first.Sealed != nil {
-				t.Error("the first call went out sealed, want it clear")
-			}
-			if first.RequestID == second.RequestID {
-				t.Error("the reseal kept the first request_id, want a new one")
-			}
-			if second.Sealed == nil || second.Sealed.KeyID != seal.KeyID(carried) {
-				t.Errorf("the second call's seal: %+v, want the carried key %x", second.Sealed, seal.KeyID(carried))
-			}
-			if string(adopted) != string(carried) {
-				t.Errorf("the pool was handed %x, want the carried key %x", adopted, carried)
-			}
-		})
+		t.Run(string(p), func(t *testing.T) { assertAClearCallReseals(t, p) })
+	}
+}
+
+func assertAClearCallReseals(t *testing.T, p profile.Profile) {
+	t.Helper()
+	link, s := linkWithStation(t, p)
+	provider, carried := keyedProvider(t, p, "a keyed provider")
+	recorder := recordingAnswers(t, s, provider, carried)
+	var adopted []byte
+	_, err := callWithin(t, link, Call{Procedure: "mcl-vault/open", Target: provider.KeyID(), Payload: cbor.Text("a secret"),
+		Clear: true, Timeout: 5 * time.Second, Adopted: func(key []byte) { adopted = key }})
+	var refused *ProviderError
+	if !errors.As(err, &refused) || refused.Code != "unavailable" {
+		t.Fatalf("Call: %v, want the second call's own refusal", err)
+	}
+	sent := recorder()
+	if len(sent) != 2 {
+		t.Fatalf("the provider answered %d calls, want 2", len(sent))
+	}
+	assertResealedOnce(t, sent, carried, adopted)
+}
+
+// assertResealedOnce checks the two calls a refusal and its reseal send: the
+// first clear, the second sealed to the carried key under a new request id.
+func assertResealedOnce(t *testing.T, sent []frame.VerifiedRequest, carried, adopted []byte) {
+	t.Helper()
+	first, second := sent[0], sent[1]
+	if first.Sealed != nil {
+		t.Error("the first call went out sealed, want it clear")
+	}
+	if first.RequestID == second.RequestID {
+		t.Error("the reseal kept the first request_id, want a new one")
+	}
+	if second.Sealed == nil || second.Sealed.KeyID != seal.KeyID(carried) {
+		t.Errorf("the second call's seal: %+v, want the carried key %x", second.Sealed, seal.KeyID(carried))
+	}
+	if string(adopted) != string(carried) {
+		t.Errorf("the pool was handed %x, want the carried key %x", adopted, carried)
+	}
+}
+
+// recordingAnswers answers a provider's first call with a sealed_required
+// carrying carried, and every later one with a clear refusal from the closed
+// set; it returns what was sent, in order.
+func recordingAnswers(t *testing.T, s *testStation, provider *identity.NodeKey, carried []byte) func() []frame.VerifiedRequest {
+	t.Helper()
+	var mu sync.Mutex
+	var sent []frame.VerifiedRequest
+	s.answerCalls(func(r frame.VerifiedRequest) (cbor.Value, bool) {
+		mu.Lock()
+		sent = append(sent, r)
+		n := len(sent)
+		mu.Unlock()
+		if n == 1 {
+			return refusedClearely(t, r, codeSealedRequired, carried, provider)
+		}
+		return refusedClearely(t, r, "unavailable", nil, provider)
+	})
+	return func() []frame.VerifiedRequest {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]frame.VerifiedRequest(nil), sent...)
 	}
 }
 
