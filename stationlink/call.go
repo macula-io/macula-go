@@ -12,6 +12,7 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/internal/redact"
+	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/seal"
 )
 
@@ -60,6 +61,13 @@ type Call struct {
 	// states neither is refused no_signed_state. A call to the connected
 	// station needs neither.
 	Clear bool
+	// Adopted, when set, is handed the provider's carried KEM key once this
+	// clear call is sealed to it: a provider that refuses a clear call
+	// sealed_required naming its key in the refusal's tbs has decided the
+	// caller's side, so the link seals the same payload to that key once more,
+	// under a new request_id, and reports the key here for the pool to
+	// remember. A nil Adopted reseals the same and learns nothing.
+	Adopted func(kemKey []byte)
 }
 
 // String writes the Call without its credential: the grant and proofs
@@ -79,6 +87,11 @@ type ProviderError struct {
 	RespondedBy [32]byte
 	Code        string
 	Detail      *string
+	// KEMKey is the provider's carried KEM key the refusal names in its signed
+	// tbs, under seal.kem_key: its own, and bound to the request by the
+	// signature, so it is as fresh as the answer. Nil unless the refusal
+	// carries one; its length is the reader's to check against the profile.
+	KEMKey []byte
 }
 
 func (e *ProviderError) Error() string {
@@ -116,11 +129,53 @@ type callOutcome struct {
 // reply signed by its target, or a relay error the connected station signed. A
 // reply that does not verify is counted in Unrouted as unverified_reply and
 // ignored, and the call keeps waiting, as macula's link does.
+//
+// A clear call a provider refuses sealed_required, naming its KEM key in the
+// refusal's tbs, is sealed to that key and sent once more, under a new
+// request_id and the same deadline: the provider has decided that this call
+// travels sealed, and the refusal cannot be stale (DESIGN_E2E_SEALED_BY_DEFAULT
+// .md section 3). A refusal carrying no key, or one of another profile's
+// length, surfaces as itself.
 func (l *Link) Call(ctx context.Context, c Call) (cbor.Value, error) {
 	if err := l.stated(c.Target, c.SealTo, c.Clear); err != nil {
 		return cbor.Value{}, err
 	}
-	id, pending, wire, err := l.prepareCall(c)
+	timeout := callTimeout(c.Timeout)
+	deadline := uint64(time.Now().Add(timeout).UnixMilli())
+	// One timer for the call: the reseal does not extend it, as a stream's
+	// reopen does not extend the open's deadline.
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	result, err := l.callOnce(ctx, timer.C, deadline, c)
+	key, yields := adoptedKey(l.profile, c, err)
+	if !yields {
+		return result, err
+	}
+	if c.Adopted != nil {
+		c.Adopted(key)
+	}
+	c.SealTo, c.Clear = key, false
+	return l.callOnce(ctx, timer.C, deadline, c)
+}
+
+// adoptedKey is the key a refused clear call is sealed to again: the one the
+// provider's sealed_required carried, when this call went out clear and the
+// key is one of this profile's. A sealed call is never resealed here.
+func adoptedKey(p profile.Profile, c Call, err error) ([]byte, bool) {
+	var refused *ProviderError
+	if c.SealTo != nil || !errors.As(err, &refused) || refused.Code != codeSealedRequired {
+		return nil, false
+	}
+	if len(refused.KEMKey) != seal.CarriedSize(p) {
+		return nil, false
+	}
+	return refused.KEMKey, true
+}
+
+// callOnce sends c as one CALL under deadline and waits for its answer, within
+// ctx, the call's timer and the link's life.
+func (l *Link) callOnce(ctx context.Context, timerC <-chan time.Time, deadline uint64, c Call) (cbor.Value, error) {
+	id, pending, wire, err := l.prepareCall(c, deadline)
 	if err != nil {
 		return cbor.Value{}, err
 	}
@@ -131,12 +186,10 @@ func (l *Link) Call(ctx context.Context, c Call) (cbor.Value, error) {
 	if err := l.writer.write(cbor.Encode(wire), MaxFrameBytes); err != nil {
 		return cbor.Value{}, err
 	}
-	timer := time.NewTimer(callTimeout(c.Timeout))
-	defer timer.Stop()
 	select {
 	case outcome := <-pending.outcome:
 		return outcome.payload, outcome.err
-	case <-timer.C:
+	case <-timerC:
 		return cbor.Value{}, ErrCallTimeout
 	case <-ctx.Done():
 		return cbor.Value{}, ctx.Err()
@@ -156,7 +209,7 @@ func callTimeout(t time.Duration) time.Duration {
 
 // prepareCall signs c as a CALL and returns the request id, the pending entry
 // that waits for its reply, and the frame to send.
-func (l *Link) prepareCall(c Call) ([16]byte, *pendingCall, cbor.Value, error) {
+func (l *Link) prepareCall(c Call, deadline uint64) ([16]byte, *pendingCall, cbor.Value, error) {
 	target := c.Target
 	if target == ([32]byte{}) {
 		target = l.station.NodeID
@@ -167,7 +220,7 @@ func (l *Link) prepareCall(c Call) ([16]byte, *pendingCall, cbor.Value, error) {
 	}
 	spec := frame.RequestSpec{
 		RequestID: id, Realm: c.Realm, Procedure: c.Procedure, Target: target,
-		Deadline: uint64(time.Now().Add(callTimeout(c.Timeout)).UnixMilli()), Payload: c.Payload, Token: c.Token, Proofs: c.Proofs,
+		Deadline: deadline, Payload: c.Payload, Token: c.Token, Proofs: c.Proofs,
 	}
 	var sealing *callSeal
 	if c.SealTo != nil {
@@ -252,11 +305,11 @@ func (l *Link) verifiedReply(v cbor.Value, pending *pendingCall) (callOutcome, e
 	case reply.Sealed != nil:
 		// This node sealed nothing, so a sealed reply answers no request it
 		// made as the provider sealed it.
-		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: codeSealedRefused}}, nil
+		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: codeSealedRefused, KEMKey: carriedKEMKey(reply)}}, nil
 	case reply.FrameType == "result":
 		return callOutcome{payload: reply.Payload}, nil
 	}
-	return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: reply.Code, Detail: reply.Detail}}, nil
+	return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: reply.Code, Detail: reply.Detail, KEMKey: carriedKEMKey(reply)}}, nil
 }
 
 // probe sends a liveness probe every livenessEvery and ends the link after two

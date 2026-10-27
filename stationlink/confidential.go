@@ -236,6 +236,13 @@ func refusedKey(detail *string) *[seal.KeyIDSize]byte {
 	return &id
 }
 
+// carriedKEMKey is the provider's KEM key a verified reply carries in its
+// signed tbs, under seal.kem_key, nil when it carries none.
+func carriedKEMKey(reply frame.VerifiedReply) []byte {
+	key, _ := frame.KEMKeyFromExt(reply.Ext)
+	return key
+}
+
 // sealRequest seals spec's payload to the provider key carried as sealTo, for
 // frameType, and returns the keys the caller keeps. A key that is not one of
 // this profile's is no_kem_key.
@@ -281,7 +288,7 @@ func (s *callSeal) sealedOutcome(reply frame.VerifiedReply, requestHash [48]byte
 	case reply.FrameType == "error" && reply.Code == codeSealedRefused:
 		return callOutcome{err: &SealedRefusedError{Named: refusedKey(reply.Detail)}}
 	case reply.FrameType == "error" && IsClearRefusal(reply.Code):
-		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: reply.Code, Detail: reply.Detail}}
+		return callOutcome{err: &ProviderError{RespondedBy: reply.RespondedBy, Code: reply.Code, Detail: reply.Detail, KEMKey: carriedKEMKey(reply)}}
 	}
 	return callOutcome{err: ErrClearAnswerToSealed}
 }

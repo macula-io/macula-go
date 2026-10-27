@@ -104,6 +104,16 @@ func signSealedReply(frameType string, request VerifiedRequest, sealed Sealed, s
 // SignResult's key check: a code of at most 64 bytes and a detail, nil for none,
 // of at most 256, both UTF-8 (ErrTextTooLong, judged first, and ErrInvalidText).
 func SignProviderError(request VerifiedRequest, code string, detail *string, sourceRouteReverse []byte, key *identity.NodeKey) (cbor.Value, error) {
+	return SignProviderErrorWithExt(request, code, detail, nil, sourceRouteReverse, key)
+}
+
+// SignProviderErrorWithExt signs a provider's ERROR as SignProviderError does,
+// with the extensions its signed tbs carries (WIRE_1_0.md section 3.2): the
+// shape a sealed_required refusal names the provider's KEM key in, under
+// seal.kem_key (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3). No extension for
+// none, which omits the key rather than sending an empty map.
+func SignProviderErrorWithExt(request VerifiedRequest, code string, detail *string, exts []Ext,
+	sourceRouteReverse []byte, key *identity.NodeKey) (cbor.Value, error) {
 	if err := replySigner(request, key); err != nil {
 		return cbor.Value{}, err
 	}
@@ -116,6 +126,13 @@ func SignProviderError(request VerifiedRequest, code string, detail *string, sou
 			return cbor.Value{}, err
 		}
 		fields = append(fields, textEntry("detail", *detail))
+	}
+	if exts != nil {
+		ext, err := ExtMap(exts)
+		if err != nil {
+			return cbor.Value{}, err
+		}
+		fields = append(fields, cbor.MapEntry{Key: cbor.Text("ext"), Val: ext})
 	}
 	return signReply(frameTypeError, request, fields, sourceRouteReverse, key)
 }

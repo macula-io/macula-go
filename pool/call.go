@@ -94,6 +94,15 @@ type resolvedKey struct {
 	provider  [32]byte
 }
 
+// learntKey is a KEM key a provider's signed refusal named (call.go's
+// learnKEMKey), and the moment the advertisement it beats expires: while it
+// lives, a keyless advertisement for that provider does not take a call clear
+// again.
+type learntKey struct {
+	key       []byte
+	expiresAt int64
+}
+
 // Call calls a procedure at a provider that serves it, as macula 12 calls
 // one: it resolves the procedure's advertisements from the DHT, keeps those
 // the realm's pinned key authorizes (or, in a node's own namespace, those that
@@ -226,13 +235,40 @@ func (p *Pool) Providers(ctx context.Context, realm [32]byte, procedure string) 
 // candidates is the remembered candidate while it lives and its station is
 // linked, else the procedure's trusted advertisements from the DHT.
 func (p *Pool) candidates(ctx context.Context, key resolvedKey, realmKey []byte) ([]candidate, error) {
-	p.mu.Lock()
-	remembered, held := p.remember[key]
-	p.mu.Unlock()
+	remembered, held := p.remembered(key)
 	if held && remembered.expiresAt > time.Now().UnixMilli() && p.linkedTo(remembered.Station) != nil {
 		return []candidate{remembered}, nil
 	}
 	return p.resolve(ctx, key, realmKey)
+}
+
+// remembered is the candidate the pool holds for key, with the key a provider's
+// signed refusal named while it lives: a keyless advertisement does not take a
+// call clear again while a key is known for its provider, so the next call
+// seals at once (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
+func (p *Pool) remembered(key resolvedKey) (candidate, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cand, held := p.remember[key]
+	if !held {
+		return candidate{}, false
+	}
+	learnt, known := p.learnt[key]
+	if !known || cand.kemKey != nil || time.Now().UnixMilli() >= learnt.expiresAt {
+		return cand, true
+	}
+	cand.kemKey, cand.kemKeyID = learnt.key, seal.KeyID(learnt.key)
+	return cand, true
+}
+
+// learnKEMKey keeps the key a provider's signed refusal named for that
+// provider's procedure, until the advertisement it beats would expire: the
+// refusal is the provider's own, signed and bound to the request it answers, so
+// it is fresher than any keyless advertisement still in the DHT.
+func (p *Pool) learnKEMKey(key resolvedKey, cand candidate, kemKey []byte) {
+	p.mu.Lock()
+	p.learnt[key] = learntKey{key: kemKey, expiresAt: cand.expiresAt}
+	p.mu.Unlock()
 }
 
 // resolve finds the procedure's advertisements and keeps the ones the realm
@@ -277,14 +313,25 @@ func (p *Pool) resolve(ctx context.Context, key resolvedKey, realmKey []byte) ([
 // deadline. A sealed call the provider refuses sealed_refused is sealed
 // again, once, under a new request, to the key a fresh lookup of its
 // advertisement names, when that is the key the refusal named (macula 13,
-// amendment A1).
+// amendment A1). A clear call refused sealed_required carrying its key is
+// sealed to that key by the link, and the pool keeps the key for the next call
+// (DESIGN_E2E_SEALED_BY_DEFAULT.md section 3).
 func (p *Pool) callAt(ctx context.Context, link *stationlink.Link, cand candidate, c Call, sealTo []byte) (cbor.Value, stationlink.Report, error) {
 	left, err := remaining(ctx)
 	if err != nil {
 		return cbor.Value{}, stationlink.Report{}, err
 	}
+	key := resolvedKey{c.Realm, c.Procedure, cand.Node}
 	call := stationlink.Call{Realm: c.Realm, Procedure: c.Procedure, Target: cand.Node,
 		Payload: c.Payload, Timeout: left, Token: c.Token, Proofs: c.Proofs, SealTo: sealTo, Clear: sealTo == nil}
+	if sealTo == nil {
+		call.Adopted = func(kemKey []byte) {
+			p.learnKEMKey(key, cand, kemKey)
+			// The report names the key the request that produced the result
+			// was sealed to: the adopted one, never the clear it started as.
+			call.SealTo = kemKey
+		}
+	}
 	result, err := link.Call(ctx, call)
 	var refused *stationlink.SealedRefusedError
 	if !errors.As(err, &refused) {
