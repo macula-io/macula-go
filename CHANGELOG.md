@@ -19,24 +19,24 @@ exists.
   STREAM_ERROR carrying an unknown extension inside its tbs, non-critical
   (ignored, and counted `wire_ext_ignored` by its name) and critical (refused
   `extension_unsupported`), in both profiles. Each case is put to the reader of
-  the frame that carries it — `VerifyRequest`, `VerifyReply`,
-  `VerifyProviderStream` — as macula's own runner does, and `record`'s runner
+  the frame that carries it (`VerifyRequest`, `VerifyReply`,
+  `VerifyProviderStream`), as macula's own runner does, and `record`'s runner
   skips the class, which no record case reads. The library needed no change:
   0.29.0-rc.1 already read `ext` at all five signed tables.
 - **`seal.kem_key`, the key a keyed provider's refusal carries, is held to
   macula's own refusals (macula#135, release A0).**
-  `seal/testdata/e2e_seal_v1_refusals.json`, vendored per profile by
+  `frame/testdata/e2e_seal_v1_refusals.json`, vendored per profile by
   `scripts/interop/copy_e2e_seal_vectors.sh`, holds a keyed provider's refusal
   of a clear CALL and of a clear STREAM_OPEN beside the requests they answer.
   For each, the refusal verifies against the request it names, and the carried
-  key — the provider's, as carried, 1568 bytes in `pq_pure` and 1665 in
-  `pq_hybrid` — is the **value** of the non-critical extension `seal.kem_key`
+  key (the provider's, as carried, 1568 bytes in `pq_pure` and 1665 in
+  `pq_hybrid`) is the **value** of the non-critical extension `seal.kem_key`
   in the signed `tbs`, which `frame.KEMKeyFromExt` reads and which is not
   counted among the ignored extensions. A refusal whose extension is stripped
   or altered fails as tampered, never as a clear refusal.
 - The sealed-interop harness runs release A0's four programs: an Erlang
   provider built to name its key in a refusal (`serve_a0`) and a Go caller that
-  sends every request clear and has to recover from the refusal alone — a call,
+  sends every request clear and has to recover from the refusal alone: a call,
   a server-stream open, a client stream that wrote and closed its side before
   the refusal, and a bidi stream. `gosealed a0` also checks that the key the
   refusal carried is the one the provider printed. It runs on macula 17.2.0,

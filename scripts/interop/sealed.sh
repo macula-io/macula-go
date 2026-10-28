@@ -28,8 +28,23 @@ case "$peer" in go|ts) ;; *) echo "sealed.sh: SEALED_PEER is go or ts, not $peer
 : "${MACULA_BUILD:?a compiled macula at 15.0.0-rc.1 or later (wire 1.0)}"
 work="$(mktemp -d)"
 erl_name="macula-go-sealed-$$"
-cleanup() {
+# stop_erl stops the Erlang serve this script started: the container by name,
+# and in MACULA_LOCAL_ERL mode the escript's own background process, which
+# podman knows nothing about. Without this the local escripts outlive the run
+# until their 180 s hold runs out.
+stop_erl() {
   podman rm -f "$erl_name" > /dev/null 2>&1 || true
+  if [ -n "${MACULA_LOCAL_ERL:-}" ] && [ -n "${erl_pid:-}" ]; then
+    # $! is the subshell the backgrounded function call runs in, not the
+    # escript it waits on, so the escript is killed as that subshell's child.
+    pkill -P "$erl_pid" 2> /dev/null || true
+    kill "$erl_pid" 2> /dev/null || true
+  fi
+  erl_pid=""
+}
+
+cleanup() {
+  stop_erl
   [ -n "${go_pid:-}" ] && kill "$go_pid" 2> /dev/null || true
   exec 3>&- || true
   rm -rf "$work"
@@ -90,10 +105,11 @@ name="$( [ "$peer" = ts ] && echo TypeScript || echo Go )"
 
 echo "== $profile: an Erlang provider, a $name caller"
 erl serve 180 > "$work/erlang.out" 2>&1 &
+erl_pid=$!
 first_line "$work/erlang.out" '^serving' > /dev/null
 provider="$(first_line "$work/erlang.out" '^node ' | awk '{print $2}')"
 peer_call "$provider"
-podman rm -f "$erl_name" > /dev/null 2>&1 || true
+stop_erl
 
 # Release A0 (DESIGN_E2E_SEALED_BY_DEFAULT.md section 8.1): a provider built to
 # name its key in a refusal, and a caller that only ever learns it there. The
@@ -103,12 +119,13 @@ podman rm -f "$erl_name" > /dev/null 2>&1 || true
 if [ "$peer" = go ]; then
   echo "== $profile: an Erlang provider naming its key (release A0), a Go caller"
   erl serve_a0 180 > "$work/erlang-a0.out" 2>&1 &
+  erl_pid=$!
   first_line "$work/erlang-a0.out" '^serving' > /dev/null
   provider="$(first_line "$work/erlang-a0.out" '^node ' | awk '{print $2}')"
   carried="$(first_line "$work/erlang-a0.out" '^kem ' | awk '{print $2}')"
   "$work/gosealed" -station "$host:$port@$station" -profile "$profile" -realm "$realm" \
     -provider "$provider" -kem "$carried" a0
-  podman rm -f "$erl_name" > /dev/null 2>&1 || true
+  stop_erl
 fi
 
 echo "== $profile: a $name provider, an Erlang caller"

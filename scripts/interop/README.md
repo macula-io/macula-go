@@ -185,7 +185,7 @@ hex as a rebar3 dependency, `MACULA_OFF_REFUSED=1`): both profiles, both ways,
 `sealed call` and `sealed stream` answered, `clear call` refused
 `sealed_required`, `off by direct dial` refused `off_needs_explicit_target`, and
 the four release A0 programs answered after the caller resealed to the key the
-refusal carried — exit 0, in CI (run 40616966173). macula v13.0.0, before
+refusal carried; exit 0, in CI (run 40616966173). macula v13.0.0, before
 13.0.1's refusal, seals `off by direct dial` and exits 1 under
 `MACULA_OFF_REFUSED=1`, as it must.
 
@@ -198,8 +198,8 @@ release carries the log as `sealed-interop-<tag>.log`. Move the workflow's
 ### Release A0: a refusal that names its key
 
 With the Go caller, each profile also runs release A0's four programs (`DESIGN_E2E_SEALED_BY_DEFAULT.md` §8.1). `erlang_sealed.escript
-serve_a0` advertises four procedures in its own namespace — a call, a server
-stream, a client stream and a bidi stream — with
+serve_a0` advertises four procedures in its own namespace (a call, a server
+stream, a client stream and a bidi stream) with
 `#{confidential => required, refusal_names_key => true}`, so every clear
 request is refused `sealed_required` with the provider's KEM key in the
 refusal's `seal.kem_key` extension, and prints that key as `kem <hex>`.
