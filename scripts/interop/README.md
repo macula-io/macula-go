@@ -194,10 +194,9 @@ above, compiled in the same image, both profiles, `MACULA_OFF_REFUSED=1`. The ta
 release carries the log as `sealed-interop-<tag>.log`. Move the workflow's
 `MACULA_VERSION` together with the version recorded here.
 
-### Release A0: a refusal that names its key (`MACULA_A0=1`)
+### Release A0: a refusal that names its key
 
-With `MACULA_A0=1` and the Go caller, each profile also runs release A0's four
-programs (`DESIGN_E2E_SEALED_BY_DEFAULT.md` §8.1). `erlang_sealed.escript
+With the Go caller, each profile also runs release A0's four programs (`DESIGN_E2E_SEALED_BY_DEFAULT.md` §8.1). `erlang_sealed.escript
 serve_a0` advertises four procedures in its own namespace — a call, a server
 stream, a client stream and a bidi stream — with
 `#{confidential => required, refusal_names_key => true}`, so every clear
@@ -212,9 +211,9 @@ the provider answers only after the caller's first chunk, completes. Each
 program also checks that the key the refusal carried is the one the serve
 printed.
 
-It is gated while the workflow pins `MACULA_VERSION` below the release that
-knows `refusal_names_key`; the gate goes when the pin does. Only the Go caller
-runs it: @macula-io/ts has no API for a clear request.
+It needs the release that knows `refusal_names_key`, macula 17.2.0 or later,
+which is what the workflow's `MACULA_VERSION` pins. Only the Go caller runs it:
+@macula-io/ts has no API for a clear request.
 
 Against macula `ce067c47` (macula#145's fix) all four pass, in both profiles,
 three programs and the client stream alike. Before that fix, on `f1aea93b`, the
@@ -228,8 +227,7 @@ Erlang caller against the same provider got the reply.
 `MACULA_BUILD` instead of inside macula's CI image, so no container is needed:
 
 ```sh
-MACULA_LOCAL_ERL=1 MACULA_A0=1 MACULA_BUILD=<macula, compiled> \
-  scripts/interop/sealed.sh pq_pure
+MACULA_LOCAL_ERL=1 MACULA_BUILD=<macula, compiled> scripts/interop/sealed.sh pq_pure
 ```
 
 CI always takes the image path, so its log and its toolchain stay pinned.

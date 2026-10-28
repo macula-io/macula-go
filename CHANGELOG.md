@@ -39,9 +39,9 @@ exists.
   sends every request clear and has to recover from the refusal alone — a call,
   a server-stream open, a client stream that wrote and closed its side before
   the refusal, and a bidi stream. `gosealed a0` also checks that the key the
-  refusal carried is the one the provider printed. The run is gated on
-  `MACULA_A0` until macula 17.2.0 is the pinned version, and `MACULA_LOCAL_ERL=1`
-  runs the escript against a macula built on this machine instead of the image.
+  refusal carried is the one the provider printed. It runs on macula 17.2.0,
+  which the interop workflow pins, and `MACULA_LOCAL_ERL=1` runs the escript
+  against a macula built on this machine instead of the image.
   Against macula `ce067c47` (macula#145's fix) all four pass in both profiles;
   on `f1aea93b`, before that fix, the client stream did not, and not in this
   library: macula ended the session on the caller's QUIC half-close before the

@@ -98,9 +98,9 @@ podman rm -f "$erl_name" > /dev/null 2>&1 || true
 # Release A0 (DESIGN_E2E_SEALED_BY_DEFAULT.md section 8.1): a provider built to
 # name its key in a refusal, and a caller that only ever learns it there. The
 # TypeScript caller has no API for a clear request, so this runs for go alone.
-# It needs a macula that knows refusal_names_key (17.2.0 on), so it is gated
-# until MACULA_VERSION moves there; the gate goes when the pin does.
-if [ "$peer" = go ] && [ -n "${MACULA_A0:-}" ]; then
+# It needs macula 17.2.0 or later, the release that knows refusal_names_key;
+# MACULA_VERSION pins that, so the run is no longer behind a flag.
+if [ "$peer" = go ]; then
   echo "== $profile: an Erlang provider naming its key (release A0), a Go caller"
   erl serve_a0 180 > "$work/erlang-a0.out" 2>&1 &
   first_line "$work/erlang-a0.out" '^serving' > /dev/null
