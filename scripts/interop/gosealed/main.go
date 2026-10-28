@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -40,14 +41,15 @@ func main() {
 	realmHex := flag.String("realm", "", "realm id, hex")
 	hold := flag.Duration("hold", time.Minute, "how long serve holds")
 	provider := flag.String("provider", "", "call: the provider's node_id, hex")
+	carried := flag.String("kem", "", "a0: the provider's KEM key as its serve printed it, hex")
 	flag.Parse()
-	if err := run(flag.Arg(0), *station, *profileName, *realmHex, *hold, *provider); err != nil {
+	if err := run(flag.Arg(0), *station, *profileName, *realmHex, *hold, *provider, *carried); err != nil {
 		fmt.Fprintln(os.Stderr, "gosealed:", err)
 		os.Exit(1)
 	}
 }
 
-func run(mode, station, profileName, realmHex string, hold time.Duration, provider string) error {
+func run(mode, station, profileName, realmHex string, hold time.Duration, provider, carriedHex string) error {
 	p, err := profile.Parse(profileName)
 	if err != nil {
 		return err
@@ -82,8 +84,18 @@ func run(mode, station, profileName, realmHex string, hold time.Duration, provid
 			return err
 		}
 		return call(ctx, node, seed, p, realm, target)
+	case "a0":
+		target, err := id32(provider)
+		if err != nil {
+			return err
+		}
+		carried, err := hex.DecodeString(carriedHex)
+		if err != nil || len(carried) == 0 {
+			return fmt.Errorf("-kem is the provider's carried KEM key in hex")
+		}
+		return a0(ctx, seed, p, realm, target, carried)
 	}
-	return fmt.Errorf("mode %q is serve or call", mode)
+	return fmt.Errorf("mode %q is serve, call or a0", mode)
 }
 
 func own(node [32]byte, name string) string { return "~" + hex.EncodeToString(node[:]) + "/" + name }
@@ -221,4 +233,141 @@ func parseSeed(text string) (pool.Seed, error) {
 		return pool.Seed{}, fmt.Errorf("-station is host:port@<node_id hex>, not %q", text)
 	}
 	return pool.Seed{Host: host, Port: uint16(port), NodeID: [32]byte(raw)}, nil
+}
+
+// a0 runs the release A0 programs of DESIGN_E2E_SEALED_BY_DEFAULT.md section
+// 8.1 against an Erlang provider built to name its key in a refusal (the
+// escript's serve_a0): every request goes out clear, as a caller that does not
+// know the provider's key does, and the caller has to recover from the refusal
+// alone. One program per shape:
+//
+//  1. a clear call is refused sealed_required carrying the key, and the caller
+//     seals to it and gets the answer;
+//  2. a clear open of a server stream, the same;
+//  3. a clear client stream that wrote and closed its side before the refusal
+//     has its chunks and its end replayed, in order, under the sealed reopen,
+//     and gets the reply that counts them;
+//  4. a clear bidi stream a provider answers only after the caller's first
+//     chunk, the same.
+//
+// Every program also checks the key the refusal carried is the provider's own,
+// the one its serve printed.
+func a0(ctx context.Context, seed pool.Seed, p profile.Profile, realm, provider [32]byte, carried []byte) error {
+	link, err := explicitLink(ctx, seed, p)
+	if err != nil {
+		return err
+	}
+	defer link.Close("done")
+	for _, program := range []struct {
+		name string
+		run  func(context.Context, *stationlink.Link, [32]byte, [32]byte, []byte) error
+	}{
+		{"a clear call", a0Call},
+		{"a clear open", a0Open},
+		{"a clear client stream that wrote first", a0ClientStream},
+		{"a clear bidi stream", a0BidiStream},
+	} {
+		if err := program.run(ctx, link, realm, provider, carried); err != nil {
+			return fmt.Errorf("a0 %s: %w", program.name, err)
+		}
+	}
+	return nil
+}
+
+// a0Adopted is the key a refusal taught this caller, checked against the
+// provider's own.
+func a0Adopted(carried, adopted []byte) error {
+	if len(adopted) == 0 {
+		return errors.New("the refusal carried no key")
+	}
+	if !bytes.Equal(adopted, carried) {
+		return fmt.Errorf("the refusal carried %d bytes of another key", len(adopted))
+	}
+	return nil
+}
+
+// a0Call is program 1: a clear call, resealed to the key its refusal carries.
+func a0Call(ctx context.Context, link *stationlink.Link, realm, provider [32]byte, carried []byte) error {
+	var adopted []byte
+	result, err := link.Call(ctx, stationlink.Call{Realm: realm, Procedure: own(provider, "vault"), Target: provider,
+		Payload: cbor.Map(nil), Timeout: 10 * time.Second, Clear: true,
+		Adopted: func(key []byte) { adopted = key }})
+	text, _ := result.AsText()
+	fmt.Printf("a0 clear call: %q, key %d bytes, %v\n", text, len(adopted), err)
+	if err != nil || text != "kept by erlang" {
+		return errors.New("the clear call did not come back sealed")
+	}
+	return a0Adopted(carried, adopted)
+}
+
+// a0Open is program 2: a clear open of a server stream, the same.
+func a0Open(ctx context.Context, link *stationlink.Link, realm, provider [32]byte, carried []byte) error {
+	var adopted []byte
+	stream, err := link.OpenStream(ctx, stationlink.StreamCall{Realm: realm, Procedure: own(provider, "watch"),
+		Target: provider, Mode: frame.ServerStream, Payload: cbor.Map(nil), Clear: true,
+		Adopted: func(key []byte) { adopted = key }})
+	if err != nil {
+		return fmt.Errorf("the clear open: %w", err)
+	}
+	chunk, rerr := stream.Recv(ctx)
+	body, _ := chunk.Body.AsBytes()
+	reply, perr := stream.Recv(ctx)
+	replied, _ := reply.Payload.AsText()
+	fmt.Printf("a0 clear open: chunk %q (%v), reply %q (%v), key %d bytes\n", body, rerr, replied, perr, len(adopted))
+	if rerr != nil || perr != nil || string(body) != "chunk from erlang" || replied != "streamed by erlang" {
+		return errors.New("the clear open did not come back sealed")
+	}
+	return a0Adopted(carried, adopted)
+}
+
+// a0ClientStream is program 3: a client stream that wrote its chunks and closed
+// its side before the refusal arrived, so the provider's reply counts what the
+// reopen replayed, in order.
+func a0ClientStream(ctx context.Context, link *stationlink.Link, realm, provider [32]byte, carried []byte) error {
+	var adopted []byte
+	stream, err := link.OpenStream(ctx, stationlink.StreamCall{Realm: realm, Procedure: own(provider, "count"),
+		Target: provider, Mode: frame.ClientStream, Payload: cbor.Map(nil), Clear: true,
+		Adopted: func(key []byte) { adopted = key }})
+	if err != nil {
+		return fmt.Errorf("the clear client stream: %w", err)
+	}
+	for _, chunk := range []string{"c1", "c2", "c3"} {
+		if err := stream.Send([]byte(chunk)); err != nil {
+			return fmt.Errorf("the chunk %s: %w", chunk, err)
+		}
+	}
+	if err := stream.CloseSend(); err != nil {
+		return fmt.Errorf("closing the caller's side: %w", err)
+	}
+	event, err := stream.Recv(ctx)
+	replayed, _ := event.Payload.AsText()
+	fmt.Printf("a0 clear client stream: replayed %q, %v, key %d bytes\n", replayed, err, len(adopted))
+	if err != nil || replayed != "c1,c2,c3" {
+		return errors.New("the copy was not replayed in order")
+	}
+	return a0Adopted(carried, adopted)
+}
+
+// a0BidiStream is program 4: a bidi stream a provider answers only after the
+// caller's first chunk, which reaches it only through the sealed reopen.
+func a0BidiStream(ctx context.Context, link *stationlink.Link, realm, provider [32]byte, carried []byte) error {
+	var adopted []byte
+	stream, err := link.OpenStream(ctx, stationlink.StreamCall{Realm: realm, Procedure: own(provider, "first"),
+		Target: provider, Mode: frame.Bidi, Payload: cbor.Map(nil), Clear: true,
+		Adopted: func(key []byte) { adopted = key }})
+	if err != nil {
+		return fmt.Errorf("the clear bidi stream: %w", err)
+	}
+	if err := stream.Send([]byte("hello")); err != nil {
+		return fmt.Errorf("the caller's first chunk: %w", err)
+	}
+	event, rerr := stream.Recv(ctx)
+	body, _ := event.Body.AsBytes()
+	reply, perr := stream.Recv(ctx)
+	replied, _ := reply.Payload.AsText()
+	fmt.Printf("a0 clear bidi stream: chunk %q (%v), reply %q (%v), key %d bytes\n", body, rerr, replied, perr, len(adopted))
+	if rerr != nil || perr != nil || string(body) != "echo hello" || replied != "echoed" {
+		return errors.New("the bidi stream did not complete")
+	}
+	return a0Adopted(carried, adopted)
 }

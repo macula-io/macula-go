@@ -56,6 +56,16 @@ first_line() {
 info="$(first_line "$work/stations.out" '^\{')"
 read -r host port station realm < <(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); s=d["stations"][0]; print(s["host"], s["port"], s["node_id"], d["realm_id"])' "$info")
 erl() {
+  if [ -n "${MACULA_LOCAL_ERL:-}" ]; then
+    # The same escript on this machine's Erlang, against a macula compiled
+    # here: what a crew run uses, where no container is needed. CI always
+    # takes the image path below, so its log and its toolchain stay pinned.
+    MACULA_OFF_REFUSED="${MACULA_OFF_REFUSED:-}" MACULA_SEALED_PEER="$peer" \
+      MACULA_SEAL_REPORT="${MACULA_SEAL_REPORT:-}" \
+      escript "$root/scripts/interop/erlang_sealed.escript" "$MACULA_BUILD/_build/default/lib/macula" \
+      "$host" "$port" "$station" "$realm" "$profile" "$@"
+    return
+  fi
   podman run --rm --name "$erl_name" --network host ${PODMAN_CPUS:+--cpus "$PODMAN_CPUS"} \
     -e MACULA_OFF_REFUSED="${MACULA_OFF_REFUSED:-}" -e MACULA_SEALED_PEER="$peer" \
     -e MACULA_SEAL_REPORT="${MACULA_SEAL_REPORT:-}" \
@@ -84,6 +94,22 @@ first_line "$work/erlang.out" '^serving' > /dev/null
 provider="$(first_line "$work/erlang.out" '^node ' | awk '{print $2}')"
 peer_call "$provider"
 podman rm -f "$erl_name" > /dev/null 2>&1 || true
+
+# Release A0 (DESIGN_E2E_SEALED_BY_DEFAULT.md section 8.1): a provider built to
+# name its key in a refusal, and a caller that only ever learns it there. The
+# TypeScript caller has no API for a clear request, so this runs for go alone.
+# It needs a macula that knows refusal_names_key (17.2.0 on), so it is gated
+# until MACULA_VERSION moves there; the gate goes when the pin does.
+if [ "$peer" = go ] && [ -n "${MACULA_A0:-}" ]; then
+  echo "== $profile: an Erlang provider naming its key (release A0), a Go caller"
+  erl serve_a0 180 > "$work/erlang-a0.out" 2>&1 &
+  first_line "$work/erlang-a0.out" '^serving' > /dev/null
+  provider="$(first_line "$work/erlang-a0.out" '^node ' | awk '{print $2}')"
+  carried="$(first_line "$work/erlang-a0.out" '^kem ' | awk '{print $2}')"
+  "$work/gosealed" -station "$host:$port@$station" -profile "$profile" -realm "$realm" \
+    -provider "$provider" -kem "$carried" a0
+  podman rm -f "$erl_name" > /dev/null 2>&1 || true
+fi
 
 echo "== $profile: a $name provider, an Erlang caller"
 peer_serve 180 > "$work/go.out" 2>&1 &

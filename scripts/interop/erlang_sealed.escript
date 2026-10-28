@@ -62,6 +62,33 @@ run("serve", {Pool, _Seed}, Realm, Profile, Self, [Hold]) ->
     io:format("serving~n"),
     timer:sleep(list_to_integer(Hold) * 1000),
     0;
+run("serve_a0", {Pool, _Seed}, Realm, _Profile, Self, [Hold]) ->
+    %% Release A0 (DESIGN_E2E_SEALED_BY_DEFAULT.md section 8.1): a keyed
+    %% provider whose sealed_required names the key it holds now, so a caller
+    %% that does not know it seals again to it instead of being turned away.
+    %% `refusal_names_key' is the whole switch; `required' already refuses
+    %% every clear request. It is the test's, no service sets it yet.
+    Required = #{confidential => required, refusal_names_key => true},
+    ok = macula:advertise(Pool, Realm, own(Self, <<"vault">>),
+                          fun(_Args) -> {ok, {text, <<"kept by erlang">>}} end, Required),
+    ok = macula:advertise_stream(Pool, Realm, own(Self, <<"watch">>), server_stream,
+                                 fun(Stream, _Args) ->
+                                         ok = macula_stream:send(Stream, <<"chunk from erlang">>),
+                                         ok = macula_stream:set_reply(Stream, {text, <<"streamed by erlang">>}),
+                                         macula_stream:close(Stream)
+                                 end, Required),
+    %% Answers only after the caller's end: what a caller that wrote and closed
+    %% before the refusal replays, in order, is what this counts.
+    ok = macula:advertise_stream(Pool, Realm, own(Self, <<"count">>), client_stream,
+                                 fun(Stream, _Args) -> counted(Stream, []) end, Required),
+    %% Waits for the caller's first chunk before anything goes back: a bidi
+    %% stream that only completes if the caller's writes reached it.
+    ok = macula:advertise_stream(Pool, Realm, own(Self, <<"first">>), bidi,
+                                 fun(Stream, _Args) -> first_chunk(Stream) end, Required),
+    io:format("kem ~s~n", [named_key(Self)]),
+    io:format("serving~n"),
+    timer:sleep(list_to_integer(Hold) * 1000),
+    0;
 run("call", {Pool, Seed}, Realm, _Profile, _Self, [Provider]) ->
     Node = binary:decode_hex(list_to_binary(Provider)),
     Vault = own(Node, <<"vault">>),
@@ -129,6 +156,40 @@ verdict(Peer, {ok, {text, Kept}}, {{chunk, Chunk}, {ok, {text, Streamed}}},
     0;
 verdict(_Peer, _Called, _Streamed, _Clear) ->
     1.
+
+%% The KEM key this node holds now, as a refusal names it, hex; "none" when it
+%% holds one none.
+named_key(Id) ->
+    case macula_kem_keyring:current(Id) of
+        {ok, #{key := Carried}} -> binary:encode_hex(Carried, lowercase);
+        error -> <<"none">>
+    end.
+
+%% A client stream's chunks, from its open to the caller's end, as the reply
+%% value: the order the provider read them in.
+counted(Stream, Seen) ->
+    case macula_stream:recv(Stream, 10_000) of
+        {chunk, Chunk} -> counted(Stream, [Chunk | Seen]);
+        eof ->
+            ok = macula_stream:set_reply(Stream, {text, list_to_binary(lists:join(<<",">>, lists:reverse(Seen)))}),
+            macula_stream:close(Stream);
+        {error, Reason} ->
+            macula_stream:set_error(Stream, Reason),
+            ok
+    end.
+
+%% A bidi stream that answers first_chunk's caller only once its first chunk
+%% has arrived.
+first_chunk(Stream) ->
+    case macula_stream:recv(Stream, 10_000) of
+        {chunk, Chunk} ->
+            ok = macula_stream:send(Stream, <<"echo ", Chunk/binary>>),
+            ok = macula_stream:set_reply(Stream, {text, <<"echoed">>}),
+            macula_stream:close(Stream);
+        Other ->
+            macula_stream:set_error(Stream, {no, first_chunk, Other}),
+            ok
+    end.
 
 off_verdict("1", {error, {confidentiality, off_needs_explicit_target}}, Verdict) -> Verdict;
 off_verdict("1", _Sealed, _Verdict) -> 1;
