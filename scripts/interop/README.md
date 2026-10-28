@@ -216,10 +216,11 @@ It is gated while the workflow pins `MACULA_VERSION` below the release that
 knows `refusal_names_key`; the gate goes when the pin does. Only the Go caller
 runs it: @macula-io/ts has no API for a clear request.
 
-Against macula `f1aea93b` (three of the four pass), the client-stream program
-does not, and the defect is macula's: the caller's QUIC half-close ends the
-session before the provider's reply can go out (macula#145). An Erlang caller
-against the same provider gets the reply.
+Against macula `ce067c47` (macula#145's fix) all four pass, in both profiles,
+three programs and the client stream alike. Before that fix, on `f1aea93b`, the
+client-stream program failed and the defect was macula's: the caller's QUIC
+half-close ended the session before the provider's reply could go out, where an
+Erlang caller against the same provider got the reply.
 
 ### Running the Erlang side on this machine (`MACULA_LOCAL_ERL=1`)
 

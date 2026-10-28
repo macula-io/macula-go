@@ -42,9 +42,10 @@ exists.
   refusal carried is the one the provider printed. The run is gated on
   `MACULA_A0` until macula 17.2.0 is the pinned version, and `MACULA_LOCAL_ERL=1`
   runs the escript against a macula built on this machine instead of the image.
-  Against macula `f1aea93b`, three of the four pass; the client stream does not,
-  and not in this library: macula ends the session on the caller's QUIC
-  half-close before the provider's reply can go out (macula#145).
+  Against macula `ce067c47` (macula#145's fix) all four pass in both profiles;
+  on `f1aea93b`, before that fix, the client stream did not, and not in this
+  library: macula ended the session on the caller's QUIC half-close before the
+  provider's reply could go out.
 
 ## [0.29.0-rc.1] - 2026-10-27
 
