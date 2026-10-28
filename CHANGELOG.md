@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The wire 1.0 vectors are re-vendored from macula at release A0, and the
+sealed-interop harness gains A0's four programs. No wire change and no library
+behaviour change: every case below is held by a test against code that already
+exists.
+
+### Added
+
+- **The vendored wire 1.0 vectors are macula's at release A0 (macula#136).**
+  `verify.json` gains sixteen `frame.*` cases: a signed CALL, RESULT, ERROR or
+  STREAM_ERROR carrying an unknown extension inside its tbs, non-critical
+  (ignored, and counted `wire_ext_ignored` by its name) and critical (refused
+  `extension_unsupported`), in both profiles. Each case is put to the reader of
+  the frame that carries it — `VerifyRequest`, `VerifyReply`,
+  `VerifyProviderStream` — as macula's own runner does, and `record`'s runner
+  skips the class, which no record case reads. The library needed no change:
+  0.29.0-rc.1 already read `ext` at all five signed tables.
+- **`seal.kem_key`, the key a keyed provider's refusal carries, is held to
+  macula's own refusals (macula#135, release A0).**
+  `seal/testdata/e2e_seal_v1_refusals.json`, vendored per profile by
+  `scripts/interop/copy_e2e_seal_vectors.sh`, holds a keyed provider's refusal
+  of a clear CALL and of a clear STREAM_OPEN beside the requests they answer.
+  For each, the refusal verifies against the request it names, and the carried
+  key — the provider's, as carried, 1568 bytes in `pq_pure` and 1665 in
+  `pq_hybrid` — is the **value** of the non-critical extension `seal.kem_key`
+  in the signed `tbs`, which `frame.KEMKeyFromExt` reads and which is not
+  counted among the ignored extensions. A refusal whose extension is stripped
+  or altered fails as tampered, never as a clear refusal.
+- The sealed-interop harness runs release A0's four programs: an Erlang
+  provider built to name its key in a refusal (`serve_a0`) and a Go caller that
+  sends every request clear and has to recover from the refusal alone — a call,
+  a server-stream open, a client stream that wrote and closed its side before
+  the refusal, and a bidi stream. `gosealed a0` also checks that the key the
+  refusal carried is the one the provider printed. The run is gated on
+  `MACULA_A0` until macula 17.2.0 is the pinned version, and `MACULA_LOCAL_ERL=1`
+  runs the escript against a macula built on this machine instead of the image.
+  Against macula `f1aea93b`, three of the four pass; the client stream does not,
+  and not in this library: macula ends the session on the caller's QUIC
+  half-close before the provider's reply can go out (macula#145).
+
 ## [0.29.0-rc.1] - 2026-10-27
 
 ### Added

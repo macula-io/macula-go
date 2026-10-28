@@ -194,6 +194,45 @@ above, compiled in the same image, both profiles, `MACULA_OFF_REFUSED=1`. The ta
 release carries the log as `sealed-interop-<tag>.log`. Move the workflow's
 `MACULA_VERSION` together with the version recorded here.
 
+### Release A0: a refusal that names its key (`MACULA_A0=1`)
+
+With `MACULA_A0=1` and the Go caller, each profile also runs release A0's four
+programs (`DESIGN_E2E_SEALED_BY_DEFAULT.md` §8.1). `erlang_sealed.escript
+serve_a0` advertises four procedures in its own namespace — a call, a server
+stream, a client stream and a bidi stream — with
+`#{confidential => required, refusal_names_key => true}`, so every clear
+request is refused `sealed_required` with the provider's KEM key in the
+refusal's `seal.kem_key` extension, and prints that key as `kem <hex>`.
+`gosealed a0` then sends every request clear, as a caller that does not know
+the key, and has to recover from the refusal alone: the call and the
+server-stream open seal to the carried key and get their answers; the client
+stream wrote and closed its side before the refusal and must have its chunks
+and its end replayed in order under the sealed reopen; the bidi stream, which
+the provider answers only after the caller's first chunk, completes. Each
+program also checks that the key the refusal carried is the one the serve
+printed.
+
+It is gated while the workflow pins `MACULA_VERSION` below the release that
+knows `refusal_names_key`; the gate goes when the pin does. Only the Go caller
+runs it: @macula-io/ts has no API for a clear request.
+
+Against macula `f1aea93b` (three of the four pass), the client-stream program
+does not, and the defect is macula's: the caller's QUIC half-close ends the
+session before the provider's reply can go out (macula#145). An Erlang caller
+against the same provider gets the reply.
+
+### Running the Erlang side on this machine (`MACULA_LOCAL_ERL=1`)
+
+`MACULA_LOCAL_ERL=1` runs the escript under the host's own Erlang against
+`MACULA_BUILD` instead of inside macula's CI image, so no container is needed:
+
+```sh
+MACULA_LOCAL_ERL=1 MACULA_A0=1 MACULA_BUILD=<macula, compiled> \
+  scripts/interop/sealed.sh pq_pure
+```
+
+CI always takes the image path, so its log and its toolchain stay pinned.
+
 ### The TypeScript leg (`SEALED_PEER=ts`)
 
 `SEALED_PEER=ts` runs the same two directions with @macula-io/ts in place of
