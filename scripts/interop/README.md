@@ -180,11 +180,12 @@ target), where macula-go's pool refuses it; macula 13.0.1 refuses it too, as
 `{error, {confidentiality, off_needs_explicit_target}}`. With
 `MACULA_OFF_REFUSED=1` the script requires exactly that refusal.
 
-Last run (2026-10-17, `macula-ci-otp@sha256:aff1d39b...`, macula 15.6.0 from
+Last run (2026-10-28, `macula-ci-otp@sha256:aff1d39b...`, macula 17.2.0 from
 hex as a rebar3 dependency, `MACULA_OFF_REFUSED=1`): both profiles, both ways,
 `sealed call` and `sealed stream` answered, `clear call` refused
-`sealed_required`, `off by direct dial` refused `off_needs_explicit_target`,
-exit 0; in CI too (run 38990591182 at v0.27.0-rc.7). macula v13.0.0, before
+`sealed_required`, `off by direct dial` refused `off_needs_explicit_target`, and
+the four release A0 programs answered after the caller resealed to the key the
+refusal carried — exit 0, in CI (run 40616966173). macula v13.0.0, before
 13.0.1's refusal, seals `off by direct dial` and exits 1 under
 `MACULA_OFF_REFUSED=1`, as it must.
 
