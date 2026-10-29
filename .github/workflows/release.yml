@@ -37,8 +37,28 @@ jobs:
       require-tag: true
       versions: none
 
+  # The tag names a version, and the record of that version must be in the
+  # CHANGELOG: a release with no section for its own number leaves a reader
+  # unable to find what changed, which is what happened at v0.29.0
+  # (macula-io/macula-go#58). A heading `## [<version>]`, with or without the
+  # date, satisfies it; nothing else does.
+  changelog:
+    name: The tag names a CHANGELOG section
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag names a CHANGELOG section
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          quoted="${version//./\\.}"
+          if ! grep -qE "^## \[${quoted}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [${version}]' section, so the release has no record of what changed"
+            exit 1
+          fi
+          echo "CHANGELOG.md has a section for ${version}"
+
   publish:
-    needs: [libmacula, sealed-interop, tests, release-guard]
+    needs: [libmacula, sealed-interop, tests, release-guard, changelog]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

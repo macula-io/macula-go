@@ -7,10 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The wire 1.0 vectors are re-vendored from macula at release A0, and the
-sealed-interop harness gains A0's four programs. No wire change and no library
-behaviour change: every case below is held by a test against code that already
-exists.
+## [0.29.0] - 2026-10-28
+
+The A0 release: the wire 1.0 vectors are re-vendored from macula at release A0,
+the sealed-interop harness gains A0's four programs, and a caller adopts the key
+a `sealed_required` refusal carries. No wire change, but one library behaviour
+change: the code is 0.29.0-rc.1's plus the entries below.
+
+### Changed
+
+- **A caller adopts the KEM key a `sealed_required` refusal carries, and reseals
+  the same call (macula#135).** A call sent clear to a keyed provider that
+  refuses it `sealed_required` is sealed again to the key in the refusal's
+  signed tbs and sent once more, so it is answered instead of failing on a
+  stale keyless candidate, and the report names the key the request that
+  produced the result was sealed to (`pool/call.go`, `call.Adopted`;
+  `pool/adoption_e2e_test.go` holds the path end to end). An earlier draft of
+  this section said the release held no behaviour change, which was wrong:
+  `git grep -c Adopted` is empty at v0.28.0 and at v0.29.0-rc.1 and non-zero at
+  v0.29.0, so the behaviour arrived in this release (macula-io/macula-go#58).
 
 ### Added
 
