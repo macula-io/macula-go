@@ -17,15 +17,20 @@ change: the code is 0.29.0-rc.1's plus the entries below.
 ### Changed
 
 - **A caller adopts the KEM key a `sealed_required` refusal carries, and reseals
-  the same call (macula#135).** A call sent clear to a keyed provider that
-  refuses it `sealed_required` is sealed again to the key in the refusal's
-  signed tbs and sent once more, so it is answered instead of failing on a
-  stale keyless candidate, and the report names the key the request that
-  produced the result was sealed to (`pool/call.go`, `call.Adopted`;
-  `pool/adoption_e2e_test.go` holds the path end to end). An earlier draft of
-  this section said the release held no behaviour change, which was wrong:
-  `git grep -c Adopted` is empty at v0.28.0 and at v0.29.0-rc.1 and non-zero at
-  v0.29.0, so the behaviour arrived in this release (macula-io/macula-go#58).
+  what it sent (macula#135).** A call, or a stream open of any mode, sent clear
+  to a keyed provider that refuses it `sealed_required` is sealed again to the
+  key in the refusal's signed tbs and sent once more — a stream reopens, and a
+  client stream's chunks are replayed, in order — so it is answered instead of
+  failing on a stale keyless candidate, and the report names the key the
+  request that produced the result was sealed to (`call.Adopted`,
+  `stationlink/StreamCall.Adopted`; `pool/call.go:779-791` sets both for a
+  stream; `pool/adoption_e2e_test.go` and `stationlink/adoption_e2e_test.go`
+  hold the path end to end for a call, a server stream and a client stream, and
+  `gosealed a0` for a bidi one). The v0.29.0 tag shipped these entries under
+  [Unreleased], saying the release held no library behaviour change, which was
+  wrong: `git grep -c Adopted` is empty at v0.28.0 and at v0.29.0-rc.1 and
+  non-zero at v0.29.0, so the behaviour arrived in this release
+  (macula-io/macula-go#58).
 
 ### Added
 
