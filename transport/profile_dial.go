@@ -183,12 +183,18 @@ func keyOfScheme(key any, scheme tls.SignatureScheme) bool {
 	return isMLDSA && known && public.Parameters() == parameters
 }
 
-// quicConfig is the idle timeout and keepalive macula_quic defaults to (12.2.1:
-// idle_timeout_ms 300_000, keep_alive_interval_ms 15_000). quic-go's own
-// default is a 30 s idle timeout with no keepalive, which would close an idle
-// but healthy link, such as one carrying only a subscription, and let a NAT
-// mapping lapse with nothing to refresh it.
+// IdleTimeout and KeepAlivePeriod are the idle timeout and keepalive
+// macula_quic defaults to (12.2.1: idle_timeout_ms 300_000,
+// keep_alive_interval_ms 15_000), on a station's listener and on a client's
+// dial alike. quic-go's own default is a 30 s idle timeout with no keepalive,
+// which would close an idle but healthy link, such as one carrying only a
+// subscription, and let a NAT mapping lapse with nothing to refresh it.
+const (
+	IdleTimeout     = 300 * time.Second
+	KeepAlivePeriod = 15 * time.Second
+)
+
 var quicConfig = &quic.Config{
-	MaxIdleTimeout:  300 * time.Second,
-	KeepAlivePeriod: 15 * time.Second,
+	MaxIdleTimeout:  IdleTimeout,
+	KeepAlivePeriod: KeepAlivePeriod,
 }

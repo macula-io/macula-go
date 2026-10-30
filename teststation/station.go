@@ -12,7 +12,9 @@
 // It keeps a station's contract, not its implementation: records are verified
 // on put, a CALL for an unadvertised procedure gets the station's signed
 // relay error unknown_next_peer, and a renewed ADVERTISE replaces the one
-// before it. Tests can drop a client's connection to exercise reconnects.
+// before it. It listens with a station's idle timeout and keepalive, so a
+// link outlives a path outage here exactly as long as it would on the fleet.
+// Tests can drop a client's connection to exercise reconnects.
 package teststation
 
 import (
@@ -158,7 +160,7 @@ func Start(t T, p profile.Profile, name string) *Station {
 		CurvePreferences: maculaPQCGroups, MinVersion: tls.VersionTLS13, NextProtos: []string{transport.ALPN},
 		// No resumption on either side, as a macula 13.2.0 station issues no tickets.
 		SessionTicketsDisabled: true,
-	}, &quic.Config{})
+	}, &quic.Config{MaxIdleTimeout: transport.IdleTimeout, KeepAlivePeriod: transport.KeepAlivePeriod})
 	if err != nil {
 		t.Fatalf("teststation: listen: %v", err)
 	}

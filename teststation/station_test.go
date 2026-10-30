@@ -2,15 +2,24 @@ package teststation
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"net"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/qlog"
+	"github.com/quic-go/quic-go/qlogwriter"
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/transport"
 )
 
 func dial(t *testing.T, s *Station, name string) *stationlink.Link {
@@ -77,4 +86,82 @@ func TestDropEndsTheClientsLink(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Error("the link outlived its connection")
 	}
+}
+
+// The station keeps a live station's connection lifetime: it advertises a
+// 300 s idle timeout, not quic-go's 30 s, and sends a keepalive PING after
+// 15 s of quiet. The client here asks for an hour and sends no keepalive of
+// its own, so both values seen on the wire are the station's.
+func TestTheStationKeepsALiveStationsIdleTimeoutAndKeepalive(t *testing.T) {
+	s := Start(t, profile.PQPure, "idle")
+	seen := &transportSeen{received: time.Now(), pinged: make(chan struct{}, 1)}
+	conn, err := quic.DialAddr(t.Context(), net.JoinHostPort(s.Host, strconv.Itoa(int(s.Port))), &tls.Config{
+		InsecureSkipVerify: true, CurvePreferences: maculaPQCGroups, MinVersion: tls.VersionTLS13,
+		NextProtos: []string{transport.ALPN}, SessionTicketsDisabled: true,
+	}, &quic.Config{MaxIdleTimeout: time.Hour, Tracer: func(context.Context, bool, quic.ConnectionID) qlogwriter.Trace { return seen }})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.CloseWithError(0, "") }()
+	if idle := seen.idleTimeout(); idle != transport.IdleTimeout {
+		t.Errorf("the station advertises an idle timeout of %v, want %v", idle, transport.IdleTimeout)
+	}
+	select {
+	case <-seen.pinged:
+	case <-time.After(transport.KeepAlivePeriod + 5*time.Second):
+		t.Errorf("no keepalive PING from the station within %v", transport.KeepAlivePeriod+5*time.Second)
+	}
+}
+
+// transportSeen records, from a client's qlog, the idle timeout its peer
+// advertised and whether the peer has sent a keepalive: a PING after at least
+// a second short of KeepAlivePeriod with nothing received, which the
+// handshake's own PINGs never are.
+type transportSeen struct {
+	mu       sync.Mutex
+	idle     time.Duration
+	received time.Time
+	pinged   chan struct{}
+}
+
+func (s *transportSeen) AddProducer() qlogwriter.Recorder { return s }
+func (s *transportSeen) SupportsSchemas(string) bool      { return true }
+func (s *transportSeen) Close() error                     { return nil }
+
+func (s *transportSeen) RecordEvent(event qlogwriter.Event) {
+	switch e := event.(type) {
+	case qlog.ParametersSet:
+		if e.Initiator == qlog.InitiatorRemote {
+			s.mu.Lock()
+			s.idle = e.MaxIdleTimeout
+			s.mu.Unlock()
+		}
+	case qlog.PacketReceived:
+		s.mu.Lock()
+		quiet := time.Since(s.received)
+		s.received = time.Now()
+		s.mu.Unlock()
+		if quiet < transport.KeepAlivePeriod-time.Second || !carriesPing(e.Frames) {
+			return
+		}
+		select {
+		case s.pinged <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func carriesPing(frames []qlog.Frame) bool {
+	for _, f := range frames {
+		if _, ok := f.Frame.(*qlog.PingFrame); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *transportSeen) idleTimeout() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.idle
 }

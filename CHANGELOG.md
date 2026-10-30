@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The teststation keeps a live station's connection lifetime (#62).** It
+  listened with quic-go's default 30 s idle timeout and no keepalive, so every
+  client dialling it got 30 s, where the fleet's stations give 300 s with a
+  15 s keepalive: a test of a path outage failed on the teststation for a
+  reason production does not share (macula-rust#57). It now listens with
+  `transport.IdleTimeout` and `transport.KeepAlivePeriod`, the same two values
+  a client dials with, and a test reads both off the wire.
+
 ## [0.29.0] - 2026-10-28
 
 The A0 release: the wire 1.0 vectors are re-vendored from macula at release A0,
