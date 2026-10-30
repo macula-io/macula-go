@@ -326,11 +326,11 @@ carries the subscription (it heard every event, and the pool delivers each
 once), for an outage a link survives (QUIC delivers what was held up), at the
 first subscribe, and after `Unsubscribe` or `Close`. A station that refuses the
 subscription on the new link leaves it interrupted, with no Gap, until one
-accepts it; the refusal is counted in the link's `RegisterRefusals`. A notice
-is never dropped for a full subscription: the oldest delivery makes room, and
-an event that does is counted in `Dropped`. A reader so far behind that the
-Gap pushes out its own Interrupted still gets the Gap, whose `FromMs` is the
-Interrupted's.
+accepts it; the refusal is counted in the link's `RegisterRefusals`. The
+newest notice always gets in: a full subscription makes room by giving up its
+oldest delivery, an event (counted in `Dropped`) or, for a reader so far
+behind, the Interrupted the Gap then stands for, since the Gap's `FromMs` is
+the Interrupted's.
 
 A sealed group subscription (`SubscribeGroup`) delivers its notices in their
 place among its events: an Interrupted waits behind events still being opened

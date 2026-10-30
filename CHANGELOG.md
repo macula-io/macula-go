@@ -27,8 +27,10 @@ it, hence the minor.
   subscribed again and said nothing, so whatever the station sent to the
   ended link was silently gone (craft-collab#38). No notice comes while
   another link still carries the subscription, for an outage a link survives,
-  or at the first subscribe; a notice is never dropped for a full
-  subscription. The C ABI's subscription inbox gives every item a `"kind"`:
+  or at the first subscribe. The newest notice always gets in: a full
+  subscription makes room by giving up its oldest delivery (an event,
+  counted in `Dropped`, or, for a reader that far behind, the Interrupted the
+  Gap then stands for). The C ABI's subscription inbox gives every item a `"kind"`:
   `"event"`, `"interrupted"` (`from_ms`, `reason`) or `"gap"` (`from_ms`,
   `to_ms`, `reason`), and a full inbox drops its oldest item for a notice.
   This breaks every reader of `Events()`: take `d.Event` where `d.Kind` is

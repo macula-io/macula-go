@@ -266,8 +266,7 @@ func (s *Subscription) notify(d Delivery) {
 }
 
 // push hands the notice d to ch under s.mu; a full ch gives up its oldest
-// delivery to make room, so the reader never misses a notice for a full
-// subscription.
+// delivery to make room, so the newest notice always gets in.
 func (s *Subscription) push(ch chan Delivery, d Delivery) {
 	for {
 		select {
