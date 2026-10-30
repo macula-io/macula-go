@@ -314,3 +314,34 @@ func TestClosingThePoolDeliversNoNotice(t *testing.T) {
 		t.Errorf("after Close: %s, want the subscription closed", shown(got))
 	}
 }
+
+// A group subscription delivers its notices on Events too, in their place
+// among the events it opens: its only link ending interrupts it, and the
+// next link accepting it gives the Gap before the events that link carries.
+func TestAGroupSubscriptionDeliversAnInterruptedThenAGap(t *testing.T) {
+	w := newGroupWorld(t)
+	g := Group{Prefix: groupPrefix}
+	topic := groupPrefix + "/said_v1"
+	member := connect(t, "group notices member", w.realm, w.station)
+	reader := connect(t, "group notices reader", w.realm, w.station)
+	sub, err := reader.SubscribeGroup(t.Context(), w.realm.ID, topic, g)
+	if err != nil {
+		t.Fatalf("SubscribeGroup: %v", err)
+	}
+	eventually(t, "subscribed", func() bool { return w.station.Subscribed(reader.NodeID(), w.realm.ID, topic) })
+	w.station.Drop(reader.NodeID())
+	if _, before := awaited(t, sub, KindInterrupted, 10*time.Second); len(before) != 0 {
+		t.Errorf("before the Interrupted %s, want nothing", shown(before))
+	}
+	if _, before := awaited(t, sub, KindGap, 10*time.Second); len(before) != 0 {
+		t.Errorf("before the Gap %s, want nothing", shown(before))
+	}
+	eventually(t, "subscribed again", func() bool { return w.station.Subscribed(reader.NodeID(), w.realm.ID, topic) })
+	payload := cbor.Map([]cbor.MapEntry{{Key: cbor.Text("text"), Val: cbor.Text("after the gap")}})
+	if err := member.PublishGroup(t.Context(), stationlink.Publication{Realm: w.realm.ID, Topic: topic, Payload: payload}, g); err != nil {
+		t.Fatalf("PublishGroup: %v", err)
+	}
+	if event, before := awaited(t, sub, KindEvent, 10*time.Second); len(before) != 0 || event.Event.Unopened != "" {
+		t.Errorf("before the event %s, the event unopened %q; want nothing, then it opened", shown(before), event.Event.Unopened)
+	}
+}

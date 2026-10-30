@@ -192,12 +192,34 @@ func (s *Subscription) attach(link *stationlink.Link) error {
 		return linkSub.Unsubscribe()
 	}
 	s.onLinks[link] = linkSub
+	s.endEnded()
 	if gap, owed := s.cover.covers(link, uint64(time.Now().UnixMilli())); owed {
 		s.notify(gap)
 	}
 	s.mu.Unlock()
 	go s.forward(link, linkSub)
 	return nil
+}
+
+// endEnded records, under s.mu, the end of every covering link that ended
+// before its forward did, so a link accepted in that window still finds the
+// set emptied and the Interrupted owed.
+func (s *Subscription) endEnded() {
+	for link := range s.onLinks {
+		if link.Err() != nil {
+			s.linkEnded(link)
+		}
+	}
+}
+
+// linkEnded removes the ended link from the set under s.mu and notifies the
+// Interrupted when that empties it. A closing pool ends its links after its
+// context: that is no interruption, the subscription ends with it.
+func (s *Subscription) linkEnded(link *stationlink.Link) {
+	interrupted, owed := s.cover.ended(link, link.LastHeard(), stationlink.EndReason(link.Err()))
+	if owed && s.ctx.Err() == nil {
+		s.notify(interrupted)
+	}
 }
 
 func (s *Subscription) forward(link *stationlink.Link, linkSub *stationlink.Subscription) {
@@ -212,12 +234,7 @@ func (s *Subscription) forward(link *stationlink.Link, linkSub *stationlink.Subs
 	s.mu.Lock()
 	if s.onLinks != nil && s.onLinks[link] == linkSub {
 		delete(s.onLinks, link)
-		// A closing pool ends its links after its context: that is no
-		// interruption, the subscription ends with it.
-		interrupted, owed := s.cover.ended(link, link.LastHeard(), stationlink.EndReason(link.Err()))
-		if owed && s.ctx.Err() == nil {
-			s.notify(interrupted)
-		}
+		s.linkEnded(link)
 	}
 	s.mu.Unlock()
 }
@@ -238,13 +255,20 @@ func (s *Subscription) queue(ch chan Delivery, d Delivery) {
 }
 
 // notify hands the notice d, under s.mu, to the subscription's next stage,
-// in order with its events; a full one gives up its oldest delivery to make
-// room, so the reader never misses a notice for a full subscription.
+// in order with its events: opening for a group subscription, which open
+// passes on, Events otherwise.
 func (s *Subscription) notify(d Delivery) {
-	ch := s.events
 	if s.opening != nil {
-		ch = s.opening
+		s.push(s.opening, d)
+		return
 	}
+	s.push(s.events, d)
+}
+
+// push hands the notice d to ch under s.mu; a full ch gives up its oldest
+// delivery to make room, so the reader never misses a notice for a full
+// subscription.
+func (s *Subscription) push(ch chan Delivery, d Delivery) {
 	for {
 		select {
 		case ch <- d:
@@ -279,7 +303,7 @@ func (s *Subscription) open() {
 		if d.Kind != KindEvent {
 			s.mu.Lock()
 			if !s.ended {
-				s.notify(d)
+				s.push(s.events, d)
 			}
 			s.mu.Unlock()
 			continue

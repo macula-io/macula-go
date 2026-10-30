@@ -328,7 +328,14 @@ first subscribe, and after `Unsubscribe` or `Close`. A station that refuses the
 subscription on the new link leaves it interrupted, with no Gap, until one
 accepts it; the refusal is counted in the link's `RegisterRefusals`. A notice
 is never dropped for a full subscription: the oldest delivery makes room, and
-an event that does is counted in `Dropped`.
+an event that does is counted in `Dropped`. A reader so far behind that the
+Gap pushes out its own Interrupted still gets the Gap, whose `FromMs` is the
+Interrupted's.
+
+A sealed group subscription (`SubscribeGroup`) delivers its notices in their
+place among its events: an Interrupted waits behind events still being opened
+(an event may wait for its epoch from the distributor), and does not overtake
+them.
 
 Not covered, so that silence is not read as "nothing missed": events a station
 refused to write to a link that stayed up, a subscription a station drops when
