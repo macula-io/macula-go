@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/macula-io/macula-go/pool"
 )
 
 func fill(q *inbox, n int) {
@@ -92,5 +96,40 @@ func TestFullInboxPolicies(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Error("waitForRoom did not take an item once there was room")
+	}
+}
+
+// A full subscription inbox never refuses a notice: its oldest item makes
+// room, counted, and the notice arrives as its kind with its times.
+func TestAFullSubscriptionInboxTakesANotice(t *testing.T) {
+	q := newInbox(dropNewest)
+	fill(q, inboxCapacity)
+	gap := deliveryItem(pool.Delivery{Kind: pool.KindGap, FromMs: 1000, ToMs: 2000, Reason: "liveness_lost"})
+	if !q.push(context.Background(), gap) {
+		t.Fatal("a full inbox refused the gap")
+	}
+	if q.droppedCount() != 1 {
+		t.Errorf("dropped %d, want the oldest item counted", q.droppedCount())
+	}
+	if first, _ := take(t, q, time.Second); first.json != "1" {
+		t.Errorf("the first item is %q, want the second filled: the oldest made room", first.json)
+	}
+	var last inboxItem
+	for i := 1; i < inboxCapacity; i++ {
+		last, _ = take(t, q, time.Second)
+	}
+	var notice map[string]any
+	if err := json.Unmarshal([]byte(last.json), &notice); err != nil {
+		t.Fatalf("the notice %q: %v", last.json, err)
+	}
+	if notice["kind"] != "gap" || notice["from_ms"] != 1000.0 || notice["to_ms"] != 2000.0 || notice["reason"] != "liveness_lost" {
+		t.Errorf("the notice %v", notice)
+	}
+	interrupted := deliveryItem(pool.Delivery{Kind: pool.KindInterrupted, FromMs: 1000, Reason: "goodbye"})
+	if want := `{"from_ms":1000,"kind":"interrupted","reason":"goodbye"}`; interrupted.json != want {
+		t.Errorf("an Interrupted is %s, want %s", interrupted.json, want)
+	}
+	if event := deliveryItem(pool.Delivery{}); event.notice || !strings.Contains(event.json, `"kind":"event"`) {
+		t.Errorf("an event is %s, notice %v", event.json, event.notice)
 	}
 }

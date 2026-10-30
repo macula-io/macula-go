@@ -124,9 +124,12 @@ func member(ctx context.Context, node *pool.Pool, realm [32]byte, c config, g po
 	deadline := time.After(time.Minute)
 	for {
 		select {
-		case e := <-sub.Events():
+		case d := <-sub.Events():
+			e := d.Event
 			text, _ := e.Payload.AsText()
 			switch {
+			case d.Kind != pool.KindEvent:
+				return fmt.Errorf("the subscription was %s: %s", d.Kind, d.Reason)
 			case e.Unopened != "":
 				return fmt.Errorf("an event unopened: %s", e.Unopened)
 			case text == "from go":

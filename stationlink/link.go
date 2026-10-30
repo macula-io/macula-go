@@ -21,6 +21,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -66,6 +67,37 @@ type GoodbyeError struct {
 }
 
 func (e *GoodbyeError) Error() string { return "stationlink: the station said goodbye: " + e.Reason }
+
+// EndReason names why a link ended, err being its Err, in the lowercase
+// snake_case every macula SDK uses for it: liveness_lost, closed (its owner
+// closed it), goodbye, status_expired, binding_expired, malformed_frame,
+// idle_timeout, closed_by_station (the station closed the connection) or
+// connection_lost (anything else that ended the connection).
+func EndReason(err error) string {
+	var goodbye *GoodbyeError
+	var idle *quic.IdleTimeoutError
+	var app *quic.ApplicationError
+	var transport *quic.TransportError
+	switch {
+	case errors.Is(err, ErrLivenessLost):
+		return "liveness_lost"
+	case errors.Is(err, ErrClosed):
+		return "closed"
+	case errors.As(err, &goodbye):
+		return "goodbye"
+	case errors.Is(err, ErrStatusExpired):
+		return "status_expired"
+	case errors.Is(err, ErrBindingExpired):
+		return "binding_expired"
+	case errors.Is(err, frame.ErrMalformedFrame):
+		return "malformed_frame"
+	case errors.As(err, &idle):
+		return "idle_timeout"
+	case errors.As(err, &app) && app.Remote, errors.As(err, &transport) && transport.Remote:
+		return "closed_by_station"
+	}
+	return "connection_lost"
+}
 
 // Config is what a link is dialed with: the station to reach, the node's
 // identity key, the statement issuer that holds its CONNECT key and statements,
@@ -148,6 +180,9 @@ type Link struct {
 	done    chan struct{}
 	err     error
 	endOnce sync.Once
+	// heard is when the link last received a frame from its station that it
+	// read, in Unix milliseconds: HELLO, then every frame after.
+	heard atomic.Int64
 }
 
 // Dial dials cfg.Target, runs the wire 1.0 handshake as a client, and returns
@@ -266,6 +301,7 @@ func handshaken(ctx context.Context, dialed transport.Dialed, cfg Config) (*Link
 		keyring: cfg.Keyring, kemAdvertise: cfg.KEMAdvertise, kemKeyInRefusal: cfg.KEMKeyInRefusal,
 		done: make(chan struct{}),
 	}
+	link.heard.Store(time.Now().UnixMilli())
 	// Under the link's lock: end reads the timers under the same lock.
 	link.mu.Lock()
 	link.statusTimer = time.AfterFunc(untilMs(station.StatusExpiresAt, statusGrace), func() { link.end(ErrStatusExpired) })
@@ -316,6 +352,11 @@ func (l *Link) Err() error {
 	defer l.mu.Unlock()
 	return l.err
 }
+
+// LastHeard is when the link last received a frame from its station that it
+// read (an EVENT, REGISTER_ACK, STATUS, liveness answer or any other), in
+// Unix milliseconds; its HELLO's time until the first.
+func (l *Link) LastHeard() uint64 { return uint64(l.heard.Load()) }
 
 // Unrouted counts the frames received that nothing on this link handles yet,
 // by frame type.
@@ -394,6 +435,7 @@ func (l *Link) read(reader frameReader) {
 			l.end(err)
 			return
 		}
+		l.heard.Store(time.Now().UnixMilli())
 	}
 }
 

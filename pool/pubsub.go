@@ -5,27 +5,30 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/macula-io/macula-go/stationlink"
 )
 
-// subscriptionBuffer is how many events a subscription holds that its reader
-// has not taken; one arriving at a full subscription is dropped and counted.
+// subscriptionBuffer is how many deliveries a subscription holds that its
+// reader has not taken; an event arriving at a full subscription is dropped and
+// counted, and a notice takes the place of the oldest delivery.
 const subscriptionBuffer = 256
 
 // Subscription is the node's subscription to a realm and topic, on every link
 // the pool holds and every link it dials later. An event is delivered once,
-// whichever links hear it.
+// whichever links hear it, and when no link carries the subscription it says
+// so in-band (Delivery).
 type Subscription struct {
 	pool   *Pool
 	realm  [32]byte
 	topic  string
-	events chan stationlink.Event
+	events chan Delivery
 	// group is the sealed group the subscription is under, empty for none;
-	// its events are opened one at a time from opening, since opening may
-	// pull a missed epoch from the distributor.
+	// its deliveries are taken one at a time from opening and its events
+	// opened, since opening may pull a missed epoch from the distributor.
 	group   string
-	opening chan stationlink.Event
+	opening chan Delivery
 	ctx     context.Context
 	cancel  context.CancelFunc
 
@@ -33,6 +36,7 @@ type Subscription struct {
 	onLinks map[*stationlink.Link]*stationlink.Subscription
 	// attaching is the links a SUBSCRIBE awaits its verdict on.
 	attaching map[*stationlink.Link]bool
+	cover     coverage[*stationlink.Link]
 	ended     bool
 	dropped   uint64
 	refused   uint64
@@ -53,11 +57,12 @@ func (p *Pool) Subscribe(realm [32]byte, topic string) (*Subscription, error) {
 }
 
 func (p *Pool) subscribe(realm [32]byte, topic, prefix string) (*Subscription, error) {
-	sub := &Subscription{pool: p, realm: realm, topic: topic, events: make(chan stationlink.Event, subscriptionBuffer),
-		group: prefix, onLinks: map[*stationlink.Link]*stationlink.Subscription{}, attaching: map[*stationlink.Link]bool{}}
+	sub := &Subscription{pool: p, realm: realm, topic: topic, events: make(chan Delivery, subscriptionBuffer),
+		group: prefix, onLinks: map[*stationlink.Link]*stationlink.Subscription{}, attaching: map[*stationlink.Link]bool{},
+		cover: newCoverage[*stationlink.Link]()}
 	sub.ctx, sub.cancel = context.WithCancel(p.ctx)
 	if prefix != "" {
-		sub.opening = make(chan stationlink.Event, subscriptionBuffer)
+		sub.opening = make(chan Delivery, subscriptionBuffer)
 	}
 	if p.isClosed() {
 		sub.cancel()
@@ -112,9 +117,10 @@ func (s *Subscription) firstAttached(links []*stationlink.Link) error {
 	return errors.Join(errs...)
 }
 
-// Events delivers the subscription's events; it closes when the subscription
-// or the pool ends.
-func (s *Subscription) Events() <-chan stationlink.Event { return s.events }
+// Events delivers the subscription's events, and the notices that some may
+// have been missed (KindInterrupted, then KindGap), in order; it closes when
+// the subscription or the pool ends.
+func (s *Subscription) Events() <-chan Delivery { return s.events }
 
 // Dropped is how many events arrived while the subscription was full.
 func (s *Subscription) Dropped() uint64 {
@@ -186,6 +192,9 @@ func (s *Subscription) attach(link *stationlink.Link) error {
 		return linkSub.Unsubscribe()
 	}
 	s.onLinks[link] = linkSub
+	if gap, owed := s.cover.covers(link, uint64(time.Now().UnixMilli())); owed {
+		s.notify(gap)
+	}
 	s.mu.Unlock()
 	go s.forward(link, linkSub)
 	return nil
@@ -194,7 +203,7 @@ func (s *Subscription) attach(link *stationlink.Link) error {
 func (s *Subscription) forward(link *stationlink.Link, linkSub *stationlink.Subscription) {
 	for event := range linkSub.Events() {
 		if s.opening != nil {
-			s.queue(s.opening, event)
+			s.queue(s.opening, Delivery{Kind: KindEvent, Event: event})
 			continue
 		}
 		event, kept := s.opened(s.ctx, event)
@@ -203,22 +212,49 @@ func (s *Subscription) forward(link *stationlink.Link, linkSub *stationlink.Subs
 	s.mu.Lock()
 	if s.onLinks != nil && s.onLinks[link] == linkSub {
 		delete(s.onLinks, link)
+		if interrupted, owed := s.cover.ended(link, link.LastHeard(), stationlink.EndReason(link.Err())); owed {
+			s.notify(interrupted)
+		}
 	}
 	s.mu.Unlock()
 }
 
-// queue hands event to ch unless the subscription has ended, dropping and
+// queue hands d to ch unless the subscription has ended, dropping and
 // counting it when ch is full.
-func (s *Subscription) queue(ch chan stationlink.Event, event stationlink.Event) {
+func (s *Subscription) queue(ch chan Delivery, d Delivery) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ended {
 		return
 	}
 	select {
-	case ch <- event:
+	case ch <- d:
 	default:
 		s.dropped++
+	}
+}
+
+// notify hands the notice d, under s.mu, to the subscription's next stage,
+// in order with its events; a full one gives up its oldest delivery to make
+// room, so the reader never misses a notice for a full subscription.
+func (s *Subscription) notify(d Delivery) {
+	ch := s.events
+	if s.opening != nil {
+		ch = s.opening
+	}
+	for {
+		select {
+		case ch <- d:
+			return
+		default:
+		}
+		select {
+		case evicted := <-ch:
+			if evicted.Kind == KindEvent {
+				s.dropped++
+			}
+		default:
+		}
 	}
 }
 
@@ -230,13 +266,22 @@ func (s *Subscription) deliver(event stationlink.Event, kept bool) {
 		s.mu.Unlock()
 		return
 	}
-	s.queue(s.events, event)
+	s.queue(s.events, Delivery{Kind: KindEvent, Event: event})
 }
 
-// open opens a group subscription's events in the order they arrived.
+// open opens a group subscription's events in the order they arrived, and
+// passes its notices on in their place among them.
 func (s *Subscription) open() {
-	for event := range s.opening {
-		event, kept := s.opened(s.ctx, event)
+	for d := range s.opening {
+		if d.Kind != KindEvent {
+			s.mu.Lock()
+			if !s.ended {
+				s.notify(d)
+			}
+			s.mu.Unlock()
+			continue
+		}
+		event, kept := s.opened(s.ctx, d.Event)
 		s.deliver(event, kept)
 	}
 }

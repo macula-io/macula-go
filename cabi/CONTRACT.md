@@ -132,8 +132,19 @@ pool's link events wait in an inbox of 256 until taken with the matching
   and its epoch's `"seal_key_id"` in hex. On a plain subscription it arrives
   once with `"payload": null` and `"unopened": "no_group"`; see "Sealed
   groups".
+- Every subscription item has a `"kind"`. `"event"` is an event. When the
+  last station link carrying the subscription ends, `"interrupted"` arrives
+  once, with `"from_ms"` (when that link last heard from its station) and
+  `"reason"` (`liveness_lost`, `closed_by_station`, `goodbye`, ...); when a
+  station accepts the subscription again, `"gap"` arrives once, before any
+  event of the new link, with `"from_ms"`, `"to_ms"` and `"reason"`: events
+  between the two may have been missed, so resync. The times are this node's
+  clock, hints and not a filter on `"published_at"`. Neither arrives while
+  another link still carries the subscription, for an outage a link survives,
+  or at the first subscribe.
 - A full subscription inbox drops the newest event and counts it
-  (`macula_subscription_dropped`). A full served inbox makes the call wait
+  (`macula_subscription_dropped`); a notice is never refused, the oldest item
+  makes room for it, counted. A full served inbox makes the call wait
   for room until its deadline, then answers it with an error for you. A
   pool's link events drop the oldest.
 - `macula_served_next` also stores the item's handle in `*out_item`: a

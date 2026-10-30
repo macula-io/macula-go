@@ -140,8 +140,11 @@ func TestANodeTheDistributorRefusesIsNotAMember(t *testing.T) {
 func next(t *testing.T, sub *Subscription) stationlink.Event {
 	t.Helper()
 	select {
-	case e := <-sub.Events():
-		return e
+	case d := <-sub.Events():
+		if d.Kind != KindEvent {
+			t.Fatalf("a %s notice, not an event: %s", d.Kind, d.Reason)
+		}
+		return d.Event
 	case <-time.After(10 * time.Second):
 		t.Fatal("no event")
 		return stationlink.Event{}

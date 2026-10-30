@@ -16,6 +16,7 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/examples/internal/meshflags"
+	"github.com/macula-io/macula-go/pool"
 	"github.com/macula-io/macula-go/stationlink"
 )
 
@@ -53,10 +54,18 @@ func run(mesh meshflags.Flags, topic string) error {
 	}
 	for {
 		select {
-		case event, open := <-sub.Events():
-			if !open {
+		case d, open := <-sub.Events():
+			switch {
+			case !open:
 				return nil
+			case d.Kind == pool.KindInterrupted:
+				fmt.Printf("no station carries the subscription (%s); events from %d on may be missed\n", d.Reason, d.FromMs)
+				continue
+			case d.Kind == pool.KindGap:
+				fmt.Printf("carried again: events between %d and %d may have been missed, resync\n", d.FromMs, d.ToMs)
+				continue
 			}
+			event := d.Event
 			text, _ := event.Payload.Get("text")
 			greeting, _ := text.AsText()
 			fmt.Printf("heard %q from %x (seq %d, via %s)\n", greeting, event.Publisher[:8], event.Seq, event.DeliveredVia)

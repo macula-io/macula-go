@@ -18,6 +18,9 @@ import (
 type inboxItem struct {
 	handle C.uintptr_t
 	json   string
+	// notice is an item a full inbox never refuses: it drops its oldest
+	// item in its place (a subscription's interrupted and gap).
+	notice bool
 }
 
 // fullPolicy is what an inbox does with an item when it is full.
@@ -63,8 +66,8 @@ func signal(c chan struct{}) {
 }
 
 // push hands item over, and reports whether the inbox took it: false when it
-// closed, when it was full under dropNewest, or when ctx ended while waiting
-// for room.
+// closed, when it was full under dropNewest and item is no notice, or when ctx
+// ended while waiting for room.
 func (q *inbox) push(ctx context.Context, item inboxItem) bool {
 	for {
 		q.mu.Lock()
@@ -77,11 +80,11 @@ func (q *inbox) push(ctx context.Context, item inboxItem) bool {
 			q.mu.Unlock()
 			signal(q.ready)
 			return true
-		case q.policy == dropNewest:
+		case q.policy == dropNewest && !item.notice:
 			q.dropped++
 			q.mu.Unlock()
 			return false
-		case q.policy == dropOldest:
+		case q.policy == dropNewest, q.policy == dropOldest:
 			q.items = append(q.items[1:], item)
 			q.dropped++
 			q.mu.Unlock()

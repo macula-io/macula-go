@@ -72,7 +72,7 @@ On the wire:
 | Request admission | — | ✅ | Deadline window, each request run once, a copy answered from the stored reply, bounded as macula bounds it |
 | Provider authorization | ✅ | ✅ | The realm's org directory and the org's delegation, checked against the realm key the pool pins |
 | A node's own namespace (`~<node_id>/<name>`) | ✅ | ✅ | No authorization and no realm key: the advertisement's signature by that node authorizes it; checked against macula's shared fixtures |
-| PubSub (signed PUBLISH, SUBSCRIBE, EVENT) | ✅ | ✅ | Published once over several links, delivered once |
+| PubSub (signed PUBLISH, SUBSCRIBE, EVENT) | ✅ | ✅ | Published once over several links, delivered once; a subscription that may have missed events says so in-band, see [When a subscription may have missed events](#when-a-subscription-may-have-missed-events) |
 | DHT (`_dht.*`) | ✅ | — | Records verified before they are handed on |
 | Pool of station links | ✅ | ✅ | Pinned seeds, redial with subscriptions and procedures replayed |
 | Streaming RPC (server, client and bidi streams) | ✅ | ✅ | A QUIC stream per session; `pool.OpenStream` by direct dial, `Offer.Stream` to serve; admission, session and inbox bounds as macula's; every stream released on every path |
@@ -139,6 +139,14 @@ for {
 // Publish and subscribe.
 sub, err := p.Subscribe(realm, "acme/demo/greeting_sent_v1")
 err = p.Publish(stationlink.Publication{Realm: realm, Topic: "acme/demo/greeting_sent_v1", Payload: cbor.Text("hi")})
+for d := range sub.Events() {
+	switch d.Kind {
+	case pool.KindEvent:
+		// d.Event is the event
+	case pool.KindGap:
+		// events between d.FromMs and d.ToMs may have been missed: resync
+	}
+}
 ```
 
 Runnable examples, all with the same flags (`-seed host:port -station <node_id
@@ -289,6 +297,43 @@ on that exchange, nothing more: see macula's
 Not sealed: publications (macula 13 does not seal them yet, and a sealed
 EVENT is counted and not delivered, as macula 13 does), the DHT, and
 node-served content, which stays in the clear by design.
+
+## When a subscription may have missed events
+
+A subscription is carried by every station link the pool holds. When the last
+of them ends (the station stopped answering liveness probes, closed the
+connection, said goodbye), whatever the station sent on that link meanwhile is
+gone, and the pool redials and subscribes again. Nothing replays what was
+missed, so the subscription says so, on the same `Events()` channel as its
+events, where a reader cannot overlook it:
+
+- **`KindInterrupted`**, once, when the last link carrying the subscription
+  ends: `FromMs` is when that link last heard anything from its station, and
+  `Reason` why it ended (`liveness_lost`, `closed_by_station`, `goodbye`,
+  `idle_timeout`, ...; `stationlink.EndReason` has the full set, named as in
+  every macula SDK).
+- **`KindGap`**, once, when a station accepts the subscription again, before
+  any event of the link that now carries it: events published between `FromMs`
+  and `ToMs` may have been missed.
+
+Answer a Gap by resyncing what the subscription feeds (for a shared document,
+exchange state with its peers). The two times are this node's clock and an
+event's `PublishedAt` its publisher's, so they are hints: never drop events by
+comparing the two.
+
+Nothing is said when nothing can have been missed: while another link still
+carries the subscription (it heard every event, and the pool delivers each
+once), for an outage a link survives (QUIC delivers what was held up), at the
+first subscribe, and after `Unsubscribe` or `Close`. A station that refuses the
+subscription on the new link leaves it interrupted, with no Gap, until one
+accepts it; the refusal is counted in the link's `RegisterRefusals`. A notice
+is never dropped for a full subscription: the oldest delivery makes room, and
+an event that does is counted in `Dropped`.
+
+Not covered, so that silence is not read as "nothing missed": events a station
+refused to write to a link that stayed up, a subscription a station drops when
+a membership token ends while the link stays up, and events that never reached
+the station.
 
 ## The CBOR codec is hand-rolled on purpose
 

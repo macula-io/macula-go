@@ -135,8 +135,8 @@ func TestASubscriptionHearsOnceAndSurvivesARedial(t *testing.T) {
 		timeout := time.After(time.Second)
 		for {
 			select {
-			case event := <-sub.Events():
-				if got, _ := event.Payload.AsText(); got == text {
+			case d := <-sub.Events():
+				if got, _ := d.Event.Payload.AsText(); got == text {
 					n++
 				}
 			case <-timeout:

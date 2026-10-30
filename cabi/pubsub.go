@@ -53,16 +53,30 @@ func inboxed(lp *livePool, sub *pool.Subscription) *subscription {
 	lp.own(s.box)
 	go func() {
 		defer s.box.close()
-		for event := range sub.Events() {
-			s.box.push(context.Background(), inboxItem{json: eventJSON(event)})
+		for d := range sub.Events() {
+			s.box.push(context.Background(), deliveryItem(d))
 		}
 	}()
 	return s
 }
 
+// deliveryItem is d as the inbox holds it: an event, or a notice that events
+// may have been missed, which a full inbox never refuses.
+func deliveryItem(d pool.Delivery) inboxItem {
+	if d.Kind == pool.KindEvent {
+		return inboxItem{json: eventJSON(d.Event)}
+	}
+	notice := map[string]any{"kind": d.Kind.String(), "from_ms": d.FromMs, "reason": d.Reason}
+	if d.Kind == pool.KindGap {
+		notice["to_ms"] = d.ToMs
+	}
+	text, _ := json.Marshal(notice)
+	return inboxItem{json: string(text), notice: true}
+}
+
 func eventJSON(e stationlink.Event) string {
 	event := map[string]any{
-		"publisher": hex.EncodeToString(e.Publisher[:]), "realm": hex.EncodeToString(e.Realm[:]), "topic": e.Topic,
+		"kind": "event", "publisher": hex.EncodeToString(e.Publisher[:]), "realm": hex.EncodeToString(e.Realm[:]), "topic": e.Topic,
 		"seq": e.Seq, "published_at": e.PublishedAt, "payload": payloadToJSON(e.Payload), "delivered_via": e.DeliveredVia,
 	}
 	if e.Sealed != nil {

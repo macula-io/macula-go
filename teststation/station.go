@@ -110,6 +110,8 @@ type conn struct {
 	writer *writer
 	client handshake.Client
 	topics map[routeKey]bool
+	// silentUntil is when a Silence of this connection ends, zero for none.
+	silentUntil time.Time
 }
 
 var keys sync.Map // name+profile -> *identity.NodeKey: puzzle-solved keys take a while
@@ -225,6 +227,26 @@ func (s *Station) Drop(nodeID [32]byte) {
 		s.forget(c)
 		_ = c.qconn.CloseWithError(0, "dropped")
 	}
+}
+
+// Silence makes the client node_id's connection go quiet for d, as a path
+// outage that QUIC keeps the connection through: the station acts on nothing
+// the client sends (no liveness answer, no REGISTER_ACK, no publication
+// relayed) and writes it no event, and what fell in the silence is lost. A
+// reconnect is not silenced.
+func (s *Station) Silence(nodeID [32]byte, d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c := s.conns[nodeID]; c != nil {
+		c.silentUntil = time.Now().Add(d)
+	}
+}
+
+// silent reports whether c is in a Silence now.
+func (s *Station) silent(c *conn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return time.Now().Before(c.silentUntil)
 }
 
 // Connected reports whether the client node_id holds a connection.
@@ -433,6 +455,9 @@ func (s *Station) forget(c *conn) {
 }
 
 func (s *Station) received(c *conn, payload []byte) {
+	if s.silent(c) {
+		return
+	}
 	v, err := cbor.Decode(payload)
 	if err != nil {
 		return
@@ -825,8 +850,9 @@ func (s *Station) published(v cbor.Value) {
 	key := routeKey{verified.Realm, verified.Topic}
 	s.mu.Lock()
 	var to []*conn
+	now := time.Now()
 	for _, c := range s.conns {
-		if c.topics[key] {
+		if c.topics[key] && !now.Before(c.silentUntil) {
 			to = append(to, c)
 		}
 	}

@@ -214,8 +214,10 @@ void macula_pool_publish_group(macula_handle pool, const uint8_t realm[32], cons
 macula_handle macula_pool_subscribe_group(macula_handle pool, const uint8_t realm[32], const char *topic,
                                           const char *options_json, int64_t timeout_ms, macula_handle cancel,
                                           char **err_out);
-/* {"publisher","realm","topic","seq","published_at","payload","delivered_via"}, and for a sealed group's event
-   "sealed": 1, "seal_key_id", and "unopened" with a null payload when it could not be opened. */
+/* {"kind": "event","publisher","realm","topic","seq","published_at","payload","delivered_via"}, and for a sealed
+   group's event "sealed": 1, "seal_key_id", and "unopened" with a null payload when it could not be opened. Or a
+   notice (CONTRACT.md "Inboxes"): {"kind": "interrupted","from_ms","reason"} or {"kind": "gap","from_ms","to_ms",
+   "reason"}. */
 char *macula_subscription_next(macula_handle subscription, int64_t timeout_ms, macula_handle cancel,
                                int32_t *closed, char **err_out);
 /* Events the pool dropped because the inbox was full. */

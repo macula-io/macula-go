@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A subscription tells the application when it may have missed events
+  (macula-station#129).** `Subscription.Events()` now delivers
+  `pool.Delivery`, not `stationlink.Event`: an event (`KindEvent`, in
+  `Delivery.Event`), or a notice. When the last link carrying a subscription
+  ends, it delivers `KindInterrupted` once, from when that link last heard
+  from its station and for why it ended; when a station accepts it again, it
+  delivers `KindGap` once, before any event of the new link: events between
+  `FromMs` and `ToMs` may have been missed. Until now the pool redialed,
+  subscribed again and said nothing, so whatever the station sent to the
+  ended link was silently gone (craft-collab#38). No notice comes while
+  another link still carries the subscription, for an outage a link survives,
+  or at the first subscribe; a notice is never dropped for a full
+  subscription. The C ABI's subscription inbox gives every item a `"kind"`:
+  `"event"`, `"interrupted"` (`from_ms`, `reason`) or `"gap"` (`from_ms`,
+  `to_ms`, `reason`), and a full inbox drops its oldest item for a notice.
+  This breaks every reader of `Events()`: take `d.Event` where `d.Kind` is
+  `KindEvent`. See "When a subscription may have missed events" in the
+  README.
+
+### Added
+
+- **`stationlink.Link.LastHeard` and `stationlink.EndReason`.** A link records
+  when it last read a frame from its station, and `EndReason` names why a
+  link ended (`liveness_lost`, `closed`, `goodbye`, `status_expired`,
+  `binding_expired`, `malformed_frame`, `idle_timeout`, `closed_by_station`,
+  `connection_lost`).
+- **`teststation.Station.Silence`**: a client's connection goes quiet for a
+  while, as a path outage QUIC keeps the connection through, and what falls in
+  it is lost.
+
 ### Fixed
 
 - **The teststation keeps a live station's connection lifetime (#62).** It
