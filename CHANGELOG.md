@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-30
+
+Phase 1 of macula-station#129: a subscription says in-band, on `Events()`,
+when it may have missed events. No wire change. `pool.Delivery` replaces
+`stationlink.Event` on `Subscription.Events()`, which breaks every reader of
+it, hence the minor.
+
 ### Changed
 
 - **A subscription tells the application when it may have missed events
