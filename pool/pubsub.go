@@ -212,7 +212,10 @@ func (s *Subscription) forward(link *stationlink.Link, linkSub *stationlink.Subs
 	s.mu.Lock()
 	if s.onLinks != nil && s.onLinks[link] == linkSub {
 		delete(s.onLinks, link)
-		if interrupted, owed := s.cover.ended(link, link.LastHeard(), stationlink.EndReason(link.Err())); owed {
+		// A closing pool ends its links after its context: that is no
+		// interruption, the subscription ends with it.
+		interrupted, owed := s.cover.ended(link, link.LastHeard(), stationlink.EndReason(link.Err()))
+		if owed && s.ctx.Err() == nil {
 			s.notify(interrupted)
 		}
 	}

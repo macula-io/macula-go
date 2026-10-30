@@ -301,3 +301,16 @@ func TestUnsubscribingWhileInterruptedDeliversNothingMore(t *testing.T) {
 		t.Errorf("after Unsubscribe: %s, want the subscription closed", shown(got))
 	}
 }
+
+// A pool's Close ends its subscriptions with nothing more delivered: its links
+// ending with it are no interruption.
+func TestClosingThePoolDeliversNoNotice(t *testing.T) {
+	station := teststation.Start(t, profile.PQPure, "closed pool")
+	listener, sub, _, _ := listening(t, "closed pool", []*teststation.Station{station}, []*teststation.Station{station})
+	if err := listener.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := delivered(sub, 2*time.Second); len(got) != 0 {
+		t.Errorf("after Close: %s, want the subscription closed", shown(got))
+	}
+}
