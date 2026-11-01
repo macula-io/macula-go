@@ -3,5 +3,7 @@
 // ML-DSA-87 + RSA-PSS-4096 in pq_hybrid) whose node_id solves the admission
 // puzzle, a CONNECT key bound to it, TLS and CONNECT bindings, the status
 // statements a StatementIssuer reissues every 15 minutes, signed objects under
-// a label, and key files.
+// a label, and key files — including macula's sealed key file
+// (MACULA-SEALED-KEY-V1), which is one under a key-encryption key from off the
+// key's own volume, so a copy of it is not a working identity.
 package identity

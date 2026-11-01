@@ -76,8 +76,17 @@ const (
 )
 
 var (
-	purposeTags = map[Purpose]byte{PurposeIdentity: 1, PurposeConnect: 2}
-	tagPurposes = map[byte]Purpose{1: PurposeIdentity, 2: PurposeConnect}
+	// The purpose and profile tags, which a sealed file's header carries as
+	// well (sealed_key.go). A sealed file names every purpose macula writes,
+	// including the four this SDK does not mint a key for.
+	purposeTags = map[Purpose]byte{
+		PurposeIdentity: 1, PurposeConnect: 2, PurposeTLS: 3,
+		PurposeRealm: 4, PurposeOrg: 5, PurposeFoundation: 6,
+	}
+	tagPurposes = map[byte]Purpose{
+		1: PurposeIdentity, 2: PurposeConnect, 3: PurposeTLS,
+		4: PurposeRealm, 5: PurposeOrg, 6: PurposeFoundation,
+	}
 	profileTags = map[profile.Profile]byte{profile.PQPure: 1, profile.PQHybrid: 2}
 	tagProfiles = map[byte]profile.Profile{1: profile.PQPure, 2: profile.PQHybrid}
 )
