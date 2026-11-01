@@ -60,12 +60,9 @@ func TestKEKFromFileRefusals(t *testing.T) {
 		}
 	})
 
-	t.Run("readable by its group or others", func(t *testing.T) {
+	t.Run("another user can read it", func(t *testing.T) {
 		withSameDevice(t, false)
-		path := writtenKEKFileAt(t, kek, 0o644)
-		if _, err := KEKFromFile(path, keyPath); !errors.Is(err, ErrKeyFilePermissions) {
-			t.Fatalf("%v, want %v", err, ErrKeyFilePermissions)
-		}
+		refuseAKEKOthersCanRead(t, kek, keyPath)
 	})
 
 	t.Run("on the key file's own filesystem", func(t *testing.T) {

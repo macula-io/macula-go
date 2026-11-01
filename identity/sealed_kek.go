@@ -50,7 +50,8 @@ func KEKFromFile(kekPath, keyPath string) ([]byte, error) {
 }
 
 // openedKEKFile opens path and checks that it is the effective user's own, and
-// that its group and others cannot read it.
+// that nobody else can read it: mode bits where a file has them, its DACL where
+// it has those instead.
 func openedKEKFile(path string) (*os.File, os.FileInfo, error) {
 	f, err := os.Open(path)
 	if err != nil {
