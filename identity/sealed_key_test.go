@@ -3,7 +3,9 @@ package identity
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/macula-io/macula-go/profile"
@@ -142,4 +144,35 @@ func liedHeader(t *testing.T, purposeTag byte, keyID [32]byte, kek, nonce []byte
 		t.Fatalf("header is %d bytes, want %d", len(header), sealedHeaderBytes)
 	}
 	return header
+}
+
+// TestSealedKeyPrintsNoKey holds a loaded key to the package's rule: naming it
+// shows its purpose, profile, key id and whether it was sealed, and never the
+// key file's bytes, whatever the verb and in a log line.
+func TestSealedKeyPrintsNoKey(t *testing.T) {
+	v := readSealedKeyVectors(t).Vectors[0]
+	key, err := UnsealKeyFile(hexOf(t, v.Sealed), hexOf(t, v.KEK))
+	if err != nil {
+		t.Fatalf("UnsealKeyFile: %v", err)
+	}
+	named := key.String()
+	want := "identity pq_pure key " + v.KeyID + " sealed=true"
+	if named != want {
+		t.Errorf("String is %q, want %q", named, want)
+	}
+	for _, verb := range []string{"%v", "%+v", "%s", "%#v"} {
+		if printed := sprintf(verb, key); containsBytes(printed, key.KeyFile) {
+			t.Errorf("%s prints the key file's bytes", verb)
+		}
+	}
+}
+
+func sprintf(verb string, key SealedKey) string {
+	return fmt.Sprintf(verb, key)
+}
+
+// containsBytes reports whether printed holds b's bytes as a run of characters,
+// which is what a leaked key file would look like in a log line.
+func containsBytes(printed string, b []byte) bool {
+	return b != nil && strings.Contains(printed, string(b))
 }

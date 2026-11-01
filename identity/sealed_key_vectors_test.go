@@ -108,7 +108,7 @@ func checkUnsealed(t *testing.T, v sealedKeyVector) {
 	if key.KeyID != arrayOf(t, v.KeyID) {
 		t.Errorf("key id %x, want %s", key.KeyID, v.KeyID)
 	}
-	if !bytes.Equal(key.Plaintext, hexOf(t, v.Plaintext)) {
+	if !bytes.Equal(key.KeyFile, hexOf(t, v.Plaintext)) {
 		t.Error("the plaintext is not the vector's")
 	}
 }

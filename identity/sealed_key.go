@@ -5,7 +5,11 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 
 	"github.com/macula-io/macula-go/profile"
 )
@@ -94,15 +98,32 @@ type SealedHeader struct {
 }
 
 // SealedKey is a key file as loaded: what it holds, and whether it was sealed.
-// Plaintext is the plaintext key file's bytes, which for a live key are its
+// KeyFile is the plaintext key file's bytes, which for a live key are its
 // private halves; it is returned so a caller can hand them to the loader that
-// owns the key's format.
+// owns the key's format. Nothing here prints them — see String.
 type SealedKey struct {
-	Purpose   Purpose
-	Profile   profile.Profile
-	KeyID     [32]byte
-	Sealed    bool
-	Plaintext []byte
+	Purpose Purpose
+	Profile profile.Profile
+	KeyID   [32]byte
+	Sealed  bool
+	KeyFile []byte
+}
+
+// String names the key: its purpose, its profile, its key id and whether it came
+// from a sealed file. It never prints KeyFile, which for a live key holds the
+// private halves, and the same rule holds whatever the verb and in a log line.
+func (k SealedKey) String() string {
+	return fmt.Sprintf("%s %s key %s sealed=%t", k.Purpose, k.Profile, hex.EncodeToString(k.KeyID[:]), k.Sealed)
+}
+
+// Format writes the key as String does, whatever the verb.
+func (k SealedKey) Format(f fmt.State, _ rune) {
+	_, _ = io.WriteString(f, k.String())
+}
+
+// LogValue logs the key as String does.
+func (k SealedKey) LogValue() slog.Value {
+	return slog.StringValue(k.String())
 }
 
 // KEKID is a KEK's id: SHA-256 over the label MACULA-KEK-ID-V1, a zero byte
@@ -177,7 +198,7 @@ func UnsealKeyFile(sealed, kek []byte) (SealedKey, error) {
 	if keyID != header.KeyID {
 		return SealedKey{}, ErrSealedWrongKeyID
 	}
-	return SealedKey{Purpose: key.Purpose, Profile: key.Profile, KeyID: keyID, Sealed: true, Plaintext: plaintext}, nil
+	return SealedKey{Purpose: key.Purpose, Profile: key.Profile, KeyID: keyID, Sealed: true, KeyFile: plaintext}, nil
 }
 
 // ParseSealedHeader is what a sealed file says about itself, from its first

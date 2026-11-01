@@ -50,5 +50,5 @@ func loadedKeyFile(contents, kek []byte, mode KeyFileMode) (SealedKey, error) {
 	if err != nil {
 		return SealedKey{}, err
 	}
-	return SealedKey{Purpose: key.Purpose, Profile: key.Profile, KeyID: key.keyID(), Plaintext: contents}, nil
+	return SealedKey{Purpose: key.Purpose, Profile: key.Profile, KeyID: key.keyID(), KeyFile: contents}, nil
 }
