@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sealed key files (MACULA-SEALED-KEY-V1), the Go half of WP-K2
+  (macula-io/macula-realm#176).** `identity.SealKeyFile` and
+  `identity.UnsealKeyFile` write and open a sealed key file: AES-256-GCM over
+  the plaintext key file under a KEK the deployment supplies from off the key's
+  own volume, with the 100-byte header as the whole of the additional
+  authenticated data. Both plaintext forms are sealed — macula's own key file
+  and this package's seed form, which differ in their magic alone —
+  and `identity.LoadSealedKey` answers the **checked** key a file holds: its
+  halves held to its profile, and a sign-and-verify round trip, as `LoadKey`
+  does. It reads a sealed or plaintext file under a mode, and refuses a
+  plaintext one in `sealed_required`.
+  `identity/testdata/sealed_key_v1.json` is macula's shared vectors, copied by
+  `scripts/interop/copy_sealed_key_vectors.sh`, and `TestSealedKeyVectors` holds
+  both directions to them byte for byte: an identity key and an org key in
+  pq_pure and an identity key in pq_hybrid, each with the refusals every
+  implementation runs — another KEK, a flipped byte in the ciphertext and in the
+  header, and a file shorter than its header.
+
 ## [0.30.0] - 2026-10-30
 
 Phase 1 of macula-station#129: a subscription says in-band, on `Events()`,

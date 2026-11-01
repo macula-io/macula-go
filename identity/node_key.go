@@ -29,6 +29,14 @@ const (
 	// PurposeConnect is a node's CONNECT key, bound to its identity key, which
 	// signs the proof of each connection it makes.
 	PurposeConnect Purpose = "connect"
+	// PurposeTLS is a node's TLS key.
+	PurposeTLS Purpose = "tls"
+	// PurposeRealm is a realm's signing key.
+	PurposeRealm Purpose = "realm"
+	// PurposeOrg is an organisation's key.
+	PurposeOrg Purpose = "org"
+	// PurposeFoundation is a foundation's key.
+	PurposeFoundation Purpose = "foundation"
 )
 
 var (
