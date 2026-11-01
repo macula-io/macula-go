@@ -82,6 +82,17 @@ var (
 	ErrNonceSize = errors.New("identity: the nonce is not 12 bytes")
 	// ErrPlaintextKeyRefused is a plaintext key file loaded in sealed_required.
 	ErrPlaintextKeyRefused = errors.New("identity: the key file is plaintext and the mode is sealed_required")
+	// ErrKeyIDMismatch is a key file holding a key other than the one the caller
+	// said it must get, sealed or plaintext. It is how a deployment refuses
+	// another node's whole sealed file, which the format alone cannot catch when
+	// two boxes share a KEK.
+	ErrKeyIDMismatch = errors.New("identity: the key file holds another key than the one expected")
+	// ErrKEKNotConfigured is a sealed file with no KEK file named, neither by the
+	// caller nor by the environment.
+	ErrKEKNotConfigured = errors.New("identity: no KEK file is configured")
+	// ErrKEKSameFilesystem is a KEK file on the key file's own filesystem, where a
+	// whole-disk copy would carry both halves.
+	ErrKEKSameFilesystem = errors.New("identity: the KEK file is on the key file's own filesystem")
 	// ErrUnknownKeyFileMode is a mode other than accept or sealed_required.
 	ErrUnknownKeyFileMode = errors.New("identity: not a known key file mode")
 )

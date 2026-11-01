@@ -18,12 +18,13 @@ import (
 // under accept and is refused under sealed_required.
 func TestLoadSealedKey(t *testing.T) {
 	v := readSealedKeyVectors(t).Vectors[0]
-	kek := hexOf(t, v.KEK)
+	kekPath := writtenKEKFile(t, hexOf(t, v.KEK))
 	sealedPath := writtenKeyFile(t, hexOf(t, v.Sealed))
 	plaintextPath := writtenKeyFile(t, hexOf(t, v.Plaintext))
+	withSameDevice(t, false)
 
 	for _, mode := range []KeyFileMode{ModeAccept, ModeSealedRequired} {
-		key, err := LoadSealedKey(sealedPath, kek, mode)
+		key, err := LoadSealedKey(sealedPath, mode, WithKEKFile(kekPath))
 		if err != nil {
 			t.Fatalf("LoadSealedKey sealed under %s: %v", mode, err)
 		}
@@ -35,7 +36,7 @@ func TestLoadSealedKey(t *testing.T) {
 		}
 	}
 
-	plain, err := LoadSealedKey(plaintextPath, kek, ModeAccept)
+	plain, err := LoadSealedKey(plaintextPath, ModeAccept)
 	if err != nil {
 		t.Fatalf("LoadSealedKey plaintext under accept: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestLoadSealedKey(t *testing.T) {
 		t.Errorf("plaintext under accept: sealed %t, key id %x, want false and %s", plain.Sealed, plain.Key.KeyID(), v.KeyID)
 	}
 
-	if _, err := LoadSealedKey(plaintextPath, kek, ModeSealedRequired); !errors.Is(err, ErrPlaintextKeyRefused) {
+	if _, err := LoadSealedKey(plaintextPath, ModeSealedRequired); !errors.Is(err, ErrPlaintextKeyRefused) {
 		t.Errorf("plaintext under sealed_required: %v, want %v", err, ErrPlaintextKeyRefused)
 	}
 }
@@ -55,7 +56,7 @@ func TestLoadSealedKey(t *testing.T) {
 // was read".
 func TestLoadSealedKeyRefusesAModeItDoesNotKnow(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "no", "such", "key")
-	_, err := LoadSealedKey(missing, make([]byte, kekBytes), "sealing")
+	_, err := LoadSealedKey(missing, "sealing")
 	if !errors.Is(err, ErrUnknownKeyFileMode) {
 		t.Fatalf("%v, want %v", err, ErrUnknownKeyFileMode)
 	}
@@ -208,14 +209,15 @@ func TestSealedKeyOfTheSDKsOwnKeyFile(t *testing.T) {
 		t.Errorf("the header names key %x, want %x", header.KeyID, original.KeyID())
 	}
 
+	withSameDevice(t, false)
 	sealedPath := writtenKeyFile(t, sealed)
-	loaded, err := LoadSealedKey(sealedPath, kek, ModeSealedRequired)
+	loaded, err := LoadSealedKey(sealedPath, ModeSealedRequired, WithKEKFile(writtenKEKFile(t, kek)))
 	if err != nil {
 		t.Fatalf("LoadSealedKey: %v", err)
 	}
 	checkSameKey(t, original, loaded, true)
 
-	plain, err := LoadSealedKey(writtenKeyFile(t, plaintext), kek, ModeAccept)
+	plain, err := LoadSealedKey(writtenKeyFile(t, plaintext), ModeAccept)
 	if err != nil {
 		t.Fatalf("LoadSealedKey plaintext: %v", err)
 	}

@@ -119,6 +119,39 @@ func trusted(sid, user *windows.SID) bool {
 		sid.IsWellKnown(windows.WinBuiltinAdministratorsSid)
 }
 
+// sameDevice reports whether the open KEK file and the key file at keyPath are
+// on one volume, by the volume serial number each file's handle reports. Where
+// there are mode bits the same question is one st_dev, which is why this check
+// is per platform; Windows keeps the answer on the volume instead, and two
+// files that agree on its serial are two files on one disk — the case the
+// check exists to refuse.
+func sameDevice(kek *os.File, keyPath string, _, _ fs.FileInfo) bool {
+	kekVolume, err := volumeSerial(windows.Handle(kek.Fd()))
+	if err != nil {
+		return false
+	}
+	key, err := os.Open(keyPath)
+	if err != nil {
+		return false
+	}
+	defer key.Close()
+	keyVolume, err := volumeSerial(windows.Handle(key.Fd()))
+	if err != nil {
+		return false
+	}
+	return kekVolume == keyVolume
+}
+
+// volumeSerial is the serial number of the volume the open file behind f sits
+// on.
+func volumeSerial(f windows.Handle) (uint32, error) {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(f, &info); err != nil {
+		return 0, err
+	}
+	return info.VolumeSerialNumber, nil
+}
+
 // syncDir does nothing: Windows cannot sync a directory's entries.
 func syncDir(string) error {
 	return nil

@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   halves held to its profile, and a sign-and-verify round trip, as `LoadKey`
   does. It reads a sealed or plaintext file under a mode, and refuses a
   plaintext one in `sealed_required`.
+  `LoadSealedKey` takes options: `WithKEKFile` (else `MACULA_KEY_KEK_FILE`)
+  names the KEK file, which is checked before use — its owner and its group's
+  and others' access by the same rules a key file gets, that it is not on the
+  key file's own filesystem where a whole-disk copy would carry both, and that
+  it is 32 bytes — and `WithExpectedKeyID` is the key the caller must get,
+  which is how a deployment refuses another node's whole sealed file when two
+  boxes share a KEK.
   `identity/testdata/sealed_key_v1.json` is macula's shared vectors, copied by
   `scripts/interop/copy_sealed_key_vectors.sh`, and `TestSealedKeyVectors` holds
   both directions to them byte for byte: an identity key and an org key in
