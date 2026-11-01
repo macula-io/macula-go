@@ -48,9 +48,10 @@ const (
 	nonceBytes        = 12
 	gcmTagBytes       = 16
 	kekIDLabel        = "MACULA-KEK-ID-V1"
-	// maculaKeyFileMagic opens the plaintext key file a sealed file holds.
-	// It is macula's own key file (the expanded key), not this package's seed
-	// form, so sealing is written over the format a deployment already has.
+	// maculaKeyFileMagic opens the plaintext key file macula writes. It holds
+	// the same seed form this package writes — D6 moved macula to the seed — so
+	// the two differ in their magic alone, and a sealed file may hold either:
+	// sealing is over the format a deployment already has, not a new one.
 	maculaKeyFileMagic = "macula-node-key-v1\x00"
 )
 
@@ -97,14 +98,12 @@ type SealedHeader struct {
 	Nonce   [12]byte
 }
 
-// SealedKey is a key file as loaded: what it holds, and whether it was sealed.
-// KeyFile is the plaintext key file's bytes, which for a live key are its
-// private halves; it is returned so a caller can hand them to the loader that
-// owns the key's format. Nothing here prints them — see String.
+// SealedKey is a key file as loaded: the checked key it holds, and whether the
+// file it came from was sealed. KeyFile is the plaintext key file's bytes, which
+// for a live key are its private halves; it is kept so a caller can hand them to
+// whatever owns the key's format. Nothing here prints them — see String.
 type SealedKey struct {
-	Purpose Purpose
-	Profile profile.Profile
-	KeyID   [32]byte
+	Key     *NodeKey
 	Sealed  bool
 	KeyFile []byte
 }
@@ -113,7 +112,11 @@ type SealedKey struct {
 // from a sealed file. It never prints KeyFile, which for a live key holds the
 // private halves, and the same rule holds whatever the verb and in a log line.
 func (k SealedKey) String() string {
-	return fmt.Sprintf("%s %s key %s sealed=%t", k.Purpose, k.Profile, hex.EncodeToString(k.KeyID[:]), k.Sealed)
+	if k.Key == nil {
+		return "empty sealed key"
+	}
+	keyID := k.Key.KeyID()
+	return fmt.Sprintf("%s %s key %s sealed=%t", k.Key.Purpose(), k.Key.Profile(), hex.EncodeToString(keyID[:]), k.Sealed)
 }
 
 // Format writes the key as String does, whatever the verb.
@@ -150,7 +153,7 @@ func KEKID(kek []byte) ([32]byte, error) {
 // A nonce is never reused under one KEK: two files sealed with the same KEK and
 // nonce give away the XOR of their plaintexts.
 func SealKeyFile(plaintext, kek, nonce []byte) ([]byte, error) {
-	key, err := parseMaculaKeyFile(plaintext)
+	key, err := parseSealedPayload(plaintext)
 	if err != nil {
 		return nil, err
 	}
@@ -187,18 +190,21 @@ func UnsealKeyFile(sealed, kek []byte) (SealedKey, error) {
 	if err != nil {
 		return SealedKey{}, err
 	}
-	key, err := parseMaculaKeyFile(plaintext)
+	file, err := parseSealedPayload(plaintext)
 	if err != nil {
 		return SealedKey{}, err
 	}
-	if key.Purpose != header.Purpose || key.Profile != header.Profile {
+	if file.purpose != header.Purpose || file.profile != header.Profile {
 		return SealedKey{}, ErrSealedHeaderMismatch
 	}
-	keyID := key.keyID()
-	if keyID != header.KeyID {
+	if file.keyID() != header.KeyID {
 		return SealedKey{}, ErrSealedWrongKeyID
 	}
-	return SealedKey{Purpose: key.Purpose, Profile: key.Profile, KeyID: keyID, Sealed: true, KeyFile: plaintext}, nil
+	key, err := checkedFileKey(file)
+	if err != nil {
+		return SealedKey{}, err
+	}
+	return SealedKey{Key: key, Sealed: true, KeyFile: plaintext}, nil
 }
 
 // ParseSealedHeader is what a sealed file says about itself, from its first
@@ -212,7 +218,7 @@ func ParseSealedHeader(sealed []byte) (SealedHeader, error) {
 
 // sealHeader builds the header SealKeyFile puts over key, sealed with kek under
 // nonce.
-func sealHeader(key maculaKeyFile, kek, nonce []byte) ([]byte, error) {
+func sealHeader(key keyFile, kek, nonce []byte) ([]byte, error) {
 	kekID, err := KEKID(kek)
 	if err != nil {
 		return nil, err
@@ -220,7 +226,7 @@ func sealHeader(key maculaKeyFile, kek, nonce []byte) ([]byte, error) {
 	keyID := key.keyID()
 	out := make([]byte, 0, sealedHeaderBytes)
 	out = append(out, sealedKeyMagic...)
-	out = append(out, sealedKeyVersion, purposeTags[key.Purpose], profileTags[key.Profile])
+	out = append(out, sealedKeyVersion, purposeTags[key.purpose], profileTags[key.profile])
 	out = append(out, keyID[:]...)
 	out = append(out, kekID[:]...)
 	return append(out, nonce...), nil
@@ -275,59 +281,54 @@ func sealedAEAD(kek []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-// maculaKeyFile is a plaintext key file as macula writes it: the magic, the
-// purpose, the profile and the components, each a tagged public half and its
-// private half. Only what the sealed form needs is modelled — the purposes,
-// the profile and the halves' public bytes, which are what a key id derives
-// from.
-type maculaKeyFile struct {
-	Purpose Purpose
-	Profile profile.Profile
-	Halves  []storedHalf
+// parseSealedPayload is the plaintext key file a sealed file carries: macula's
+// own, and this package's seed form, which differ in their magic alone. A file
+// of neither form, one that is not a key file at all, one with no halves, and
+// one whose halves do not fit the profile it names are each refused — sealing
+// is a copy of a key, never of something that only looks like one.
+func parseSealedPayload(b []byte) (keyFile, error) {
+	body, ok := keyFileBody(b)
+	if !ok {
+		return keyFile{}, ErrBadPlaintextKeyFile
+	}
+	file, err := parseKeyFileBody(body)
+	if err != nil || !file.fitsProfile() {
+		return keyFile{}, ErrBadPlaintextKeyFile
+	}
+	return file, nil
 }
 
-// parseMaculaKeyFile is b as macula's plaintext key file, refused unless its
-// magic, tags, component count and halves all fit.
-func parseMaculaKeyFile(b []byte) (maculaKeyFile, error) {
-	rest, ok := bytes.CutPrefix(b, []byte(maculaKeyFileMagic))
-	if !ok || len(rest) < 3 {
-		return maculaKeyFile{}, ErrBadPlaintextKeyFile
+// fitsProfile reports whether a file holds at least one half and exactly the
+// halves its profile names: an ML-DSA-87 seed, followed in pq_hybrid by an
+// RSA-PSS key.
+func (f keyFile) fitsProfile() bool {
+	definition, err := f.profile.Definition()
+	if err != nil || len(f.halves) == 0 {
+		return false
 	}
-	purpose, knownPurpose := tagPurposes[rest[0]]
-	p, knownProfile := tagProfiles[rest[1]]
-	if !knownPurpose || !knownProfile {
-		return maculaKeyFile{}, ErrBadPlaintextKeyFile
-	}
-	halves, err := parseHalves(rest[3:])
-	if err != nil || len(halves) != int(rest[2]) {
-		return maculaKeyFile{}, ErrBadPlaintextKeyFile
-	}
-	return maculaKeyFile{Purpose: purpose, Profile: p, Halves: halves}, nil
+	return f.halvesFit(definition.Hybrid)
 }
 
-// carriedKey is the key as carried: the public half of each component, in
-// order, which is what a node_id and a key id derive from.
-func (f maculaKeyFile) carriedKey() []byte {
-	out := make([]byte, 0, carriedKeyBytes(f.Halves))
-	for _, half := range f.Halves {
-		out = append(out, half.public...)
+// keyFileBody is what follows either magic, and whether one of them opened the
+// file at all.
+func keyFileBody(b []byte) ([]byte, bool) {
+	if rest, ok := bytes.CutPrefix(b, []byte(maculaKeyFileMagic)); ok {
+		return rest, true
 	}
-	return out
+	return bytes.CutPrefix(b, []byte(keyFileMagic))
 }
 
-func carriedKeyBytes(halves []storedHalf) int {
-	total := 0
-	for _, half := range halves {
-		total += len(half.public)
+// checkedFileKey is the key a file holds, checked the way LoadKey checks one:
+// its halves held to its own purpose and profile with every public half derived
+// from its private half, then a sign-and-verify round trip. A caller that got
+// the bytes past UnsealKeyFile has a key it can use or a refusal, never both.
+func checkedFileKey(file keyFile) (*NodeKey, error) {
+	key, err := file.checkedKey(file.purpose, file.profile)
+	if err != nil {
+		return nil, err
 	}
-	return total
-}
-
-// keyID is the file's key id: the node_id of an identity key, and any other
-// purpose's key id, which is macula's rule for every key it writes.
-func (f maculaKeyFile) keyID() [32]byte {
-	if f.Purpose == PurposeIdentity {
-		return NodeIDOf(f.carriedKey(), f.Profile)
+	if err := roundTrip(key); err != nil {
+		return nil, err
 	}
-	return KeyIDOf(f.carriedKey(), f.Profile)
+	return key, nil
 }

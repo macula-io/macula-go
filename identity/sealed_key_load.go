@@ -38,7 +38,10 @@ func LoadSealedKey(path string, kek []byte, mode KeyFileMode) (SealedKey, error)
 	return loadedKeyFile(contents, kek, mode)
 }
 
-// loadedKeyFile is the key in contents, sealed or plaintext, under mode.
+// loadedKeyFile is the key in contents, sealed or plaintext, under mode. Both
+// forms are checked the same way once their bytes are in hand: the header's
+// claims are held to the key for a sealed file, and the key is held to its own
+// profile with a sign-and-verify round trip either way.
 func loadedKeyFile(contents, kek []byte, mode KeyFileMode) (SealedKey, error) {
 	if bytes.HasPrefix(contents, []byte(sealedKeyMagic)) {
 		return UnsealKeyFile(contents, kek)
@@ -46,9 +49,13 @@ func loadedKeyFile(contents, kek []byte, mode KeyFileMode) (SealedKey, error) {
 	if mode == ModeSealedRequired {
 		return SealedKey{}, ErrPlaintextKeyRefused
 	}
-	key, err := parseMaculaKeyFile(contents)
+	file, err := parseSealedPayload(contents)
 	if err != nil {
 		return SealedKey{}, err
 	}
-	return SealedKey{Purpose: key.Purpose, Profile: key.Profile, KeyID: key.keyID(), KeyFile: contents}, nil
+	key, err := checkedFileKey(file)
+	if err != nil {
+		return SealedKey{}, err
+	}
+	return SealedKey{Key: key, KeyFile: contents}, nil
 }

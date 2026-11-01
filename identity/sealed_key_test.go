@@ -2,8 +2,10 @@ package identity
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,8 +30,8 @@ func TestLoadSealedKey(t *testing.T) {
 		if !key.Sealed {
 			t.Errorf("sealed file under %s loaded as plaintext", mode)
 		}
-		if key.KeyID != arrayOf(t, v.KeyID) {
-			t.Errorf("sealed file under %s: key id %x, want %s", mode, key.KeyID, v.KeyID)
+		if key.Key.KeyID() != arrayOf(t, v.KeyID) {
+			t.Errorf("sealed file under %s: key id %x, want %s", mode, key.Key.KeyID(), v.KeyID)
 		}
 	}
 
@@ -37,8 +39,8 @@ func TestLoadSealedKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSealedKey plaintext under accept: %v", err)
 	}
-	if plain.Sealed || plain.KeyID != arrayOf(t, v.KeyID) {
-		t.Errorf("plaintext under accept: sealed %t, key id %x, want false and %s", plain.Sealed, plain.KeyID, v.KeyID)
+	if plain.Sealed || plain.Key.KeyID() != arrayOf(t, v.KeyID) {
+		t.Errorf("plaintext under accept: sealed %t, key id %x, want false and %s", plain.Sealed, plain.Key.KeyID(), v.KeyID)
 	}
 
 	if _, err := LoadSealedKey(plaintextPath, kek, ModeSealedRequired); !errors.Is(err, ErrPlaintextKeyRefused) {
@@ -175,4 +177,125 @@ func sprintf(verb string, key SealedKey) string {
 // which is what a leaked key file would look like in a log line.
 func containsBytes(printed string, b []byte) bool {
 	return b != nil && strings.Contains(printed, string(b))
+}
+
+// TestSealedKeyOfTheSDKsOwnKeyFile is the case that puts this format in this
+// SDK's scope: a key this package writes — the seed form NodeKey.Save writes —
+// must seal, load back under a mode, and answer a key that signs what the
+// original signs. A sealer that only opened macula's file would be a reader of
+// another implementation's keys rather than this one's.
+func TestSealedKeyOfTheSDKsOwnKeyFile(t *testing.T) {
+	original, err := GenerateKey(PurposeIdentity, profile.PQPure)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	plaintext, err := os.ReadFile(savedKeyFile(t, original))
+	if err != nil {
+		t.Fatalf("read the saved key: %v", err)
+	}
+	kek := bytes.Repeat([]byte{0x2a}, kekBytes)
+	nonce := bytes.Repeat([]byte{0x11}, nonceBytes)
+
+	sealed, err := SealKeyFile(plaintext, kek, nonce)
+	if err != nil {
+		t.Fatalf("SealKeyFile: %v", err)
+	}
+	header, err := ParseSealedHeader(sealed)
+	if err != nil {
+		t.Fatalf("ParseSealedHeader: %v", err)
+	}
+	if header.KeyID != original.KeyID() {
+		t.Errorf("the header names key %x, want %x", header.KeyID, original.KeyID())
+	}
+
+	sealedPath := writtenKeyFile(t, sealed)
+	loaded, err := LoadSealedKey(sealedPath, kek, ModeSealedRequired)
+	if err != nil {
+		t.Fatalf("LoadSealedKey: %v", err)
+	}
+	checkSameKey(t, original, loaded, true)
+
+	plain, err := LoadSealedKey(writtenKeyFile(t, plaintext), kek, ModeAccept)
+	if err != nil {
+		t.Fatalf("LoadSealedKey plaintext: %v", err)
+	}
+	checkSameKey(t, original, plain, false)
+}
+
+// checkSameKey holds a loaded key to the one it was saved from: the same key id,
+// and a signature by either that the other verifies.
+func checkSameKey(t *testing.T, original *NodeKey, loaded SealedKey, sealed bool) {
+	t.Helper()
+	if loaded.Sealed != sealed {
+		t.Errorf("sealed %t, want %t", loaded.Sealed, sealed)
+	}
+	if loaded.Key.KeyID() != original.KeyID() {
+		t.Fatalf("key id %x, want %x", loaded.Key.KeyID(), original.KeyID())
+	}
+	message := []byte("a message the loaded key must sign")
+	signature, err := original.Sign(message)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if !Verify(message, signature, loaded.Key.PublicKey(), profile.PQPure) {
+		t.Error("the loaded key does not verify the original's signature")
+	}
+	signature, err = loaded.Key.Sign(message)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if !Verify(message, signature, original.PublicKey(), profile.PQPure) {
+		t.Error("the original key does not verify the loaded key's signature")
+	}
+}
+
+// TestSealKeyFileRefusesAFileWithNoKey holds the reader to a header that names a
+// key file holding nothing: a count of no halves is not a key, in either form.
+func TestSealKeyFileRefusesAFileWithNoKey(t *testing.T) {
+	kek := bytes.Repeat([]byte{0x2a}, kekBytes)
+	nonce := bytes.Repeat([]byte{0x11}, nonceBytes)
+	for _, magic := range []string{maculaKeyFileMagic, keyFileMagic} {
+		empty := append([]byte(magic), purposeTags[PurposeIdentity], profileTags[profile.PQPure], 0)
+		if _, err := SealKeyFile(empty, kek, nonce); !errors.Is(err, ErrBadPlaintextKeyFile) {
+			t.Errorf("%q with no halves: %v, want %v", magic, err, ErrBadPlaintextKeyFile)
+		}
+	}
+}
+
+// TestSealKeyFileRefusesHalvesThatDoNotFitTheProfile holds the reader to a file
+// whose halves are not the ones its profile names: one half under a hybrid
+// profile, and two under a pure one, are both refused before anything is sealed.
+func TestSealKeyFileRefusesHalvesThatDoNotFitTheProfile(t *testing.T) {
+	kek := bytes.Repeat([]byte{0x2a}, kekBytes)
+	nonce := bytes.Repeat([]byte{0x11}, nonceBytes)
+	one := halfBytes(t, tagMLDSASeed)
+	two := one + halfBytes(t, tagRSAPSS)
+
+	for _, tc := range []struct {
+		name    string
+		profile profile.Profile
+		halves  string
+		count   byte
+	}{
+		{"one half under a hybrid profile", profile.PQHybrid, one, 1},
+		{"two halves under a pure profile", profile.PQPure, two, 2},
+	} {
+		file := append([]byte(maculaKeyFileMagic), purposeTags[PurposeIdentity], profileTags[tc.profile], tc.count)
+		if _, err := SealKeyFile(append(file, tc.halves...), kek, nonce); !errors.Is(err, ErrBadPlaintextKeyFile) {
+			t.Errorf("%s: %v, want %v", tc.name, err, ErrBadPlaintextKeyFile)
+		}
+	}
+}
+
+// halfBytes is one half with the given algorithm tag: a four-byte length and
+// its bytes, twice, which is what a key file holds whether or not the bytes are
+// a key.
+func halfBytes(t *testing.T, tag byte) string {
+	t.Helper()
+	public, private := []byte("public"), []byte("private")
+	out := []byte{tag}
+	out = binary.BigEndian.AppendUint32(out, uint32(len(public)))
+	out = append(out, public...)
+	out = binary.BigEndian.AppendUint32(out, uint32(len(private)))
+	return string(append(out, private...))
 }

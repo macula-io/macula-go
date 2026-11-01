@@ -252,7 +252,17 @@ type storedHalf struct {
 
 func parseKeyFile(b []byte) (keyFile, error) {
 	rest, ok := bytes.CutPrefix(b, []byte(keyFileMagic))
-	if !ok || len(rest) < 3 {
+	if !ok {
+		return keyFile{}, ErrBadKeyFile
+	}
+	return parseKeyFileBody(rest)
+}
+
+// parseKeyFileBody is a key file's purpose, profile and halves, from the bytes
+// after its magic. Both forms this package reads carry them the same way; only
+// the magic says which form a file is.
+func parseKeyFileBody(rest []byte) (keyFile, error) {
+	if len(rest) < 3 {
 		return keyFile{}, ErrBadKeyFile
 	}
 	purpose, knownPurpose := tagPurposes[rest[0]]
@@ -266,6 +276,33 @@ func parseKeyFile(b []byte) (keyFile, error) {
 		return keyFile{}, ErrBadKeyFile
 	}
 	return keyFile{purpose: purpose, profile: p, halves: halves}, nil
+}
+
+// carriedKey is the key as carried: the public half of each component, in
+// order, which is what a node_id and a key id derive from.
+func (f keyFile) carriedKey() []byte {
+	out := make([]byte, 0, carriedKeyBytes(f.halves))
+	for _, half := range f.halves {
+		out = append(out, half.public...)
+	}
+	return out
+}
+
+func carriedKeyBytes(halves []storedHalf) int {
+	total := 0
+	for _, half := range halves {
+		total += len(half.public)
+	}
+	return total
+}
+
+// keyID is the file's key id: the node_id of an identity key, and any other
+// purpose's key id, which is macula's rule for every key it writes.
+func (f keyFile) keyID() [32]byte {
+	if f.purpose == PurposeIdentity {
+		return NodeIDOf(f.carriedKey(), f.profile)
+	}
+	return KeyIDOf(f.carriedKey(), f.profile)
 }
 
 // parseHalves is every half in b, which must end exactly after the last one.
