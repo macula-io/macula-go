@@ -20,6 +20,14 @@ func ownedByEffectiveUser(info fs.FileInfo) bool {
 	return ok && int(stat.Uid) == effectiveUID()
 }
 
+// sameDevice reports whether a and b are on one filesystem: the check a KEK file
+// passes only when it is not on the key file's own volume.
+func sameDevice(a, b fs.FileInfo) bool {
+	one, ok := a.Sys().(*syscall.Stat_t)
+	other, okOther := b.Sys().(*syscall.Stat_t)
+	return ok && okOther && one.Dev == other.Dev
+}
+
 // syncDir flushes dir's entries to storage, so a rename into it survives a
 // crash.
 func syncDir(dir string) error {

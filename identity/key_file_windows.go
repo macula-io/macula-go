@@ -119,6 +119,12 @@ func trusted(sid, user *windows.SID) bool {
 		sid.IsWellKnown(windows.WinBuiltinAdministratorsSid)
 }
 
+// sameDevice reports false: Windows has no device to compare, so the KEK check
+// that depends on one passes there rather than guessing.
+func sameDevice(fs.FileInfo, fs.FileInfo) bool {
+	return false
+}
+
 // syncDir does nothing: Windows cannot sync a directory's entries.
 func syncDir(string) error {
 	return nil
