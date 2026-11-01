@@ -147,12 +147,26 @@ func writtenKEKFileAt(t *testing.T, contents []byte, mode os.FileMode) string {
 	return path
 }
 
+// writtenKEKFileIn writes a KEK file its owner alone can read, into dir, so a
+// test can put it on a filesystem of its choosing rather than a fresh one.
+func writtenKEKFileIn(t *testing.T, dir string, contents []byte) string {
+	t.Helper()
+	path := filepath.Join(dir, "kek")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatalf("write the KEK file: %v", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatalf("chmod the KEK file: %v", err)
+	}
+	return path
+}
+
 // withSameDevice decides what the KEK's filesystem check answers, so a test can
 // hold both of its arms without depending on where its temporary directory is.
 func withSameDevice(t *testing.T, same bool) {
 	t.Helper()
 	original := sameDeviceOf
-	sameDeviceOf = func(_, _ fs.FileInfo) bool { return same }
+	sameDeviceOf = func(*os.File, string, fs.FileInfo, fs.FileInfo) bool { return same }
 	t.Cleanup(func() { sameDeviceOf = original })
 }
 

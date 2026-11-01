@@ -11,9 +11,10 @@ import (
 // takes precedence over it.
 const KEKFileEnv = "MACULA_KEY_KEK_FILE"
 
-// sameDeviceOf decides whether two files sit on one filesystem, which is what a
-// KEK beside the key on a single volume looks like. A test replaces it to hold
-// both arms of the check without depending on where its files are.
+// sameDeviceOf decides whether the KEK and the key file sit on one filesystem,
+// which is what a KEK beside the key on a single volume looks like. A test
+// replaces it to hold both arms of the check without depending on where its
+// files happen to be.
 var sameDeviceOf = sameDevice
 
 // KEKFromFile reads the key-encryption key at kekPath, or at KEKFileEnv when
@@ -23,12 +24,15 @@ var sameDeviceOf = sameDevice
 //     default, because a whole-disk copy would carry both (ErrKEKNotConfigured);
 //   - it must open, and the file system's own reason is what an operator needs,
 //     so that error is wrapped and returned (not replaced);
-//   - another user must not own it, and its group and others must not be able to
-//     read it (ErrKeyFileOwner, ErrKeyFilePermissions), by the same check a key
-//     file gets on this platform;
-//   - it must not be on keyPath's own filesystem (ErrKEKSameFilesystem): on a
-//     single-volume box without a TPM that is the difference between a stolen
-//     disk image holding ciphertext and holding both halves;
+//   - it must be a regular file (ErrKeyFileNotRegular), decided before the open
+//     so a FIFO is named as one instead of waited on;
+//   - another user must not own it, and nobody else must be able to read it
+//     (ErrKeyFileOwner, ErrKeyFilePermissions), by the same check a key file
+//     gets on this platform;
+//   - it must not be on keyPath's own filesystem (ErrKEKSameFilesystem), the
+//     volume serial where a platform has those and the device where it has
+//     that: on a single-volume box without a TPM it is the difference between
+//     a stolen disk image holding ciphertext and holding both halves;
 //   - it must be 32 bytes (ErrKEKSize).
 func KEKFromFile(kekPath, keyPath string) ([]byte, error) {
 	path := kekPath
@@ -43,17 +47,29 @@ func KEKFromFile(kekPath, keyPath string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	if err := kekOwnFilesystem(info, keyPath); err != nil {
+	if err := kekOwnFilesystem(f, info, keyPath); err != nil {
 		return nil, err
 	}
 	return readKEK(f, path)
 }
 
-// openedKEKFile opens path and checks that it is the effective user's own, and
-// that nobody else can read it: mode bits where a file has them, its DACL where
-// it has those instead.
+// openedKEKFile opens path once it names a regular file, and checks that the
+// opened file is the effective user's own and that nobody else can read it:
+// mode bits where a file has them, its DACL where it has those instead.
+//
+// The stat before the open is not the check — the opened file's own info is.
+// It is there so that a path which is, or has become, a FIFO is refused as what
+// it is instead of blocking the open; where the platform can, the open itself
+// does not wait either.
 func openedKEKFile(path string) (*os.File, os.FileInfo, error) {
-	f, err := os.Open(path)
+	statted, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("identity: read the KEK: %w", err)
+	}
+	if !statted.Mode().IsRegular() {
+		return nil, nil, ErrKeyFileNotRegular
+	}
+	f, err := openKeyFile(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("identity: read the KEK: %w", err)
 	}
@@ -72,12 +88,12 @@ func openedKEKFile(path string) (*os.File, os.FileInfo, error) {
 // kekOwnFilesystem refuses a KEK on the key file's own filesystem. A key file
 // that cannot be stat'ed is the caller's own refusal to make later, not this
 // one's: the check passes when there is nothing to compare against.
-func kekOwnFilesystem(kekInfo os.FileInfo, keyPath string) error {
+func kekOwnFilesystem(kek *os.File, kekInfo os.FileInfo, keyPath string) error {
 	keyInfo, err := os.Stat(keyPath)
 	if err != nil {
 		return nil
 	}
-	if sameDeviceOf(keyInfo, kekInfo) {
+	if sameDeviceOf(kek, keyPath, kekInfo, keyInfo) {
 		return ErrKEKSameFilesystem
 	}
 	return nil

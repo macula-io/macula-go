@@ -16,9 +16,10 @@ func ownedByEffectiveUser(fs.FileInfo) bool {
 	return true
 }
 
-// sameDevice reports false: these platforms have no device to compare, so the
-// KEK check that depends on one passes rather than guessing.
-func sameDevice(fs.FileInfo, fs.FileInfo) bool {
+// sameDevice reports false: these platforms expose no device and no volume
+// serial to compare, so the KEK check that depends on one passes rather than
+// guessing.
+func sameDevice(*os.File, string, fs.FileInfo, fs.FileInfo) bool {
 	return false
 }
 
