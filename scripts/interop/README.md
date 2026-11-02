@@ -171,7 +171,8 @@ MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/sealed.sh p
 ```
 
 `MACULA_BUILD` may also be a rebar3 project that depends on macula from hex
-(`{deps, [{macula, "18.3.0"}]}`), compiled in the same image: the script
+(`{deps, [{macula, "<version>"}]}`, the version `sealed-interop.yml` sets as
+`MACULA_VERSION` being the one CI proves), compiled in the same image: the script
 reads `_build/default/lib/macula` and its dependencies beside it.
 
 The Erlang caller also calls with `confidential => off` by direct dial.
