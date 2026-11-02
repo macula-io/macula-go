@@ -272,7 +272,7 @@ grants' verdicts) and checked both ways against macula 15.6.0
 `KEMAdvertise` is off by default. Switch it on only once every station runs
 macula 12.11 or later, which stores and routes a keyed advertisement, and
 every caller runs macula 13 or macula-go 0.18 (the station floor). The fleet's
-stations meet it (macula-station 0.12.2, on macula ~> 15.6).
+stations meet it (macula-station 0.13.2, on macula 18).
 
 Through the C ABI (still ABI 1): the pool option `kem_advertise`, and
 `macula_pool_call_opts`, `macula_pool_open_stream_opts`,
