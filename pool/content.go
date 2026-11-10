@@ -298,9 +298,12 @@ func (r *sharedRealm) body(want string, mcid manifest.Mcid) (cbor.Value, bool) {
 }
 
 // announceContent signs an announcement of mcid in realm, naming a station
-// this node is linked to and its content procedure, and puts it in the DHT.
+// this node is linked to on its active tier and its content procedure, and
+// puts it in the DHT. A public-tier announcement therefore never names a
+// fallback station: the fallback is only ever the active tier when no public
+// link is up.
 func (p *Pool) announceContent(ctx context.Context, realm [32]byte, mcid manifest.Mcid, root sharedRoot) (record.Record, error) {
-	links := p.links()
+	links := p.targets()
 	if len(links) == 0 {
 		return record.Record{}, ErrNoLink
 	}

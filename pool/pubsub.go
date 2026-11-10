@@ -312,11 +312,11 @@ func (s *Subscription) open() {
 	}
 }
 
-// Publish signs pub once and sends it on the first ReplicationFactor links, in
-// the pool's selection order, succeeding when one of them takes it. Every copy
-// is the same publication, so a subscriber delivers it once. A publish under
-// a prefix whose sealed group this node holds is refused as a
-// *GroupHeldError: publish under it with PublishGroup.
+// Publish signs pub once and sends it on the first ReplicationFactor links of
+// the active tier, in the pool's selection order, succeeding when one of them
+// takes it. Every copy is the same publication, so a subscriber delivers it
+// once. A publish under a prefix whose sealed group this node holds is refused
+// as a *GroupHeldError: publish under it with PublishGroup.
 func (p *Pool) Publish(pub stationlink.Publication) error {
 	if keyring := p.heldGroups(); keyring != nil {
 		if prefix, _, held := keyring.Policy(pub.Realm, pub.Topic); held {
@@ -327,7 +327,7 @@ func (p *Pool) Publish(pub stationlink.Publication) error {
 }
 
 func (p *Pool) publish(pub stationlink.Publication) error {
-	links := p.links()
+	links := p.targets()
 	if len(links) == 0 {
 		return ErrNoLink
 	}

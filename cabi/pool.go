@@ -74,6 +74,10 @@ type connectOptions struct {
 	MaxDirectLinks    int               `json:"max_direct_links"`
 	RespawnDelayMs    int64             `json:"respawn_delay_ms"`
 	TimeoutMs         int64             `json:"timeout_ms"`
+	// FallbackSeeds are the stations of the fallback tier: the LAN stations a
+	// pool keeps for when no public station is up. The seeds are the public
+	// tier; a station named in both lists refuses the connect.
+	FallbackSeeds []connectSeed `json:"fallback_seeds"`
 	// KEMAdvertise (0 or 1) names this node's KEM key in its confidential
 	// procedures' advertisements. Since macula-go v0.18.0.
 	KEMAdvertise int `json:"kem_advertise"`
@@ -110,6 +114,10 @@ func connect(base context.Context, key *identity.NodeKey, seedsJSON, optionsJSON
 	if err != nil {
 		return nil, err
 	}
+	fallbackSeeds, err := poolSeedsOf(opts.FallbackSeeds)
+	if err != nil {
+		return nil, err
+	}
 	trust, err := realmTrust(opts.RealmTrust)
 	if err != nil {
 		return nil, err
@@ -127,6 +135,7 @@ func connect(base context.Context, key *identity.NodeKey, seedsJSON, optionsJSON
 	p, err := pool.Connect(ctx, poolSeeds, pool.Opts{IdentityKey: key, RealmTrust: trust,
 		ReplicationFactor: opts.ReplicationFactor, MaxSeeds: opts.MaxSeeds, MaxDirectLinks: opts.MaxDirectLinks,
 		RespawnDelay:  time.Duration(opts.RespawnDelayMs) * time.Millisecond,
+		FallbackSeeds: fallbackSeeds,
 		KEMAdvertise:  opts.KEMAdvertise == 1,
 		OnLinkEvent:   lp.linkEvent,
 		OnIssuerError: lp.issuerError})
@@ -256,19 +265,20 @@ func macula_pool_node_id(h C.uintptr_t, out *C.uint8_t, errOut **C.char) {
 	}
 }
 
-// statusJSON is the pool's links.
+// statusJSON is the pool's links, each with the tier its station was named in.
 func statusJSON(p *pool.Pool) string {
 	type link struct {
 		Station string `json:"station"`
 		Host    string `json:"host"`
 		Port    uint16 `json:"port"`
 		Direct  int    `json:"direct"`
+		Tier    string `json:"tier"`
 		Up      int    `json:"up"`
 	}
 	links := []link{}
 	for _, s := range p.Status() {
 		links = append(links, link{Station: hex.EncodeToString(s.Station[:]), Host: s.Host, Port: s.Port,
-			Direct: flag(s.Direct), Up: flag(s.Up)})
+			Direct: flag(s.Direct), Tier: s.Tier.String(), Up: flag(s.Up)})
 	}
 	text, _ := json.Marshal(links)
 	return string(text)

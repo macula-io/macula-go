@@ -336,6 +336,15 @@ func untilMs(atMs int64, grace time.Duration) time.Duration {
 // StationNodeID is the node_id of the station the link reached.
 func (l *Link) StationNodeID() [32]byte { return l.station.NodeID }
 
+// RTT is the round trip the link's QUIC connection has measured, smoothed
+// (RFC 9002 section 5.3), and whether it has measured one at all: a link that
+// has only just completed its handshake can still have none. A caller ordering
+// its links by speed takes the measured ones first.
+func (l *Link) RTT() (time.Duration, bool) {
+	smoothed := l.conn.ConnectionStats().SmoothedRTT
+	return smoothed, smoothed > 0
+}
+
 // TLSState is the TLS state of the link's QUIC connection: the key exchange
 // group and cipher suite it settled on, and the station's leaf.
 func (l *Link) TLSState() tls.ConnectionState { return l.conn.ConnectionState().TLS }

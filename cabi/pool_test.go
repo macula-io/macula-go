@@ -501,3 +501,31 @@ func TestALateAnswerIsAnswered(t *testing.T) {
 		t.Fatalf("an answer after the handle ended: %v, want invalid_handle", err)
 	}
 }
+
+// The two station lists cross the ABI: fallback_seeds is a second list beside
+// the public one, and the pool's status names the tier each link was given in.
+func TestTheABICarriesTheTwoStationLists(t *testing.T) {
+	f := newFleet(t, "tiers")
+	public, fallback := f.stations[0], f.stations[1]
+	options := fmt.Sprintf(`{"realm_trust": {}, "fallback_seeds": %s, "respawn_delay_ms": 100, "timeout_ms": 20000}`,
+		f.seedsJSON(fallback))
+	lp, err := connect(context.Background(), teststation.Key(t, profile.PQPure, "abi tiers"), f.seedsJSON(public), options)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(lp.close)
+	var links []map[string]any
+	if err := json.Unmarshal([]byte(statusJSON(lp.pool)), &links); err != nil {
+		t.Fatal(err)
+	}
+	tiers := map[string]any{}
+	for _, link := range links {
+		tiers[link["station"].(string)] = link["tier"]
+	}
+	if got := tiers[hex.EncodeToString(public.NodeID[:])]; got != "public" {
+		t.Errorf("the seed's tier is %v, want public: %v", got, links)
+	}
+	if got := tiers[hex.EncodeToString(fallback.NodeID[:])]; got != "fallback" {
+		t.Errorf("the fallback seed's tier is %v, want fallback: %v", got, links)
+	}
+}
