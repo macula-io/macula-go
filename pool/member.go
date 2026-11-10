@@ -36,6 +36,11 @@ type member struct {
 	// attempts is how many backoff retries this station has taken, cleared by
 	// a steady-up or by a re-arm. The active tier's flat delay counts nothing.
 	attempts int
+	// parkGen is the generation of the park pause has opened, and a re-arm
+	// bumps it: the retry count pause takes for the wait it planned belongs to
+	// that park, and a re-arm that cleared the count in the gap between the
+	// planning and the counting leaves nothing to count (macula-go#82).
+	parkGen uint64
 	// up is closed, and replaced, each time a link comes up; failed each
 	// time a dial fails.
 	up     chan struct{}
@@ -190,18 +195,33 @@ func (m *member) armSteadyUp(link *stationlink.Link) {
 	m.mu.Unlock()
 }
 
+// beforePauseCount is called with the member and the wait its retry planned,
+// between the two critical sections pause keeps: the read of the count and its
+// increment. It is a variable only so that a test can land a re-arm in that
+// window (macula-go#82), and nil in a build.
+var beforePauseCount func(*member, time.Duration)
+
 // pause waits out the member's retry, and reports whether it should dial again,
 // false when the pool closed first. A re-arm wakes a parked retry: the wait then
 // starts again from the redial base.
 func (m *member) pause() bool {
 	m.mu.Lock()
 	m.parked = true
-	attempt := m.attempts
+	attempt, gen := m.attempts, m.parkGen
 	m.mu.Unlock()
 	wait, counted := m.pool.respawnPlan(m.tier, attempt)
 	if counted {
+		if beforePauseCount != nil {
+			beforePauseCount(m, wait)
+		}
+		// The plan was made from a count a re-arm may have cleared since: the
+		// retry is counted only while the park it was planned for is still the
+		// one, or one failed retry would wait a step further along the schedule
+		// than the re-arm's return to the floor allows.
 		m.mu.Lock()
-		m.attempts++
+		if m.parkGen == gen {
+			m.attempts++
+		}
 		m.mu.Unlock()
 	}
 	defer m.unpark()
@@ -238,7 +258,8 @@ func (m *member) unpark() {
 // A member that is dialing or up has no pending retry to restart, and is left
 // with the count it earned. The token is sent under the lock that unpark takes,
 // so a re-arm either reaches the wait it was meant for or is dropped with it,
-// never carried into the next one.
+// never carried into the next one, and the park's generation goes with the
+// count it cleared, so a pause already planning cannot count it back.
 func (m *member) rearm() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -246,6 +267,7 @@ func (m *member) rearm() {
 		return
 	}
 	m.attempts = 0
+	m.parkGen++
 	select {
 	case m.wake <- struct{}{}:
 	default:
