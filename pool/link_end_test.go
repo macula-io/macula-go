@@ -190,9 +190,15 @@ func TestAFlappingStationIsAskedOnceInOneOperation(t *testing.T) {
 	out := queried(t, p, key)
 	time.Sleep(200 * time.Millisecond)
 	a.Drop(p.NodeID())
+	// b holds the request until a is back: first until the pool has seen a's
+	// link go, then until it has seen the redialed one up, so the operation is
+	// waiting at b when the station it already asked becomes live again.
 	go func() {
+		for poolHolds(p, a.NodeID) {
+			time.Sleep(5 * time.Millisecond)
+		}
 		for !poolHolds(p, a.NodeID) {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 		}
 		b.Drop(p.NodeID())
 	}()
