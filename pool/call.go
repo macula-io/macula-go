@@ -635,45 +635,73 @@ func (p *Pool) forget(key resolvedKey) {
 	p.mu.Unlock()
 }
 
+// dhtOp is one of the station procedures a pool walks its links for: its name,
+// and the call that runs it on one link. The two are built together, one
+// constructor per procedure below, so a pool cannot pass a name its call does
+// not send (macula-go#74).
+type dhtOp[T any] struct {
+	name string
+	call func(*stationlink.Link) (T, error)
+}
+
+// findRecordOp is one call of the record under key.
+func findRecordOp(ctx context.Context, key [32]byte) dhtOp[record.Verified] {
+	return dhtOp[record.Verified]{name: stationlink.ProcedureFindRecord,
+		call: func(link *stationlink.Link) (record.Verified, error) { return link.FindRecord(ctx, key) }}
+}
+
+// recordList is what the two list procedures answer with.
+type recordList struct {
+	records []record.Verified
+	dropped int
+}
+
+// findRecordsOp is one call of the records under key.
+func findRecordsOp(ctx context.Context, key [32]byte) dhtOp[recordList] {
+	return dhtOp[recordList]{name: stationlink.ProcedureFindRecords, call: func(link *stationlink.Link) (recordList, error) {
+		records, dropped, err := link.FindRecords(ctx, key)
+		return recordList{records, dropped}, err
+	}}
+}
+
+// findRecordsByTypeOp is one call of the records of type t.
+func findRecordsByTypeOp(ctx context.Context, t record.Type) dhtOp[recordList] {
+	return dhtOp[recordList]{name: stationlink.ProcedureFindRecordsByType,
+		call: func(link *stationlink.Link) (recordList, error) {
+			records, dropped, err := link.FindRecordsByType(ctx, t)
+			return recordList{records, dropped}, err
+		}}
+}
+
+// putRecordOp is one put of a signed record, as its wire bytes.
+func putRecordOp(ctx context.Context, wire []byte) dhtOp[struct{}] {
+	return dhtOp[struct{}]{name: stationlink.ProcedurePutRecord, call: func(link *stationlink.Link) (struct{}, error) {
+		return struct{}{}, link.PutRecord(ctx, wire)
+	}}
+}
+
 // FindRecord asks the pool's links in turn for the record under key, until one
 // answers.
 func (p *Pool) FindRecord(ctx context.Context, key [32]byte) (record.Verified, error) {
-	return firstAnswer(p, stationlink.ProcedureFindRecord,
-		func(link *stationlink.Link) (record.Verified, error) { return link.FindRecord(ctx, key) })
+	return firstAnswer(p, findRecordOp(ctx, key))
 }
 
 // FindRecords asks the pool's links in turn for the records under key.
 func (p *Pool) FindRecords(ctx context.Context, key [32]byte) ([]record.Verified, int, error) {
-	type found struct {
-		records []record.Verified
-		dropped int
-	}
-	out, err := firstAnswer(p, stationlink.ProcedureFindRecords, func(link *stationlink.Link) (found, error) {
-		records, dropped, err := link.FindRecords(ctx, key)
-		return found{records, dropped}, err
-	})
+	out, err := firstAnswer(p, findRecordsOp(ctx, key))
 	return out.records, out.dropped, err
 }
 
 // FindRecordsByType asks the pool's links in turn for the records of type t.
 func (p *Pool) FindRecordsByType(ctx context.Context, t record.Type) ([]record.Verified, int, error) {
-	type found struct {
-		records []record.Verified
-		dropped int
-	}
-	out, err := firstAnswer(p, stationlink.ProcedureFindRecordsByType, func(link *stationlink.Link) (found, error) {
-		records, dropped, err := link.FindRecordsByType(ctx, t)
-		return found{records, dropped}, err
-	})
+	out, err := firstAnswer(p, findRecordsByTypeOp(ctx, t))
 	return out.records, out.dropped, err
 }
 
 // PutRecord puts a signed record through the pool's links in turn, until one
 // station takes it.
 func (p *Pool) PutRecord(ctx context.Context, wire []byte) error {
-	_, err := firstAnswer(p, stationlink.ProcedurePutRecord, func(link *stationlink.Link) (struct{}, error) {
-		return struct{}{}, link.PutRecord(ctx, wire)
-	})
+	_, err := firstAnswer(p, putRecordOp(ctx, wire))
 	return err
 }
 
@@ -693,9 +721,9 @@ var retryable = map[string]bool{
 	stationlink.ProcedurePutRecord:         true,
 }
 
-// firstAnswer runs ask on the pool's links in selection order and returns the
+// firstAnswer runs op on the pool's links in selection order and returns the
 // first answer, moving on only when the link did not carry the call: a
-// station's own answer, not_found included, is final. Since procedure is one of
+// station's own answer, not_found included, is final. Since op names one of
 // retryable, a link that ends after the station received the call may be asked
 // of another station (macula-go#74).
 //
@@ -705,10 +733,10 @@ var retryable = map[string]bool{
 // most once, keyed by the station's node_id rather than by the link, because a
 // member that redials gets a new link, and it asks no more stations than the
 // pool has members.
-func firstAnswer[T any](p *Pool, procedure string, ask func(*stationlink.Link) (T, error)) (T, error) {
+func firstAnswer[T any](p *Pool, op dhtOp[T]) (T, error) {
 	var zero T
-	if !retryable[procedure] {
-		return zero, fmt.Errorf("%w: %s", ErrNotRetryable, procedure)
+	if !retryable[op.name] {
+		return zero, fmt.Errorf("%w: %s", ErrNotRetryable, op.name)
 	}
 	asked := make(map[[32]byte]bool)
 	var errs []error
@@ -718,7 +746,7 @@ func firstAnswer[T any](p *Pool, procedure string, ask func(*stationlink.Link) (
 			break
 		}
 		asked[link.StationNodeID()] = true
-		out, err := ask(link)
+		out, err := op.call(link)
 		if err == nil || !unreachable(link, err) {
 			return out, err
 		}

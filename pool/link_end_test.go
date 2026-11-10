@@ -54,6 +54,18 @@ func queried(t *testing.T, p *Pool, key [32]byte) <-chan queryResult {
 	return out
 }
 
+// poolHolds reports whether the pool itself sees a live link to the station
+// nodeID: a station that accepted the connection is not yet a link the pool
+// will ask.
+func poolHolds(p *Pool, nodeID [32]byte) bool {
+	for _, link := range p.links() {
+		if link.StationNodeID() == nodeID && link.Err() == nil {
+			return true
+		}
+	}
+	return false
+}
+
 type queryResult struct {
 	found int
 	err   error
@@ -179,7 +191,7 @@ func TestAFlappingStationIsAskedOnceInOneOperation(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	a.Drop(p.NodeID())
 	go func() {
-		for !a.Connected(p.NodeID()) {
+		for !poolHolds(p, a.NodeID) {
 			time.Sleep(10 * time.Millisecond)
 		}
 		b.Drop(p.NodeID())
@@ -213,9 +225,10 @@ func TestTheProceduresAFailedLinkIsRetriedFor(t *testing.T) {
 	}
 }
 
-// Each retried operation asks its station for the procedure it says it does:
-// the name a pool passes is the one the wire carries, so the closed set above
-// and the calls that go out cannot disagree (macula-go#74).
+// Each retried operation asks its station for the procedure it is named after:
+// the name an operation carries is the one its own call puts on the wire, so
+// the closed set above and the calls that go out cannot disagree
+// (macula-go#74).
 func TestEachRetriedProcedureIsTheOneTheWireCarries(t *testing.T) {
 	s := teststation.Start(t, profile.PQPure, "naming")
 	realm := teststation.NewRealm(t, profile.PQPure, "naming", org)
@@ -223,23 +236,21 @@ func TestEachRetriedProcedureIsTheOneTheWireCarries(t *testing.T) {
 	s.Put(wire)
 	p := connectWith(t, "naming caller", realm, func(*Opts) {}, s)
 	eventually(t, "the link up", func() bool { return upCount(p) == 1 })
-	ran := map[string]func(){
-		stationlink.ProcedurePutRecord:         func() { _ = p.PutRecord(t.Context(), wire) },
-		stationlink.ProcedureFindRecord:        func() { _, _ = p.FindRecord(t.Context(), key) },
-		stationlink.ProcedureFindRecords:       func() { _, _, _ = p.FindRecords(t.Context(), key) },
-		stationlink.ProcedureFindRecordsByType: func() { _, _, _ = p.FindRecordsByType(t.Context(), record.TypeNodeRecord) },
-	}
-	before := make(map[string]int, len(ran))
-	for name := range ran {
-		before[name] = s.Asked(p.NodeID(), name)
-	}
-	for _, run := range ran {
-		run()
-	}
-	for name := range ran {
-		if got := s.Asked(p.NodeID(), name) - before[name]; got != 1 {
-			t.Errorf("the station answered %s %d times, want once: the operation's name and its call disagree", name, got)
-		}
+	link := p.links()[0]
+	askedOnce(t, s, p.NodeID(), link, findRecordOp(t.Context(), key))
+	askedOnce(t, s, p.NodeID(), link, findRecordsOp(t.Context(), key))
+	askedOnce(t, s, p.NodeID(), link, findRecordsByTypeOp(t.Context(), record.TypeNodeRecord))
+	askedOnce(t, s, p.NodeID(), link, putRecordOp(t.Context(), wire))
+}
+
+// askedOnce runs op's call on link and checks the station answered it under the
+// name op carries, once.
+func askedOnce[T any](t *testing.T, s *teststation.Station, node [32]byte, link *stationlink.Link, op dhtOp[T]) {
+	t.Helper()
+	before := s.Asked(node, op.name)
+	_, _ = op.call(link)
+	if got := s.Asked(node, op.name) - before; got != 1 {
+		t.Errorf("the operation named %s was answered %d times, want once: its name and its call disagree", op.name, got)
 	}
 }
 
