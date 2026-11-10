@@ -252,6 +252,53 @@ func measuredRTT(t *testing.T, rtts map[[32]byte]time.Duration) {
 	t.Cleanup(func() { rttOf = restore })
 }
 
+// A station procedure is originating traffic like a publication, and the round
+// trip order sits under every one of them, not only under a publish: the query
+// goes to the fastest link, and the link it does not ask first never sees it
+// (macula#201 §4, §9 scenario 6).
+//
+// The station measured faster is the later seed, so seed order alone would ask
+// the other one first. With station discovery on the order is the same one:
+// macula-go's pool does not call mcl-stations/list_stations (pool.go, the
+// package comment), so a discovered station is a direct link on the public
+// tier, and the sort in targets is all the order any of them gets. The
+// discovery gap itself is macula-go#73.
+func TestAStationQueryGoesToTheLowestMeasuredRoundTrip(t *testing.T) {
+	slow := teststation.Start(t, profile.PQPure, "query rtt slow")
+	fast := teststation.Start(t, profile.PQPure, "query rtt fast")
+	realm := teststation.NewRealm(t, profile.PQPure, "query rtt order", org)
+	p := connectTiered(t, "rtt query", realm, []*teststation.Station{slow, fast}, nil)
+	eventually(t, "both links up", func() bool { return upCount(p) == 2 })
+	measuredRTT(t, map[[32]byte]time.Duration{fast.NodeID: 5 * time.Millisecond, slow.NodeID: 90 * time.Millisecond})
+	// A node record is stored under its signer's node_id, so a record planted at
+	// one station and a lookup under that id says which station answered.
+	held := "query rtt held by the fastest"
+	fast.Put(nodeRecordWire(t, teststation.Key(t, profile.PQPure, held), "held by the lowest round trip"))
+	if _, err := p.FindRecord(t.Context(), nodeIDOf(t, held)); err != nil {
+		t.Errorf("the record the fastest station holds: %v, want it found there", err)
+	}
+	// A record only the slower station holds is not found: the fastest link
+	// answered first, and a station's own answer is final, so the query never
+	// reached the other one.
+	elsewhere := "query rtt held by the slowest"
+	slow.Put(nodeRecordWire(t, teststation.Key(t, profile.PQPure, elsewhere), "held by the highest round trip"))
+	if _, err := p.FindRecord(t.Context(), nodeIDOf(t, elsewhere)); !errors.Is(err, stationlink.ErrRecordNotFound) {
+		t.Errorf("the record only the slower station holds: %v, want ErrRecordNotFound: the query must not reach it", err)
+	}
+	// A record put through the pool lands at the fastest station, and not at the
+	// slower one.
+	put := "query rtt put"
+	if err := p.PutRecord(t.Context(), nodeRecordWire(t, teststation.Key(t, profile.PQPure, put), "put through the pool")); err != nil {
+		t.Fatalf("PutRecord: %v", err)
+	}
+	if _, err := connect(t, "rtt fast observer", realm, fast).FindRecord(t.Context(), nodeIDOf(t, put)); err != nil {
+		t.Errorf("the record put through the pool is not at the fastest station: %v", err)
+	}
+	if _, err := connect(t, "rtt slow observer", realm, slow).FindRecord(t.Context(), nodeIDOf(t, put)); !errors.Is(err, stationlink.ErrRecordNotFound) {
+		t.Errorf("the slower station holds the record put through the pool: %v, want ErrRecordNotFound", err)
+	}
+}
+
 // The lowest measured round trip goes first among the active tier's links, so
 // with one copy to make it is the fast station that carries it, whichever order
 // the seeds were given in.

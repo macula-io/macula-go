@@ -58,6 +58,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implementation runs — another KEK, a flipped byte in the ciphertext and in the
   header, and a file shorter than its header.
 
+### Fixed
+
+- **A re-arm that lands while a retry is being parked no longer leaves its
+  count behind (macula-go#82).** `pause` reads a station's retry count, plans
+  its wait and then counts the retry under a second lock, so a re-arm arriving
+  between the two cleared the count and had it counted back from zero: the
+  retry after the one the re-arm woke waited one step further along the
+  schedule than the return to the redial floor allows. The park carries a
+  generation now, and a retry is counted only while the park it was planned for
+  is still the one.
+
+  The round-trip order is also now held by a station procedure and not only by
+  a publication: `TestAStationQueryGoesToTheLowestMeasuredRoundTrip` pins that
+  a `FindRecord`, a `FindRecordsByType` and a `PutRecord` take the fastest
+  link, and that the station it does not ask first never sees the query.
+
 ## [0.30.0] - 2026-10-30
 
 Phase 1 of macula-station#129: a subscription says in-band, on `Events()`,
