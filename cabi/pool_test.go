@@ -528,4 +528,32 @@ func TestTheABICarriesTheTwoStationLists(t *testing.T) {
 	if got := tiers[hex.EncodeToString(fallback.NodeID[:])]; got != "fallback" {
 		t.Errorf("the fallback seed's tier is %v, want fallback: %v", got, links)
 	}
+	// The link event carries the same tier, so a binding reports it from the
+	// event that took the link down, not only from a status read afterwards.
+	want := map[string]string{hex.EncodeToString(public.NodeID[:]): "public",
+		hex.EncodeToString(fallback.NodeID[:]): "fallback"}
+	seen := map[string]string{}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for left := 2 * len(want); len(seen) < len(want) && left > 0; left-- {
+		item, state := lp.events.next(ctx)
+		if state != inboxItemReady {
+			t.Fatalf("%d link events, want %d: %v", len(seen), len(want), state)
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(item.json), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event["kind"] != "link" || event["up"] != float64(1) {
+			continue
+		}
+		station, _ := event["station"].(string)
+		tier, _ := event["tier"].(string)
+		seen[station] = tier
+	}
+	for station, tier := range want {
+		if seen[station] != tier {
+			t.Errorf("the link event for %s names tier %q, want %q", station, seen[station], tier)
+		}
+	}
 }
