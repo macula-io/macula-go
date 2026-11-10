@@ -60,6 +60,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A station procedure in flight when its link ends is asked again on the
+  next link, and nothing that could give a different result is
+  (macula-go#74).** A pool's DHT reads and puts moved to the next link only on
+  a call timeout, a closed link or a lost liveness probe, so a link the far end
+  dropped mid-request failed the whole operation with the transport's own
+  error — `Application error 0x0 (remote): dropped` — even with another link up
+  that could answer. A link that did not carry the call is now recognised for
+  every way a link ends, by asking the link rather than by listing transport
+  errors, and a failed write is named as one the station never received. Two
+  properties keep that safe, both new: the procedures a pool walks its links
+  for are a closed set of the four that a second run cannot make differ (the
+  three `_dht.*` finds and a put of the same signed bytes, which is the same
+  slot and version, and a station keeps the newest version of a slot), and a
+  station is asked at most once per operation, keyed by node_id rather than by
+  a link a redial replaces, bounded by the pool's member count. The walk also
+  reads the active tier again after each failure, so an operation whose last
+  public link ends continues on the fallback, which is the active tier from
+  that moment. `stationlink.NotCarried` and `stationlink.Procedure*` are new;
+  `pool.ErrNotRetryable` names a procedure outside the set. A call to a
+  provider is unchanged: it still moves on only before the CALL is sent.
 - **The structural floor holds the interop clients too.** Both
   `scripts/interop/*/eslint.config.mjs` capped block depth at 3 where the floor
   (macula-codebase-checks#9) is 2, so the `structural floor (interop clients)`
@@ -111,6 +131,18 @@ it, hence the minor.
 
 ### Fixed
 
+- **The teststation's relay ends each direction on its own (#54).** A relayed
+  stream's two directions were joined so that an error in either reset both
+  streams, and `CancelWrite` on the other stream discards what it had written
+  but the peer had not yet acknowledged: a caller that finished sending and
+  stopped reading (STOP_SENDING) cost the provider every byte of the caller's
+  message still in the relay, so an SDK's stream test could fail for the test
+  relay's fault rather than its own (macula-rust#45). A direction that fails
+  now aborts only its own write side and tells that direction's source to stop
+  sending, and the opposite direction finishes. Two tests read it off the wire:
+  a caller that stops reading still delivers its whole message to the provider,
+  and a caller that resets mid-message reaches the provider as a reset while
+  the provider's own answer still arrives.
 - **The teststation keeps a live station's connection lifetime (#62).** It
   listened with quic-go's default 30 s idle timeout and no keepalive, so every
   client dialling it got 30 s, where the fleet's stations give 300 s with a

@@ -63,6 +63,18 @@ func (m *member) current() *stationlink.Link {
 	return m.link
 }
 
+// live is the member's link while it is up. A link that has ended is not up,
+// even in the instant between its ending and the member recording it: a
+// station procedure that reads the tier just after its own link ended must see
+// the tier it belongs to now, not the one it belonged to a moment ago.
+func (m *member) live() *stationlink.Link {
+	link := m.current()
+	if link == nil || link.Err() != nil {
+		return nil
+	}
+	return link
+}
+
 func (m *member) lastErr() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
