@@ -2,6 +2,7 @@ package stationlink
 
 import (
 	"context"
+	"crypto/mldsa"
 	"errors"
 	"testing"
 	"time"
@@ -142,5 +143,31 @@ func TestARelayErrorOfAnUnknownCodeIsCountedAsEnumUnknown(t *testing.T) {
 	}
 	if err := link.Err(); err != nil {
 		t.Errorf("the link ended: %v", err)
+	}
+}
+
+// A call whose frame is over the cap is refused by the write, and is not named
+// as one the link did not carry: the same request is over the cap on every
+// link, so there is nothing to move on to (macula-go#74).
+//
+// The payload is under the payload cap, so prepareCall signs it; a CALL carries
+// an ML-DSA-87 signature, so the frame that wraps it is over the cap and the
+// write is what refuses it.
+func TestACallOverTheFrameCapIsNotOneTheLinkDidNotCarry(t *testing.T) {
+	link, _ := linkWithStation(t, profile.PQPure)
+	// Half a signature of headroom keeps the payload under the payload cap
+	// and pushes the CALL that wraps it, signature and all, over the frame cap.
+	payload := MaxFrameBytes - mldsa.MLDSA87().SignatureSize()/2
+	c := stationCall(ProcedureFindRecord, cbor.Bytes(make([]byte, payload)))
+	_, err := callWithin(t, link, c)
+	if !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("Call: %v, want the write's ErrFrameTooLarge", err)
+	}
+	var notSent *callNotSent
+	if errors.As(err, &notSent) {
+		t.Error("a call over the cap was named as one the link did not carry, want the cap's refusal")
+	}
+	if link.NotCarried(err) {
+		t.Error("a call over the cap was not carried, want it refused as one every link refuses")
 	}
 }
