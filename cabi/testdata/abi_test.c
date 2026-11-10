@@ -281,7 +281,21 @@ int main(int argc, char **argv) {
   free(data);
 
   /* A key signs and verifies. */
-  macula_handle key = macula_key_load_or_create("/nonexistent-dir/x.key", NULL, 0, &err);
+  macula_handle key;
+
+  /* A key is not saved where its directory cannot be made. A regular file
+   * stands in the way of that directory, so creating it is not a matter of
+   * permission: root is refused ENOTDIR as well, which a location such as
+   * /nonexistent-dir is not (root creates it there and the save succeeds).
+   * The location is derived from the key directory the test was given, so the
+   * case holds wherever the program runs. */
+  char blocker[512], barred[600];
+  snprintf(blocker, sizeof blocker, "%s/key-dir-blocked", dir);
+  FILE *in_the_way = fopen(blocker, "w");
+  if (!in_the_way) fail("a file in the way of a key's directory", NULL);
+  fclose(in_the_way);
+  snprintf(barred, sizeof barred, "%s/x.key", blocker);
+  key = macula_key_load_or_create(barred, NULL, 0, &err);
   if (!err || key) fail("a key saved where it cannot be", NULL);
   macula_free_string(err);
   err = NULL;
