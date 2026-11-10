@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "macula.h"
 
@@ -283,18 +284,21 @@ int main(int argc, char **argv) {
   /* A key signs and verifies. */
   macula_handle key;
 
-  /* A key is not saved where its directory cannot be made. A regular file
-   * stands in the way of that directory, so creating it is not a matter of
-   * permission: root is refused ENOTDIR as well, which a location such as
-   * /nonexistent-dir is not (root creates it there and the save succeeds).
-   * The location is derived from the key directory the test was given, so the
-   * case holds wherever the program runs. */
-  char blocker[512], barred[600];
-  snprintf(blocker, sizeof blocker, "%s/key-dir-blocked", dir);
-  FILE *in_the_way = fopen(blocker, "w");
-  if (!in_the_way) fail("a file in the way of a key's directory", NULL);
-  fclose(in_the_way);
-  snprintf(barred, sizeof barred, "%s/x.key", blocker);
+  /* A key is not saved where its directory cannot be made, and the failing
+   * attempt is the save itself. The key's directory is a dangling symlink:
+   * reading the key under it reports not-exist, so the loader generates a key
+   * and goes on to save it, and making that directory fails because the link
+   * is already there -- for root as well. A permission or a location such as
+   * /nonexistent-dir would not stop root (it creates that one and the save
+   * succeeds). Both paths are derived from the key directory the test was
+   * given, and neither is truncated. */
+  char keydir[512], gone[512], barred[1200];
+  if (snprintf(keydir, sizeof keydir, "%s/key-dir", dir) >= (int)sizeof keydir ||
+      snprintf(gone, sizeof gone, "%s/gone", dir) >= (int)sizeof gone ||
+      snprintf(barred, sizeof barred, "%s/x.key", keydir) >= (int)sizeof barred) {
+    fail("a key path that fits the case's buffers", NULL);
+  }
+  if (symlink(gone, keydir) != 0) fail("a dangling link in the way of a key's directory", NULL);
   key = macula_key_load_or_create(barred, NULL, 0, &err);
   if (!err || key) fail("a key saved where it cannot be", NULL);
   macula_free_string(err);
