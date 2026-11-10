@@ -36,7 +36,9 @@ var frameRefusals = []error{
 }
 
 // maxEncodedPerInputByte and encodeSlack bound what one input byte may encode
-// to, with slack for the head and the length prefix.
+// to, with slack for the head and the length prefix: the widest item this
+// encoding writes is nine bytes for a three-byte half-float, and every item
+// costs at least one byte to send.
 const (
 	maxEncodedPerInputByte = 32
 	encodeSlack            = 64
@@ -44,6 +46,20 @@ const (
 
 // FuzzDecode holds Decode to the invariant.
 func FuzzDecode(f *testing.F) {
+	seedFrameBodies(f)
+	f.Fuzz(func(t *testing.T, data []byte) {
+		decoded, err := Decode(data)
+		if err != nil {
+			refuseUnlessTyped(t, err)
+			return
+		}
+		checkDecoded(t, data, decoded)
+	})
+}
+
+// seedFrameBodies adds every frame body of the shared vectors, length-prefixed
+// as a station sends it.
+func seedFrameBodies(f *testing.F) {
 	for _, body := range []struct{ class, field string }{
 		{"frames", "frame"},
 		{"envelope", "frame"},
@@ -56,52 +72,59 @@ func FuzzDecode(f *testing.F) {
 			f.Add(lengthPrefixed(seed))
 		}
 	}
-	f.Fuzz(func(t *testing.T, data []byte) {
-		decoded, err := Decode(data)
-		if err != nil {
-			for _, refusal := range frameRefusals {
-				if errors.Is(err, refusal) {
-					return
-				}
-			}
-			t.Fatalf("refused with an error that is not typed: %v", err)
-		}
-		if !decoded.Complete {
-			if decoded.NeedMore <= 0 {
-				t.Fatalf("an incomplete frame needing %d more bytes", decoded.NeedMore)
-			}
+}
+
+func refuseUnlessTyped(t *testing.T, err error) {
+	t.Helper()
+	for _, refusal := range frameRefusals {
+		if errors.Is(err, refusal) {
 			return
 		}
-		if decoded.Consumed < 4 || decoded.Consumed > len(data) {
-			t.Fatalf("consumed %d of %d bytes", decoded.Consumed, len(data))
+	}
+	t.Fatalf("refused with an error that is not typed: %v", err)
+}
+
+// checkDecoded holds one Decode result to what a station may act on: a frame
+// still needing bytes, or a complete frame inside the input that re-encodes.
+func checkDecoded(t *testing.T, data []byte, decoded Decoded) {
+	t.Helper()
+	if !decoded.Complete {
+		if decoded.NeedMore <= 0 {
+			t.Fatalf("an incomplete frame needing %d more bytes", decoded.NeedMore)
 		}
-		// The frame it read encodes again, and decoding that encoding gives a
-		// frame that encodes to the same bytes: what a peer is sent is stable.
-		encoded, err := Encode(decoded.Frame)
-		if err != nil {
-			t.Fatalf("a decoded frame does not encode: %v", err)
-		}
-		if int(binary.BigEndian.Uint32(encoded)) != len(encoded)-4 {
-			t.Fatalf("an encoding whose length prefix does not count its body: %x", encoded)
-		}
-		again, err := Decode(encoded)
-		if err != nil || !again.Complete {
-			t.Fatalf("Encode's own frame does not decode: %v", err)
-		}
-		second, err := Encode(again.Frame)
-		if err != nil {
-			t.Fatalf("a re-decoded frame does not encode: %v", err)
-		}
-		if !bytes.Equal(encoded, second) {
-			t.Fatalf("re-encoding is not deterministic: %x, then %x", encoded, second)
-		}
-		// Nothing a frame carries outgrows the bytes that carried it: the
-		// widest item this encoding writes is nine bytes for a three-byte
-		// half-float, and every item costs at least one byte to send.
-		if len(encoded) > maxEncodedPerInputByte*len(data)+encodeSlack {
-			t.Fatalf("%d input bytes carry a %d-byte frame", len(data), len(encoded))
-		}
-	})
+		return
+	}
+	if decoded.Consumed < 4 || decoded.Consumed > len(data) {
+		t.Fatalf("consumed %d of %d bytes", decoded.Consumed, len(data))
+	}
+	checkReEncodes(t, data, decoded.Frame)
+}
+
+// checkReEncodes holds a decoded frame to the wire a peer is sent: its encoding
+// counts its own body, decodes again, and encodes to the same bytes.
+func checkReEncodes(t *testing.T, data []byte, frameVal cbor.Value) {
+	t.Helper()
+	encoded, err := Encode(frameVal)
+	if err != nil {
+		t.Fatalf("a decoded frame does not encode: %v", err)
+	}
+	if int(binary.BigEndian.Uint32(encoded)) != len(encoded)-4 {
+		t.Fatalf("an encoding whose length prefix does not count its body: %x", encoded)
+	}
+	again, err := Decode(encoded)
+	if err != nil || !again.Complete {
+		t.Fatalf("Encode's own frame does not decode: %v", err)
+	}
+	second, err := Encode(again.Frame)
+	if err != nil {
+		t.Fatalf("a re-decoded frame does not encode: %v", err)
+	}
+	if !bytes.Equal(encoded, second) {
+		t.Fatalf("re-encoding is not deterministic: %x, then %x", encoded, second)
+	}
+	if len(encoded) > maxEncodedPerInputByte*len(data)+encodeSlack {
+		t.Fatalf("%d input bytes carry a %d-byte frame", len(data), len(encoded))
+	}
 }
 
 // lengthPrefixed is body as a station sends it: its length in four big-endian
