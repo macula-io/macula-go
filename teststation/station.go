@@ -1021,8 +1021,11 @@ func (s *Station) relayStream(ctx context.Context, c *conn, from *quic.Stream) {
 }
 
 // count joins from and to, when there is a to, and counts the relay until
-// both directions have finished; each direction's end closes the other's
-// write side, and a reset on either resets the other.
+// both directions have finished. Each direction ends on its own: one that
+// finishes closes the write side toward its reader, and one that fails
+// abandons its own write side and tells its source to stop sending, while the
+// opposite direction, which crosses both streams the other way, carries on to
+// its own end (macula-go#54).
 func (s *Station) count(from, to *quic.Stream) {
 	s.mu.Lock()
 	s.relayed++
@@ -1031,8 +1034,8 @@ func (s *Station) count(from, to *quic.Stream) {
 	pipe := func(dst, src *quic.Stream) {
 		_, err := io.Copy(dst, src)
 		if err != nil {
-			release(dst)
-			release(src)
+			dst.CancelWrite(0)
+			src.CancelRead(0)
 		} else {
 			_ = dst.Close()
 		}
