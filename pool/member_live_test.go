@@ -26,4 +26,11 @@ func TestAMemberDoesNotOfferALinkThatHasEnded(t *testing.T) {
 	if got := held.live(); got != nil {
 		t.Errorf("the member offered a link that has ended (%v), want none", got.Err())
 	}
+	// The pool reads members through live() (pool.go, selection): a pool holding
+	// only this member must offer no link at all, which fails if the call site
+	// reads current() instead even when live() itself is right.
+	one := &Pool{members: []*member{held}}
+	if got := one.links(); len(got) != 0 {
+		t.Errorf("the pool offered %d link(s), want none: the first has ended (%v)", len(got), got[0].Err())
+	}
 }
