@@ -284,3 +284,20 @@ func TestOnlyWhatTheLinkDidNotCarryIsRetried(t *testing.T) {
 		t.Error("a call no reply answered in time was not retried, want it retried for the procedures retryable names")
 	}
 }
+
+// A procedure outside the closed set is refused rather than walked: a second
+// run of it could give a different result, so no link in the pool is tried for
+// it (macula-go#74).
+func TestAProcedureOutsideTheSetIsNotWalked(t *testing.T) {
+	s := teststation.Start(t, profile.PQPure, "not retryable")
+	realm := teststation.NewRealm(t, profile.PQPure, "not retryable", org)
+	p := connectWith(t, "not retryable caller", realm, func(*Opts) {}, s)
+	eventually(t, "the link up", func() bool { return upCount(p) == 1 })
+	op := dhtOp[struct{}]{name: procedure, call: func(*stationlink.Link) (struct{}, error) { return struct{}{}, nil }}
+	if _, err := firstAnswer(p, op); !errors.Is(err, ErrNotRetryable) {
+		t.Errorf("firstAnswer: %v, want ErrNotRetryable", err)
+	}
+	if n := s.Asked(p.NodeID(), procedure); n != 0 {
+		t.Errorf("the station was asked %d times, want never", n)
+	}
+}
