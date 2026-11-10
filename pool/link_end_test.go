@@ -171,19 +171,24 @@ func TestAStationAnswerIsFinalAndIsNotAskedAgain(t *testing.T) {
 }
 
 // A station that redials gets a new link, and an operation that has already
-// asked it does not ask it again: the walk is keyed by the station, and no more
-// stations are asked than the pool has (macula-go#74).
+// asked it does not ask it again: the walk is keyed by the station, not by the
+// link, so a flapping station cannot be asked twice in one operation
+// (macula-go#74).
 //
-// a is asked first and drops mid-request; the operation moves to b, which
-// holds it until a's link is up again and then drops too. No link is left and a
-// has been asked already, so the operation ends rather than asking a twice.
+// a is asked first and drops mid-request, so the operation moves to b; b holds
+// the request until a's link is up again and then drops too. The station
+// already asked is live again and the fastest of the rest, so a walk keyed by
+// the link goes back to it while a walk keyed by the station goes on to c. The
+// station that answers says which walk ran.
 func TestAFlappingStationIsAskedOnceInOneOperation(t *testing.T) {
 	a := teststation.Start(t, profile.PQPure, "flap a")
 	b := teststation.Start(t, profile.PQPure, "flap b")
+	c := teststation.Start(t, profile.PQPure, "flap c")
 	realm := teststation.NewRealm(t, profile.PQPure, "flapping", org)
-	p := connectWith(t, "flap caller", realm, func(*Opts) {}, a, b)
-	eventually(t, "both links up", func() bool { return upCount(p) == 2 })
-	measuredRTT(t, map[[32]byte]time.Duration{a.NodeID: 5 * time.Millisecond, b.NodeID: 90 * time.Millisecond})
+	p := connectWith(t, "flap caller", realm, func(*Opts) {}, a, b, c)
+	eventually(t, "every link up", func() bool { return upCount(p) == 3 })
+	measuredRTT(t, map[[32]byte]time.Duration{
+		a.NodeID: 5 * time.Millisecond, b.NodeID: 50 * time.Millisecond, c.NodeID: 90 * time.Millisecond})
 	a.Silence(p.NodeID(), 30*time.Second)
 	b.Silence(p.NodeID(), 30*time.Second)
 	_, key := heldRecord(t, teststation.Key(t, profile.PQPure, "flap record"), "held nowhere")
@@ -202,12 +207,14 @@ func TestAFlappingStationIsAskedOnceInOneOperation(t *testing.T) {
 		}
 		b.Drop(p.NodeID())
 	}()
-	got := answered(t, out)
-	if got.err == nil {
-		t.Errorf("the operation answered %d records, want the error of an operation no link carried", got.found)
+	if got := answered(t, out); got.err != nil {
+		t.Errorf("the operation failed with %v, want the answer of the station it had not asked", got.err)
 	}
 	if n := a.Asked(p.NodeID(), stationlink.ProcedureFindRecords); n != 0 {
-		t.Errorf("the station that redialed was asked again and answered %d times, want never", n)
+		t.Errorf("the station that redialed was asked and answered %d times, want never: the walk is keyed by the link", n)
+	}
+	if n := c.Asked(p.NodeID(), stationlink.ProcedureFindRecords); n != 1 {
+		t.Errorf("the station that had not been asked answered %d times, want once", n)
 	}
 }
 
