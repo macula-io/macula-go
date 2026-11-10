@@ -53,6 +53,7 @@ type testStation struct {
 	floor    handshake.Floor // the station's handshake floor per client, nil for none
 	client   handshake.Client
 	refused  int // handshakes refused before one completed
+	conn     *quic.Conn
 	stream   *quic.Stream
 	writer   *frameWriter
 	received chan []byte
@@ -183,7 +184,7 @@ func (s *testStation) handshaken(ctx context.Context, conn *quic.Conn) bool {
 		return false
 	}
 	s.mu.Lock()
-	s.client, s.stream, s.writer = client, stream, writer
+	s.client, s.conn, s.stream, s.writer = client, conn, stream, writer
 	s.mu.Unlock()
 	close(s.accepted)
 	s.serveFrames(reader, writer)
@@ -367,6 +368,17 @@ func (s *testStation) waitAccepted() {
 }
 
 // next is the next frame the client sent after HELLO, as CBOR bytes.
+// dropConn closes the client's connection with QUIC application code 0, as a
+// station that drops a caller's link mid-request does.
+func (s *testStation) dropConn() {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn != nil {
+		_ = conn.CloseWithError(0, "dropped")
+	}
+}
+
 func (s *testStation) next() []byte {
 	s.t.Helper()
 	select {
