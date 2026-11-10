@@ -63,6 +63,9 @@ var (
 	ErrInvalidOpts = errors.New("pool: invalid options")
 	// ErrNoLink is an operation with no link up to carry it.
 	ErrNoLink = errors.New("pool: no station link is up")
+	// ErrNotRetryable is a station procedure that is not one a pool walks its
+	// links for: a second run of it could give a different result.
+	ErrNotRetryable = errors.New("pool: the station procedure is not one a failed link is retried for")
 	// ErrClosed is an operation on a closed pool.
 	ErrClosed = errors.New("pool: closed")
 )
@@ -379,7 +382,7 @@ func (p *Pool) selection(tier *Tier) []*stationlink.Link {
 		if tier != nil && m.tier != *tier {
 			continue
 		}
-		if link := m.current(); link != nil {
+		if link := m.live(); link != nil {
 			up = append(up, link)
 		}
 	}

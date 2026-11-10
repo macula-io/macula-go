@@ -362,6 +362,25 @@ func (l *Link) Err() error {
 	return l.err
 }
 
+// NotCarried reports whether err says the link did not carry a call: the CALL
+// could not be written, so the station never received it, or the link ended
+// while the call waited and err is that ending — whatever ended it, a remote
+// close, a GOODBYE, an idle timeout or a malformed frame included.
+//
+// A station's own answer is not that, and neither is the caller's deadline or a
+// call the link refused to prepare: those say something about the request or
+// the caller, nothing about reaching the station. Neither is ErrCallTimeout,
+// which leaves open whether the station received the call; a caller that may
+// send a request twice decides that for itself.
+func (l *Link) NotCarried(err error) bool {
+	var notSent *callNotSent
+	if errors.As(err, &notSent) {
+		return true
+	}
+	ended := l.Err()
+	return ended != nil && errors.Is(err, ended)
+}
+
 // LastHeard is when the link last received a frame from its station that it
 // read (an EVENT, REGISTER_ACK, STATUS, liveness answer or any other), in
 // Unix milliseconds; its HELLO's time until the first.
