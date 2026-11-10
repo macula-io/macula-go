@@ -144,3 +144,22 @@ func TestARelayErrorOfAnUnknownCodeIsCountedAsEnumUnknown(t *testing.T) {
 		t.Errorf("the link ended: %v", err)
 	}
 }
+
+// A call over the frame cap is refused before it is written, and is not named
+// as one the link did not carry: the same request is over the cap on every
+// link, so there is nothing to move on to (macula-go#74).
+func TestACallOverTheFrameCapIsNotOneTheLinkDidNotCarry(t *testing.T) {
+	link, _ := linkWithStation(t, profile.PQPure)
+	c := stationCall(ProcedureFindRecord, cbor.Bytes(make([]byte, MaxFrameBytes)))
+	_, err := callWithin(t, link, c)
+	if err == nil {
+		t.Fatal("a call over the cap was sent, want it refused before anything is written")
+	}
+	var notSent *callNotSent
+	if errors.As(err, &notSent) {
+		t.Error("a call over the cap was named as one the link did not carry, want the cap's refusal")
+	}
+	if link.NotCarried(err) {
+		t.Error("a call over the cap was not carried, want it refused as one every link refuses")
+	}
+}

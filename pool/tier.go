@@ -84,7 +84,21 @@ var rttOf = func(l *stationlink.Link) (time.Duration, bool) { return l.RTT() }
 // Random is the one request the order is left out of.
 func (p *Pool) targets() []*stationlink.Link {
 	active := p.ActiveTier()
-	links := p.selection(&active)
+	return p.ordered(p.selection(&active))
+}
+
+// anyTier is every link up, in the order targets gives, whichever tier it is
+// on. It is what a station procedure walks onto when the active tier has no
+// link up at all: the fallback is the active tier from the moment the last
+// public link ends, and an operation whose own link just ended can see that
+// ending a moment before the pool's own tier reading does (macula-go#74).
+func (p *Pool) anyTier() []*stationlink.Link {
+	return p.ordered(p.selection(nil))
+}
+
+// ordered is links in the pool's selection order: fastest measured round trip
+// first, and the pool's own order for Random.
+func (p *Pool) ordered(links []*stationlink.Link) []*stationlink.Link {
 	if p.opts.LinkSelection == Random {
 		return links
 	}

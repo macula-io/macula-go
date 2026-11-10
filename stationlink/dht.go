@@ -53,19 +53,32 @@ const (
 // maxRefusalReasonBytes bounds a refused put's reason.
 const maxRefusalReasonBytes = 64
 
+// The station procedures this library calls, each written once: the calls
+// below and a pool's retry rule name them here rather than spelling them out.
+const (
+	// ProcedurePutRecord stores a signed record in a station's DHT.
+	ProcedurePutRecord = "_dht.put_record"
+	// ProcedureFindRecord reads the record under a key.
+	ProcedureFindRecord = "_dht.find_record"
+	// ProcedureFindRecords reads every record under a key.
+	ProcedureFindRecords = "_dht.find_records"
+	// ProcedureFindRecordsByType reads every record of a type.
+	ProcedureFindRecordsByType = "_dht.find_records_by_type"
+)
+
 // dhtResults are, per procedure, its results and the keys each carries besides
 // v and result, with their rules.
 var dhtResults = map[string]map[string]map[string]func(cbor.Value) bool{
-	"_dht.put_record": {
+	ProcedurePutRecord: {
 		"ok":      {},
 		"refused": {"reason": boundedText(maxRefusalReasonBytes)},
 	},
-	"_dht.find_record": {
+	ProcedureFindRecord: {
 		"record":    {"record": isBytes},
 		"not_found": {},
 	},
-	"_dht.find_records":         {"records": {"records": isList}},
-	"_dht.find_records_by_type": {"records": {"records": isList}},
+	ProcedureFindRecords:       {"records": {"records": isList}},
+	ProcedureFindRecordsByType: {"records": {"records": isList}},
 }
 
 func isBytes(v cbor.Value) bool { _, ok := v.AsBytes(); return ok }
@@ -143,7 +156,7 @@ func (l *Link) dhtCall(ctx context.Context, procedure, field string, value cbor.
 // PutRecord stores a signed record, as its wire bytes, in the station's DHT. A
 // refusal is a *RecordRefusedError naming the custodian's reason.
 func (l *Link) PutRecord(ctx context.Context, wire []byte) error {
-	reply, err := l.dhtCall(ctx, "_dht.put_record", "record", cbor.Bytes(wire))
+	reply, err := l.dhtCall(ctx, ProcedurePutRecord, "record", cbor.Bytes(wire))
 	if err != nil {
 		return err
 	}
@@ -157,7 +170,7 @@ func (l *Link) PutRecord(ctx context.Context, wire []byte) error {
 // FindRecord is the record stored under key, verified, or ErrRecordNotFound.
 // A record that does not verify is refused with Verify's error.
 func (l *Link) FindRecord(ctx context.Context, key [32]byte) (record.Verified, error) {
-	reply, err := l.dhtCall(ctx, "_dht.find_record", "key", cbor.Bytes(key[:]))
+	reply, err := l.dhtCall(ctx, ProcedureFindRecord, "key", cbor.Bytes(key[:]))
 	if err != nil {
 		return record.Verified{}, err
 	}
@@ -171,13 +184,13 @@ func (l *Link) FindRecord(ctx context.Context, key [32]byte) (record.Verified, e
 // FindRecords is every record stored under key that verifies, and how many
 // the station returned that did not.
 func (l *Link) FindRecords(ctx context.Context, key [32]byte) ([]record.Verified, int, error) {
-	return l.verifiedList(ctx, "_dht.find_records", "key", cbor.Bytes(key[:]))
+	return l.verifiedList(ctx, ProcedureFindRecords, "key", cbor.Bytes(key[:]))
 }
 
 // FindRecordsByType is every record of type t the station holds that
 // verifies, and how many it returned that did not.
 func (l *Link) FindRecordsByType(ctx context.Context, t record.Type) ([]record.Verified, int, error) {
-	return l.verifiedList(ctx, "_dht.find_records_by_type", "type", cbor.Uint64(uint64(t)))
+	return l.verifiedList(ctx, ProcedureFindRecordsByType, "type", cbor.Uint64(uint64(t)))
 }
 
 func (l *Link) verifiedList(ctx context.Context, procedure, field string, value cbor.Value) ([]record.Verified, int, error) {

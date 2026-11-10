@@ -58,6 +58,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implementation runs — another KEK, a flipped byte in the ciphertext and in the
   header, and a file shorter than its header.
 
+### Fixed
+
+- **A station procedure in flight when its link ends is asked again on the
+  next link, and nothing that could give a different result is
+  (macula-go#74).** A pool's DHT reads and puts moved to the next link only on
+  a call timeout, a closed link or a lost liveness probe, so a link the far end
+  dropped mid-request failed the whole operation with the transport's own
+  error — `Application error 0x0 (remote): dropped` — even with another link up
+  that could answer. A link that did not carry the call is now recognised for
+  every way a link ends, by asking the link rather than by listing transport
+  errors, and a failed write is named as one the station never received. Two
+  properties keep that safe, both new: the procedures a pool walks its links
+  for are a closed set of the four that a second run cannot make differ (the
+  three `_dht.*` finds and a put of the same signed bytes, which is the same
+  slot and version, and a station keeps the newest version of a slot), and a
+  station is asked at most once per operation, keyed by node_id rather than by
+  a link a redial replaces, bounded by the pool's member count. The walk also
+  reads the active tier again after each failure, so an operation whose last
+  public link ends continues on the fallback, which is the active tier from
+  that moment. `stationlink.NotCarried` and `stationlink.Procedure*` are new;
+  `pool.ErrNotRetryable` names a procedure outside the set. A call to a
+  provider is unchanged: it still moves on only before the CALL is sent.
+
 ## [0.30.0] - 2026-10-30
 
 Phase 1 of macula-station#129: a subscription says in-band, on `Events()`,

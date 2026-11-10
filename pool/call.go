@@ -638,7 +638,8 @@ func (p *Pool) forget(key resolvedKey) {
 // FindRecord asks the pool's links in turn for the record under key, until one
 // answers.
 func (p *Pool) FindRecord(ctx context.Context, key [32]byte) (record.Verified, error) {
-	return firstAnswer(p, func(link *stationlink.Link) (record.Verified, error) { return link.FindRecord(ctx, key) })
+	return firstAnswer(p, stationlink.ProcedureFindRecord,
+		func(link *stationlink.Link) (record.Verified, error) { return link.FindRecord(ctx, key) })
 }
 
 // FindRecords asks the pool's links in turn for the records under key.
@@ -647,7 +648,7 @@ func (p *Pool) FindRecords(ctx context.Context, key [32]byte) ([]record.Verified
 		records []record.Verified
 		dropped int
 	}
-	out, err := firstAnswer(p, func(link *stationlink.Link) (found, error) {
+	out, err := firstAnswer(p, stationlink.ProcedureFindRecords, func(link *stationlink.Link) (found, error) {
 		records, dropped, err := link.FindRecords(ctx, key)
 		return found{records, dropped}, err
 	})
@@ -660,7 +661,7 @@ func (p *Pool) FindRecordsByType(ctx context.Context, t record.Type) ([]record.V
 		records []record.Verified
 		dropped int
 	}
-	out, err := firstAnswer(p, func(link *stationlink.Link) (found, error) {
+	out, err := firstAnswer(p, stationlink.ProcedureFindRecordsByType, func(link *stationlink.Link) (found, error) {
 		records, dropped, err := link.FindRecordsByType(ctx, t)
 		return found{records, dropped}, err
 	})
@@ -670,37 +671,103 @@ func (p *Pool) FindRecordsByType(ctx context.Context, t record.Type) ([]record.V
 // PutRecord puts a signed record through the pool's links in turn, until one
 // station takes it.
 func (p *Pool) PutRecord(ctx context.Context, wire []byte) error {
-	_, err := firstAnswer(p, func(link *stationlink.Link) (struct{}, error) {
+	_, err := firstAnswer(p, stationlink.ProcedurePutRecord, func(link *stationlink.Link) (struct{}, error) {
 		return struct{}{}, link.PutRecord(ctx, wire)
 	})
 	return err
 }
 
-// firstAnswer runs ask on the active tier's links in selection order and
-// returns the first answer, moving on only when a link could not be asked: a
-// station's own answer, not_found included, is final.
-func firstAnswer[T any](p *Pool, ask func(*stationlink.Link) (T, error)) (T, error) {
+// retryable are the station procedures a failed link may be retried for: ones
+// whose second run cannot give a different result than their first. The three
+// finds change nothing; a put carries the same signed bytes, so the same slot
+// and the same version, and a station keeps the newest version of a slot, so a
+// late duplicate cannot overwrite a newer one.
+//
+// The set is closed on purpose (macula-go#74): a link that ends may already
+// have received the call, and a procedure outside this set must not be run
+// twice. A test pins the set by name, so a fifth operation is a visible change.
+var retryable = map[string]bool{
+	stationlink.ProcedureFindRecord:        true,
+	stationlink.ProcedureFindRecords:       true,
+	stationlink.ProcedureFindRecordsByType: true,
+	stationlink.ProcedurePutRecord:         true,
+}
+
+// firstAnswer runs ask on the pool's links in selection order and returns the
+// first answer, moving on only when the link did not carry the call: a
+// station's own answer, not_found included, is final. Since procedure is one of
+// retryable, a link that ends after the station received the call may be asked
+// of another station (macula-go#74).
+//
+// The walk reads targets again after each failure, so it follows the active
+// tier as it stands: an operation whose last public link ends continues on the
+// fallback, which is the active tier from that moment. It asks a station at
+// most once, keyed by the station's node_id rather than by the link, because a
+// member that redials gets a new link, and it asks no more stations than the
+// pool has members.
+func firstAnswer[T any](p *Pool, procedure string, ask func(*stationlink.Link) (T, error)) (T, error) {
 	var zero T
-	links := p.targets()
-	if len(links) == 0 {
-		return zero, ErrNoLink
+	if !retryable[procedure] {
+		return zero, fmt.Errorf("%w: %s", ErrNotRetryable, procedure)
 	}
+	asked := make(map[[32]byte]bool)
 	var errs []error
-	for _, link := range links {
+	for range p.memberCount() {
+		link, ok := p.nextLink(asked)
+		if !ok {
+			break
+		}
+		asked[link.StationNodeID()] = true
 		out, err := ask(link)
-		if err == nil || !unreachable(err) {
+		if err == nil || !unreachable(link, err) {
 			return out, err
 		}
 		errs = append(errs, err)
 	}
+	if len(errs) == 0 {
+		return zero, ErrNoLink
+	}
 	return zero, errors.Join(errs...)
 }
 
-// unreachable is a failure to reach the station at all, as opposed to its
-// answer.
-func unreachable(err error) bool {
-	return errors.Is(err, stationlink.ErrCallTimeout) || errors.Is(err, stationlink.ErrClosed) ||
-		errors.Is(err, stationlink.ErrLivenessLost)
+// nextLink is the fastest link this operation has not asked yet: one of the
+// active tier's while it has a link up, and of any tier while it has none. The
+// tier is read again on each attempt, so a walk follows it as it stands.
+func (p *Pool) nextLink(asked map[[32]byte]bool) (*stationlink.Link, bool) {
+	active := p.targets()
+	if link, ok := unasked(active, asked); ok {
+		return link, true
+	}
+	if len(active) != 0 {
+		return nil, false
+	}
+	return unasked(p.anyTier(), asked)
+}
+
+// unasked is the first of links whose station this operation has not asked.
+func unasked(links []*stationlink.Link, asked map[[32]byte]bool) (*stationlink.Link, bool) {
+	for _, link := range links {
+		if !asked[link.StationNodeID()] {
+			return link, true
+		}
+	}
+	return nil, false
+}
+
+// memberCount is how many stations the pool holds, which bounds a walk: no
+// operation asks more stations than the pool has, however often one of them
+// redials.
+func (p *Pool) memberCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.members)
+}
+
+// unreachable is the link not carrying the call, as opposed to the station's
+// answer. A call that timed out is retried too, which only retryable
+// procedures may be.
+func unreachable(link *stationlink.Link, err error) bool {
+	return link.NotCarried(err) || errors.Is(err, stationlink.ErrCallTimeout)
 }
 
 // StreamCall is a streaming session to open on an org procedure: its realm and
