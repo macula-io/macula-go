@@ -40,6 +40,10 @@ type member struct {
 	// time a dial fails.
 	up     chan struct{}
 	failed chan struct{}
+	// steady is the timer that clears attempts once the link has stayed up the
+	// steady-up window; stop ends it with the member, so a closed pool holds no
+	// timer waiting on a link it no longer has.
+	steady *time.Timer
 }
 
 func (p *Pool) startMember(target transport.Target, direct bool, tier Tier) *member {
@@ -111,7 +115,7 @@ func (m *member) failedDial(err error) {
 	close(m.failed)
 	m.failed = make(chan struct{})
 	m.mu.Unlock()
-	m.pool.event(LinkEvent{Station: m.target.ExpectedNodeID, Direct: m.direct, Err: err})
+	m.pool.event(LinkEvent{Station: m.target.ExpectedNodeID, Direct: m.direct, Tier: m.tier, Err: err})
 }
 
 // linked holds the member's new link until it ends or the pool closes, then
@@ -135,7 +139,7 @@ func (m *member) cameUp(link *stationlink.Link) {
 	close(m.up)
 	m.up = make(chan struct{})
 	m.mu.Unlock()
-	m.pool.event(LinkEvent{Station: m.target.ExpectedNodeID, Direct: m.direct, Up: true})
+	m.pool.event(LinkEvent{Station: m.target.ExpectedNodeID, Direct: m.direct, Tier: m.tier, Up: true})
 	m.armSteadyUp(link)
 	m.pool.replay(link)
 	m.pool.noticeTier(before)
@@ -148,7 +152,7 @@ func (m *member) wentDown(link *stationlink.Link) {
 	m.mu.Lock()
 	m.link, m.err = nil, link.Err()
 	m.mu.Unlock()
-	m.pool.event(LinkEvent{Station: m.target.ExpectedNodeID, Direct: m.direct, Err: link.Err()})
+	m.pool.event(LinkEvent{Station: m.target.ExpectedNodeID, Direct: m.direct, Tier: m.tier, Err: link.Err()})
 	m.pool.noticeTier(before)
 }
 
@@ -156,8 +160,9 @@ func (m *member) wentDown(link *stationlink.Link) {
 // steady-up window. The timer names the link that completed the handshake: a
 // link that connects and dies before the window elapses leaves a timer that
 // clears nothing, so a connect-then-die loop keeps the backoff it accumulated.
+// Its timer is kept so that stop ends it with the member.
 func (m *member) armSteadyUp(link *stationlink.Link) {
-	time.AfterFunc(m.pool.opts.Redial.SteadyUp, func() {
+	timer := time.AfterFunc(m.pool.opts.Redial.SteadyUp, func() {
 		if m.current() != link {
 			return
 		}
@@ -165,6 +170,12 @@ func (m *member) armSteadyUp(link *stationlink.Link) {
 		m.attempts = 0
 		m.mu.Unlock()
 	})
+	m.mu.Lock()
+	if m.steady != nil {
+		m.steady.Stop()
+	}
+	m.steady = timer
+	m.mu.Unlock()
 }
 
 // pause waits out the member's retry, and reports whether it should dial again,
@@ -197,25 +208,32 @@ func (m *member) pause() bool {
 	}
 }
 
+// unpark leaves the parked state, and drops a re-arm token that arrived as the
+// wait ended: rearm only sends while parked and sends under this lock, so a
+// token found here is one the wait it was meant for has already finished, and
+// the next pause must not mistake it for its own.
 func (m *member) unpark() {
 	m.mu.Lock()
 	m.parked = false
+	select {
+	case <-m.wake:
+	default:
+	}
 	m.mu.Unlock()
 }
 
 // rearm restarts a parked retry from the redial base with its count cleared.
 // A member that is dialing or up has no pending retry to restart, and is left
-// with the count it earned.
+// with the count it earned. The token is sent under the lock that unpark takes,
+// so a re-arm either reaches the wait it was meant for or is dropped with it,
+// never carried into the next one.
 func (m *member) rearm() {
 	m.mu.Lock()
-	parked := m.parked
-	if parked {
-		m.attempts = 0
-	}
-	m.mu.Unlock()
-	if !parked {
+	defer m.mu.Unlock()
+	if !m.parked {
 		return
 	}
+	m.attempts = 0
 	select {
 	case m.wake <- struct{}{}:
 	default:
@@ -230,9 +248,16 @@ func (m *member) dial() (*stationlink.Link, error) {
 	return stationlink.Dial(ctx, cfg)
 }
 
-// stop waits for the member's link to close with the pool.
+// stop waits for the member's link to close with the pool, and ends the timer
+// that link armed: nothing of the member outlives it.
 func (m *member) stop() {
 	<-m.done
+	m.mu.Lock()
+	if m.steady != nil {
+		m.steady.Stop()
+		m.steady = nil
+	}
+	m.mu.Unlock()
 }
 
 // drop retires a member the pool no longer keeps: its link closes, it is not

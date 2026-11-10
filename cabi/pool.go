@@ -199,7 +199,7 @@ func (lp *livePool) linkEvent(e pool.LinkEvent) {
 		reason = e.Err.Error()
 	}
 	lp.pushEvent(map[string]any{"kind": "link", "station": hex.EncodeToString(e.Station[:]),
-		"direct": flag(e.Direct), "up": flag(e.Up), "error": reason})
+		"tier": e.Tier.String(), "direct": flag(e.Direct), "up": flag(e.Up), "error": reason})
 }
 
 func (lp *livePool) issuerError(err error) {

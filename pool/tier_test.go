@@ -208,6 +208,37 @@ func TestAStationDialledForACallIsPublic(t *testing.T) {
 	}
 }
 
+// Every link event names the tier its station was named in, so a binding can
+// say "offline: on the LAN fallback" from the event that took the link down, not
+// only from a status read afterwards (macula#201 §6).
+func TestALinkEventNamesTheTier(t *testing.T) {
+	public, fallback, realm := tiers(t)
+	events := make(chan LinkEvent, 32)
+	p := connectTieredWith(t, "tier events", realm, []*teststation.Station{public},
+		[]*teststation.Station{fallback}, func(o *Opts) {
+			o.OnLinkEvent = func(e LinkEvent) { events <- e }
+		})
+	eventually(t, "both links up", func() bool { return upCount(p) == 2 })
+	want := map[[32]byte]Tier{public.NodeID: TierPublic, fallback.NodeID: TierFallback}
+	seen := map[[32]byte]Tier{}
+	deadline := time.After(5 * time.Second)
+	for len(seen) < len(want) {
+		select {
+		case e := <-events:
+			if e.Up {
+				seen[e.Station] = e.Tier
+			}
+		case <-deadline:
+			t.Fatalf("%d stations reported a link event, want %d", len(seen), len(want))
+		}
+	}
+	for station, tier := range seen {
+		if tier != want[station] {
+			t.Errorf("the link event for %x names tier %v, want %v", station[:4], tier, want[station])
+		}
+	}
+}
+
 // measuredRTT makes the pool read every link's round trip from rtts until the
 // test ends: the RTT a real handshake settles on is not something a test can
 // choose.

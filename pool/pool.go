@@ -89,8 +89,12 @@ const (
 type LinkEvent struct {
 	Station [32]byte
 	Direct  bool
-	Up      bool
-	Err     error
+	// Tier is the list the link's station was named in, so a binding can report
+	// "offline: on the LAN fallback" rather than a bare link going down. A
+	// station dialled for a call is TierPublic.
+	Tier Tier
+	Up   bool
+	Err  error
 }
 
 // Opts configure a pool. IdentityKey is required; zero values take macula's

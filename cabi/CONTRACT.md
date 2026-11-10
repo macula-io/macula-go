@@ -263,14 +263,18 @@ Since v0.31.0 (macula#201's tiers, as the Erlang SDK keeps them).
   registrations (a subscription, a served procedure, an advertisement) go to
   every link of both tiers, and it is that which lets two nodes on different
   tiers reach each other.
-- A link of a tier that is not active is redialled on a backoff schedule
-  instead of `respawn_delay_ms`: five seconds at first, doubling per failed
-  retry up to five minutes, and a link that stays up a minute clears its
-  station's count. A tier switch restarts the newly active tier's pending
-  retries at the first wait.
+- A link of a tier that is not active is redialled on the backoff schedule
+  `pool.Redial`'s zero value takes (`pool.DefaultRedialBase` is the floor and
+  the first retry's exact wait, `pool.DefaultRedialFactor` multiplies it per
+  failed retry up to `pool.DefaultRedialCap`, and a link that stays up
+  `pool.DefaultRedialSteadyUp` clears its station's count) instead of
+  `respawn_delay_ms`. A tier switch restarts the newly active tier's pending
+  retries at the floor.
 - `macula_pool_status`'s `tier` says which list each link's station was named
   in (`public` or `fallback`); a station the pool dialled for a call is
-  `public`.
+  `public`. A link event carries the same `tier`, so a binding reports the
+  tier on the event that took the link down, not only in a status read
+  afterwards.
 
 ## Confidentiality
 
