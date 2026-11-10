@@ -38,6 +38,18 @@ var (
 	ErrLivenessLost = errors.New("stationlink: the station missed two liveness probes")
 )
 
+// callNotSent is a CALL the link could not write: the station never received
+// it, so the same request may be sent on another link.
+type callNotSent struct {
+	err error
+}
+
+func (e *callNotSent) Error() string {
+	return "stationlink: the call could not be sent: " + e.err.Error()
+}
+
+func (e *callNotSent) Unwrap() error { return e.err }
+
 // Call is one request: the realm and procedure it names, the node it targets
 // (the station itself when zero, as for _dht.* and _macula.ping; the
 // provider's node_id for an org procedure), its payload, how long to wait for
@@ -190,7 +202,12 @@ func (l *Link) callOnce(ctx context.Context, timerC <-chan time.Time, deadline u
 	l.mu.Unlock()
 	defer l.forgetCall(id)
 	if err := l.writer.write(cbor.Encode(wire), MaxFrameBytes); err != nil {
-		return cbor.Value{}, err
+		if errors.Is(err, ErrFrameTooLarge) {
+			// The same CALL is over the cap on every link, so there is
+			// nowhere to move on to.
+			return cbor.Value{}, err
+		}
+		return cbor.Value{}, &callNotSent{err}
 	}
 	select {
 	case outcome := <-pending.outcome:

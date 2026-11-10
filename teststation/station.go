@@ -88,6 +88,16 @@ type Station struct {
 	refuseUntil time.Time
 	// verdict judges each registration (Judge), nil accepting every one.
 	verdict func(kind string) (reason string, silent bool)
+	// asked counts the station's own procedures each client's CALLs were
+	// answered for, by client and procedure: a frame a Silence holds back is
+	// never answered, so it is not counted.
+	asked map[askedKey]int
+}
+
+// askedKey is one client's CALLs to one procedure, counted.
+type askedKey struct {
+	nodeID    [32]byte
+	procedure string
 }
 
 type routeKey struct {
@@ -173,7 +183,8 @@ func Start(t T, p profile.Profile, name string) *Station {
 	port, _ := strconv.Atoi(portText)
 	s := &Station{t: t, Profile: p, Key: key, NodeID: nodeID, Host: host, Port: uint16(port), leaf: leaf, binding: binding,
 		conns: map[[32]byte]*conn{}, routes: map[routeKey]*conn{}, pending: map[[16]byte]*conn{},
-		dht: &dht{records: map[slot][]byte{}}, accepted: make(chan [32]byte, 64), listener: listener}
+		dht: &dht{records: map[slot][]byte{}}, accepted: make(chan [32]byte, 64), listener: listener,
+		asked: map[askedKey]int{}}
 	s.putOwnEndpoint()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
@@ -299,6 +310,23 @@ func (s *Station) Subscribed(nodeID, realm [32]byte, topic string) bool {
 	defer s.mu.Unlock()
 	c := s.conns[nodeID]
 	return c != nil && c.topics[routeKey{realm, topic}]
+}
+
+// countAsked counts a CALL the station answered for procedure, by the client
+// that sent it.
+func (s *Station) countAsked(nodeID [32]byte, procedure string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.asked[askedKey{nodeID, procedure}]++
+}
+
+// Asked counts the CALLs client nodeID sent to procedure that this station
+// answered. A frame a Silence held back is counted nowhere, and a call the
+// station relayed to another connection is not one of its own procedures.
+func (s *Station) Asked(nodeID [32]byte, procedure string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.asked[askedKey{nodeID, procedure}]
 }
 
 // ShareDHT makes the stations hold one record store, as a DHT replicating
@@ -587,6 +615,7 @@ func (s *Station) relayError(c *conn, request frame.VerifiedRequest, code string
 // {v 1, field} in, else malformed_args before any DHT work; {v 1, result, ...}
 // out.
 func (s *Station) answer(c *conn, request frame.VerifiedRequest) {
+	s.countAsked(c.nodeID, request.Procedure)
 	result, ok := s.dhtAnswer(c, request)
 	if !ok {
 		return
