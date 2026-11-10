@@ -8,6 +8,20 @@ import (
 	"github.com/macula-io/macula-go/teststation"
 )
 
+// seenWithin reports whether ok held at some point within d, without failing
+// the test: a check of the standing registration and the delivery it is for are
+// both worth reporting, not the first one alone.
+func seenWithin(d time.Duration, ok func() bool) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if ok() {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return false
+}
+
 // Standing registrations are state, not traffic: they go on every link of both
 // tiers (macula#201 §2), and that is what lets two nodes on different tiers
 // still reach each other. A subscription taken while the public tier is up
@@ -25,10 +39,13 @@ func TestASubscriptionIsOnBothTiersAndHearsTheOtherOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
-	eventually(t, "subscribed on both tiers", func() bool {
-		return public.Subscribed(subscriber.NodeID(), realm.ID, topic) &&
-			fallback.Subscribed(subscriber.NodeID(), realm.ID, topic)
-	})
+	subscribed := func(s *teststation.Station) bool {
+		return s.Subscribed(subscriber.NodeID(), realm.ID, topic)
+	}
+	if !seenWithin(5*time.Second, func() bool { return subscribed(public) && subscribed(fallback) }) {
+		t.Errorf("the subscription is at the public station %v and the fallback station %v, want both",
+			subscribed(public), subscribed(fallback))
+	}
 	// The publisher's public tier is down, so everything it sends goes to the
 	// fallback station: the one the subscriber's subscription has to be at too.
 	publisher := connect(t, "fallback publisher", realm, fallback)
@@ -54,9 +71,11 @@ func TestAServedProcedureIsOnBothTiersAndAnswersTheOtherOne(t *testing.T) {
 		t.Fatalf("Serve: %v", err)
 	}
 	t.Cleanup(func() { _ = served.Stop() })
-	eventually(t, "advertised on both tiers", func() bool {
-		return public.Advertised(realm.ID, procedure) && fallback.Advertised(realm.ID, procedure)
-	})
+	advertised := func(s *teststation.Station) bool { return s.Advertised(realm.ID, procedure) }
+	if !seenWithin(5*time.Second, func() bool { return advertised(public) && advertised(fallback) }) {
+		t.Errorf("the advertisement is at the public station %v and the fallback station %v, want both",
+			advertised(public), advertised(fallback))
+	}
 	// A caller whose only link is the fallback station resolves the procedure
 	// through the advertisement that station holds.
 	caller := connect(t, "fallback caller", realm, fallback)
