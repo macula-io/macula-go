@@ -50,6 +50,11 @@ func (r Redial) checked() (Redial, error) {
 	return r, nil
 }
 
+// randBelow is the uniform draw a wait spreads over its range above the floor.
+// It is a variable only so that a test can place a draw at either end of that
+// range instead of waiting for one; wait is its only caller.
+var randBelow = func(n time.Duration) time.Duration { return rand.N(n) }
+
 // wait is the wait before a failed retry number attempt is made again
 // (macula#201 §3):
 //
@@ -63,7 +68,7 @@ func (r Redial) wait(attempt int) time.Duration {
 	if ceiling <= r.Base {
 		return r.Base
 	}
-	return r.Base + rand.N(ceiling-r.Base+1)
+	return r.Base + randBelow(ceiling-r.Base+1)
 }
 
 // grown is base*factor^attempt, stopping as soon as it reaches the cap: a value

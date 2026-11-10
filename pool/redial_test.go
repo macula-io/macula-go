@@ -64,31 +64,98 @@ func within(t *testing.T, d time.Duration, what string, ok func() bool) {
 // The wait before a retry grows by the factor per failed attempt, is never
 // below the base and never above the cap, and is exactly the base on the first
 // attempt: the floor has no range above it to spread within yet.
-func TestTheRedialWaitGrowsFromTheBaseToTheCap(t *testing.T) {
+//
+// Growth is asserted on the draw's range rather than on one draw: a wait is
+// base plus a uniform draw over [0, ceiling-base], so a single draw can land
+// anywhere in it, and a test that reads one draw fails on its own about one run
+// in sixty. With the draw held at either end the formula is exact, and the real
+// draw is then checked only for the range every draw must be in.
+
+// checkedDefaults is macula's schedule with its defaults filled in.
+func checkedDefaults(t *testing.T) Redial {
+	t.Helper()
 	r, err := Redial{}.checked()
 	if err != nil {
 		t.Fatalf("the defaults are not a schedule: %v", err)
 	}
-	for range 100 {
+	return r
+}
+
+// theCeiling is the highest wait retry number attempt may reach: the base grown
+// by the factor per attempt, and never above the cap.
+func theCeiling(attempt int) time.Duration {
+	ceiling := DefaultRedialBase
+	for range attempt {
+		ceiling = min(DefaultRedialCap, ceiling*time.Duration(DefaultRedialFactor))
+	}
+	return ceiling
+}
+
+// drawsWith runs f with the schedule's draw answered by draw, the real draw put
+// back afterwards, so a test can place a wait at either end of its range.
+func drawsWith(t *testing.T, draw func(time.Duration) time.Duration, f func()) {
+	t.Helper()
+	real := randBelow
+	randBelow = draw
+	t.Cleanup(func() { randBelow = real })
+	f()
+}
+
+// A first retry waits the base and draws nothing: the floor has no range above
+// it to spread within yet.
+func TestAFirstRetryWaitsTheBaseWithNoDraw(t *testing.T) {
+	r := checkedDefaults(t)
+	drawsWith(t, func(n time.Duration) time.Duration {
+		t.Fatalf("a first retry drew from a range of %s it must not have", n)
+		return 0
+	}, func() {
 		if got := r.wait(0); got != DefaultRedialBase {
 			t.Fatalf("a first retry waits %s, want the base %s exactly", got, DefaultRedialBase)
 		}
-	}
-	ceiling := DefaultRedialBase
-	for attempt := range 20 {
-		if attempt > 0 {
-			ceiling = min(DefaultRedialCap, ceiling*time.Duration(DefaultRedialFactor))
+	})
+}
+
+// A draw at the bottom of its range waits exactly the base, whatever the
+// attempt: no wait is ever below the floor.
+func TestARetryAtTheBottomOfItsRangeWaitsTheBase(t *testing.T) {
+	r := checkedDefaults(t)
+	drawsWith(t, func(time.Duration) time.Duration { return 0 }, func() {
+		for attempt := range 20 {
+			if got := r.wait(attempt); got != DefaultRedialBase {
+				t.Fatalf("retry %d at the bottom of its range waits %s, want the base %s", attempt, got, DefaultRedialBase)
+			}
 		}
+	})
+}
+
+// A draw at the top of its range waits the ceiling, which grows by the factor
+// per attempt until it reaches the cap and stays there.
+func TestARetryAtTheTopOfItsRangeWaitsTheGrownCeiling(t *testing.T) {
+	r := checkedDefaults(t)
+	drawsWith(t, func(n time.Duration) time.Duration { return n - 1 }, func() {
+		for attempt := range 20 {
+			ceiling := theCeiling(attempt)
+			if got := r.wait(attempt); got != ceiling {
+				t.Fatalf("retry %d at the top of its range waits %s, want the ceiling %s", attempt, got, ceiling)
+			}
+		}
+		if got := theCeiling(19); got != DefaultRedialCap {
+			t.Fatalf("twenty attempts reach a ceiling of %s, want the cap %s", got, DefaultRedialCap)
+		}
+	})
+}
+
+// Every draw the schedule really makes lands inside its attempt's range.
+func TestARetryNeverWaitsOutsideItsAttemptsRange(t *testing.T) {
+	r := checkedDefaults(t)
+	for attempt := range 20 {
+		ceiling := theCeiling(attempt)
 		for range 20 {
 			got := r.wait(attempt)
 			if got < DefaultRedialBase || got > ceiling {
 				t.Fatalf("retry %d waits %s, outside the base %s to the ceiling %s", attempt, got, DefaultRedialBase, ceiling)
 			}
 		}
-	}
-	// The wait really does grow: a late retry reaches well past the base.
-	if got := r.wait(6); got <= DefaultRedialBase*time.Duration(DefaultRedialFactor) {
-		t.Errorf("a sixth retry waits %s, want it grown past twice the base", got)
 	}
 }
 
