@@ -8,6 +8,7 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/profile"
+	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
 )
@@ -258,11 +259,11 @@ func measuredRTT(t *testing.T, rtts map[[32]byte]time.Duration) {
 // (macula#201 §4, §9 scenario 6).
 //
 // The station measured faster is the later seed, so seed order alone would ask
-// the other one first. With station discovery on the order is the same one:
-// macula-go's pool does not call mcl-stations/list_stations (pool.go, the
-// package comment), so a discovered station is a direct link on the public
-// tier, and the sort in targets is all the order any of them gets. The
-// discovery gap itself is macula-go#73.
+// the other one first. Nor is there a second order for the procedure to take
+// when a station is learned of rather than seeded: macula-go's pool does not
+// call mcl-stations/list_stations at all (the package comment in pool.go), and
+// a station it dials for a call is a direct link on the public tier that
+// targets sorts with the rest. The discovery gap itself is macula-go#73.
 func TestAStationQueryGoesToTheLowestMeasuredRoundTrip(t *testing.T) {
 	slow := teststation.Start(t, profile.PQPure, "query rtt slow")
 	fast := teststation.Start(t, profile.PQPure, "query rtt fast")
@@ -276,6 +277,11 @@ func TestAStationQueryGoesToTheLowestMeasuredRoundTrip(t *testing.T) {
 	fast.Put(nodeRecordWire(t, teststation.Key(t, profile.PQPure, held), "held by the lowest round trip"))
 	if _, err := p.FindRecord(t.Context(), nodeIDOf(t, held)); err != nil {
 		t.Errorf("the record the fastest station holds: %v, want it found there", err)
+	}
+	// The keyless twin takes the same order: the fastest station's one node
+	// record is the answer, so the listing proves which link was asked first.
+	if found, dropped, err := p.FindRecordsByType(t.Context(), record.TypeNodeRecord); err != nil || len(found) != 1 || dropped != 0 {
+		t.Errorf("the records by type: %d found, %d dropped, %v, want the fastest station's one", len(found), dropped, err)
 	}
 	// A record only the slower station holds is not found: the fastest link
 	// answered first, and a station's own answer is final, so the query never
