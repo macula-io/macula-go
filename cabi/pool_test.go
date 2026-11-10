@@ -532,13 +532,25 @@ func TestTheABICarriesTheTwoStationLists(t *testing.T) {
 	// event that took the link down, not only from a status read afterwards.
 	want := map[string]string{hex.EncodeToString(public.NodeID[:]): "public",
 		hex.EncodeToString(fallback.NodeID[:]): "fallback"}
+	seen := linkEventTiers(t, lp, len(want))
+	for station, tier := range want {
+		if seen[station] != tier {
+			t.Errorf("the link event for %s names tier %q, want %q", station, seen[station], tier)
+		}
+	}
+}
+
+// linkEventTiers is the tier each of count stations' link events named, read
+// off the pool's own inbox.
+func linkEventTiers(t *testing.T, lp *livePool, count int) map[string]string {
+	t.Helper()
 	seen := map[string]string{}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	for left := 2 * len(want); len(seen) < len(want) && left > 0; left-- {
+	for left := 2 * count; len(seen) < count && left > 0; left-- {
 		item, state := lp.events.next(ctx)
 		if state != inboxItemReady {
-			t.Fatalf("%d link events, want %d: %v", len(seen), len(want), state)
+			t.Fatalf("%d link events, want %d: %v", len(seen), count, state)
 		}
 		var event map[string]any
 		if err := json.Unmarshal([]byte(item.json), &event); err != nil {
@@ -551,9 +563,5 @@ func TestTheABICarriesTheTwoStationLists(t *testing.T) {
 		tier, _ := event["tier"].(string)
 		seen[station] = tier
 	}
-	for station, tier := range want {
-		if seen[station] != tier {
-			t.Errorf("the link event for %s names tier %q, want %q", station, seen[station], tier)
-		}
-	}
+	return seen
 }
