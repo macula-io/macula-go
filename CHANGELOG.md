@@ -58,6 +58,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implementation runs — another KEK, a flipped byte in the ciphertext and in the
   header, and a file shorter than its header.
 
+### Fixed
+
+- **The structural floor holds the interop clients too.** Both
+  `scripts/interop/*/eslint.config.mjs` capped block depth at 3 where the floor
+  (macula-codebase-checks#9) is 2, so the `structural floor (interop clients)`
+  CI job ran a relaxed rule: `tsgroups.mjs` (the member's event scan) and
+  `tssealed.mjs` (the stream read) nested three deep and passed. The two rules
+  now carry the floor's numbers, and the two functions are split rather than
+  silenced — `heardFromErlang` and `readStream`.
+
 ## [0.30.0] - 2026-10-30
 
 Phase 1 of macula-station#129: a subscription says in-band, on `Events()`,

@@ -1,7 +1,7 @@
 // The structural floor (macula-io/macula-codebase-checks#9): deep nesting and
 // tangled functions fail the build. No baseline, no inline disables.
 const floor = {
-  "max-depth": ["error", 3],
+  "max-depth": ["error", 2],
   "complexity": ["error", 9],
 };
 
