@@ -543,7 +543,7 @@ func (p *Pool) linkTo(ctx context.Context, station [32]byte) (*stationlink.Link,
 		if err != nil {
 			return nil, err
 		}
-		existing = p.startMember(target, true)
+		existing = p.startMember(target, true, TierPublic)
 	}
 	if link := existing.awaitUp(ctx, fresh); link != nil {
 		return link, nil
@@ -676,12 +676,12 @@ func (p *Pool) PutRecord(ctx context.Context, wire []byte) error {
 	return err
 }
 
-// firstAnswer runs ask on the pool's links in selection order and returns the
-// first answer, moving on only when a link could not be asked: a station's
-// own answer, not_found included, is final.
+// firstAnswer runs ask on the active tier's links in selection order and
+// returns the first answer, moving on only when a link could not be asked: a
+// station's own answer, not_found included, is final.
 func firstAnswer[T any](p *Pool, ask func(*stationlink.Link) (T, error)) (T, error) {
 	var zero T
-	links := p.links()
+	links := p.targets()
 	if len(links) == 0 {
 		return zero, ErrNoLink
 	}

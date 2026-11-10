@@ -247,6 +247,35 @@ and macula-go's `ucan` package passes its vectors):
   proof no token names; a refused open is a stream `error` of the same code.
   An open procedure ignores any token.
 
+## Public and fallback stations
+
+Since v0.31.0 (macula#201's tiers, as the Erlang SDK keeps them).
+
+- `macula_pool_connect`'s seeds are the **public** tier. The optional
+  `fallback_seeds` in `options_json` is a second list of the same seed objects,
+  the **fallback** tier: the LAN stations a pool keeps for when no public
+  station is up. Both are dialed and held the same way; a station named in both
+  lists refuses the connect (`invalid_argument`, one station with two roles has
+  no defined behaviour), and `max_seeds` bounds the two together.
+- Originating traffic — a publish, a station procedure, a content announcement
+  — goes to the active tier only: public the moment any public link is up,
+  fallback only when none is and a fallback list was given. Standing
+  registrations (a subscription, a served procedure, an advertisement) go to
+  every link of both tiers, and it is that which lets two nodes on different
+  tiers reach each other.
+- A link of a tier that is not active is redialled on the backoff schedule
+  `pool.Redial`'s zero value takes (`pool.DefaultRedialBase` is the floor and
+  the first retry's exact wait, `pool.DefaultRedialFactor` multiplies it per
+  failed retry up to `pool.DefaultRedialCap`, and a link that stays up
+  `pool.DefaultRedialSteadyUp` clears its station's count) instead of
+  `respawn_delay_ms`. A tier switch restarts the newly active tier's pending
+  retries at the floor.
+- `macula_pool_status`'s `tier` says which list each link's station was named
+  in (`public` or `fallback`); a station the pool dialled for a call is
+  `public`. A link event carries the same `tier`, so a binding reports the
+  tier on the event that took the link down, not only in a status read
+  afterwards.
+
 ## Confidentiality
 
 Since v0.18.0 (macula 13's end-to-end payload confidentiality, E2E seal

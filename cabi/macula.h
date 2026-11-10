@@ -162,7 +162,7 @@ macula_handle macula_pool_connect(macula_handle key, const char *seeds_json, con
 /* Closes every link, subscription and served procedure; frees the handle. */
 void macula_pool_close(macula_handle pool);
 void macula_pool_node_id(macula_handle pool, uint8_t out_node_id[32], char **err_out);
-/* [{"station","host","port","direct","up"}] */
+/* [{"station","host","port","direct","tier","up"}], tier "public" or "fallback" */
 char *macula_pool_status(macula_handle pool, char **err_out);
 /* The pool's next event: {"kind":"link","station","direct","up","error"} or
  * {"kind":"issuer_error","error"}; see "Inboxes" in CONTRACT.md. */

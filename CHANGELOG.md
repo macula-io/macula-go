@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Public and fallback station tiers, the Go half of macula-io/macula#201
+  step 2.** `pool.Opts.FallbackSeeds` is a second seed list, the LAN stations a
+  pool keeps for when no public station is up, and `Pool.ActiveTier` says which
+  list its ordinary traffic belongs to. The split is the design's: **originating**
+  traffic — a publish, a call, a station procedure, a content announcement —
+  goes to the active tier only, while **standing registrations** — a
+  subscription, a served procedure, an advertisement — go to every link of both
+  tiers, which is what lets two nodes on different tiers still reach each other.
+  Within the active tier the links are sorted by measured round trip, lowest
+  first, so the default `FirstSuccess` selection takes the fastest link; the
+  seed order and `Random` are unchanged for a caller who asks for them. A
+  station named in both lists refuses the connect (`ErrStationInBothTiers`).
+  A station whose tier is not the active one is redialled on a backoff schedule
+  instead of the flat respawn delay: `pool.Redial` holds the base (the floor,
+  and the first retry's exact wait), the factor, the cap and the steady-up
+  window, with `pool.DefaultRedialBase` and its neighbours as macula's values
+  and an override for tests. A link counts against its station only while its
+  tier is not active, its count clears only after it has stayed up the
+  steady-up window, and a tier switch re-arms the newly active tier's parked
+  retries. `pool.LinkEvent` gains `Tier`, so a binding reports the tier on the
+  event that took the link down. The C ABI takes `fallback_seeds` in the
+  options JSON, reports `tier` per link in the status and on the link event,
+  and `cabi/CONTRACT.md` documents both.
+
 - **Sealed key files (MACULA-SEALED-KEY-V1), the Go half of WP-K2
   (macula-io/macula-realm#176).** `identity.SealKeyFile` and
   `identity.UnsealKeyFile` write and open a sealed key file: AES-256-GCM over

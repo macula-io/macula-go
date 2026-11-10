@@ -83,6 +83,9 @@ type Station struct {
 	// it counted.
 	relayed int
 	stopped bool
+	// refuseUntil is when a Refuse ends, zero for none: every connection that
+	// arrives before it is closed without a handshake.
+	refuseUntil time.Time
 	// verdict judges each registration (Judge), nil accepting every one.
 	verdict func(kind string) (reason string, silent bool)
 }
@@ -242,6 +245,30 @@ func (s *Station) Silence(nodeID [32]byte, d time.Duration) {
 	}
 }
 
+// Refuse makes the station refuse every connection that arrives in the next d:
+// it is closed without a handshake, as a station that is restarting, or one
+// whose packets never arrive, leaves a dialer. A link already up is untouched:
+// drop it too to take the station down. Allow lifts a refusal early.
+func (s *Station) Refuse(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refuseUntil = time.Now().Add(d)
+}
+
+// Allow lifts a Refuse.
+func (s *Station) Allow() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refuseUntil = time.Time{}
+}
+
+// refusing reports whether a connection arriving now is refused.
+func (s *Station) refusing() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return time.Now().Before(s.refuseUntil)
+}
+
 // silent reports whether c is in a Silence now.
 func (s *Station) silent(c *conn) bool {
 	s.mu.Lock()
@@ -363,6 +390,10 @@ func (s *Station) accept(ctx context.Context) {
 // serve runs the station's side of the handshake on one connection, then its
 // frames until it ends.
 func (s *Station) serve(ctx context.Context, qconn *quic.Conn) {
+	if s.refusing() {
+		_ = qconn.CloseWithError(1, "refusing")
+		return
+	}
 	stream, err := qconn.AcceptStream(ctx)
 	if err != nil {
 		return

@@ -13,6 +13,12 @@
 //
 // Station discovery beyond the seeds is not here: macula discovers stations
 // through mcl-stations/list_stations, which this pool does not call.
+//
+// A pool may name two lists of stations (macula#201): its seeds are the public
+// tier, Opts.FallbackSeeds the fallback tier it keeps for when no public
+// station is up. Originating traffic — a publish, a station procedure, a
+// content announcement — goes to whichever tier is active, fastest link first;
+// standing registrations go to every link of both. See Tier.
 package pool
 
 import (
@@ -20,8 +26,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
-	"net"
-	"strconv"
 	"sync"
 	"time"
 
@@ -47,8 +51,11 @@ var (
 	// ErrSeedNotPinned is a seed without the station's node_id: a pool dials
 	// only stations it can check.
 	ErrSeedNotPinned = errors.New("pool: every seed needs the station's node_id")
-	// ErrTooManySeeds is more seeds than MaxSeeds.
+	// ErrTooManySeeds is more seeds than MaxSeeds, counting both tiers.
 	ErrTooManySeeds = errors.New("pool: more seeds than MaxSeeds")
+	// ErrStationInBothTiers is a station named in both the public and the
+	// fallback list: one station with two roles has no defined behaviour.
+	ErrStationInBothTiers = errors.New("pool: a station is in both the public and the fallback tier")
 	// ErrRealmTrustInvalid is a realm key that is not a key of the pool's
 	// profile as carried.
 	ErrRealmTrustInvalid = errors.New("pool: a realm key is not a well-formed key of the pool's profile")
@@ -82,8 +89,12 @@ const (
 type LinkEvent struct {
 	Station [32]byte
 	Direct  bool
-	Up      bool
-	Err     error
+	// Tier is the list the link's station was named in, so a binding can report
+	// "offline: on the LAN fallback" rather than a bare link going down. A
+	// station dialled for a call is TierPublic.
+	Tier Tier
+	Up   bool
+	Err  error
 }
 
 // Opts configure a pool. IdentityKey is required; zero values take macula's
@@ -94,11 +105,22 @@ type Opts struct {
 	// RealmTrust pins each realm's key, as carried: an advertisement in a
 	// realm is trusted only when its authorization verifies against it, and
 	// a procedure is served only in a realm it names.
-	RealmTrust        map[[32]byte][]byte
+	RealmTrust map[[32]byte][]byte
+	// FallbackSeeds are the stations of the fallback tier: the LAN stations a
+	// pool keeps for when no public station is up. They are dialed and held
+	// like the seeds, and only originating traffic prefers the public tier.
+	// Empty, the pool has one tier and behaves as it did before tiers.
+	FallbackSeeds     []Seed
 	ReplicationFactor int
-	RespawnDelay      time.Duration
-	MaxSeeds          int
-	MaxDirectLinks    int
+	// RespawnDelay is the flat wait before a link of the active tier is
+	// dialed again; a station whose tier is not the active one takes Redial
+	// instead.
+	RespawnDelay time.Duration
+	// Redial is the schedule a station is dialed again on while its tier is
+	// not the active one. Zero fields take macula's defaults.
+	Redial         Redial
+	MaxSeeds       int
+	MaxDirectLinks int
 	// Admission bounds the requests the node's served procedures take; zero
 	// is macula's defaults, with Cap one share per link the pool may hold.
 	Admission     stationlink.AdmissionLimits
@@ -148,9 +170,9 @@ type Pool struct {
 	keyring *group.Keyring
 }
 
-// Connect validates seeds and opts, dials every seed, and returns once one link
-// is up, or with the last dial's error when ctx ends before any is. Links not
-// yet up keep dialing.
+// Connect validates the seeds and opts, dials every seed of both tiers, and
+// returns once one link is up, or with the last dial's error when ctx ends
+// before any is. Links not yet up keep dialing.
 func Connect(ctx context.Context, seeds []Seed, opts Opts) (*Pool, error) {
 	opts, err := checked(seeds, opts)
 	if err != nil {
@@ -181,7 +203,10 @@ func Connect(ctx context.Context, seeds []Seed, opts Opts) (*Pool, error) {
 		ctx:    runCtx, cancel: cancel}
 	go issuer.Run(runCtx, opts.OnIssuerError)
 	for _, seed := range seeds {
-		p.startMember(seed.target(opts.IdentityKey), false)
+		p.startMember(seed.target(opts.IdentityKey), false, TierPublic)
+	}
+	for _, seed := range opts.FallbackSeeds {
+		p.startMember(seed.target(opts.IdentityKey), false, TierFallback)
 	}
 	if err := p.awaitUp(ctx); err != nil {
 		_ = p.Close()
@@ -212,6 +237,11 @@ func checked(seeds []Seed, opts Opts) (Opts, error) {
 	if opts.RespawnDelay <= 0 {
 		opts.RespawnDelay = DefaultRespawnDelay
 	}
+	redial, err := opts.Redial.checked()
+	if err != nil {
+		return opts, err
+	}
+	opts.Redial = redial
 	if opts.Admission == (stationlink.AdmissionLimits{}) {
 		opts.Admission = stationlink.DefaultAdmissionLimits()
 		opts.Admission.Cap = opts.Admission.Share * (opts.MaxSeeds + opts.MaxDirectLinks)
@@ -219,16 +249,21 @@ func checked(seeds []Seed, opts Opts) (Opts, error) {
 	if err := opts.Admission.Validate(); err != nil {
 		return opts, errors.Join(ErrInvalidOpts, err)
 	}
+	all := make([]Seed, 0, len(seeds)+len(opts.FallbackSeeds))
+	all = append(append(all, seeds...), opts.FallbackSeeds...)
 	switch {
-	case len(seeds) == 0:
+	case len(all) == 0:
 		return opts, ErrNoSeeds
-	case len(seeds) > opts.MaxSeeds:
-		return opts, fmt.Errorf("%w: %d, at most %d", ErrTooManySeeds, len(seeds), opts.MaxSeeds)
+	case len(all) > opts.MaxSeeds:
+		return opts, fmt.Errorf("%w: %d, at most %d", ErrTooManySeeds, len(all), opts.MaxSeeds)
 	}
-	for _, seed := range seeds {
+	for _, seed := range all {
 		if seed.NodeID == ([32]byte{}) {
-			return opts, fmt.Errorf("%w: %s", ErrSeedNotPinned, net.JoinHostPort(seed.Host, strconv.Itoa(int(seed.Port))))
+			return opts, fmt.Errorf("%w: %s", ErrSeedNotPinned, seed.address())
 		}
+	}
+	if seed, both := stationInBothTiers(seeds, opts.FallbackSeeds); both {
+		return opts, fmt.Errorf("%w: %s", ErrStationInBothTiers, seed.address())
 	}
 	return opts, nil
 }
@@ -271,11 +306,16 @@ type LinkStatus struct {
 	Station [32]byte
 	Host    string
 	Port    uint16
-	Direct  bool
-	Up      bool
+	// Direct is a station dialled for a call rather than named by the caller.
+	Direct bool
+	// Tier is the list the station was named in; a direct dial is public.
+	Tier Tier
+	// Up is whether the link is up now.
+	Up bool
 }
 
-// Status is every link the pool holds, seeds first.
+// Status is every link the pool holds, the public seeds first and the fallback
+// seeds after them.
 func (p *Pool) Status() []LinkStatus {
 	p.mu.Lock()
 	members := append([]*member(nil), p.members...)
@@ -283,7 +323,7 @@ func (p *Pool) Status() []LinkStatus {
 	out := make([]LinkStatus, len(members))
 	for i, m := range members {
 		out[i] = LinkStatus{Station: m.target.ExpectedNodeID, Host: m.target.Host, Port: m.target.Port,
-			Direct: m.direct, Up: m.current() != nil}
+			Direct: m.direct, Tier: m.tier, Up: m.current() != nil}
 	}
 	return out
 }
@@ -322,13 +362,23 @@ func (p *Pool) Close() error {
 	return nil
 }
 
-// links is the links up now, in the pool's selection order.
+// links is the links up now across both tiers, in the pool's selection order.
+// Standing registrations take these; an originating operation takes targets.
 func (p *Pool) links() []*stationlink.Link {
+	return p.selection(nil)
+}
+
+// selection is the links up now on tier, or on every tier when tier is nil, in
+// member order, shuffled when the pool selects at random.
+func (p *Pool) selection(tier *Tier) []*stationlink.Link {
 	p.mu.Lock()
 	members := append([]*member(nil), p.members...)
 	p.mu.Unlock()
 	var up []*stationlink.Link
 	for _, m := range members {
+		if tier != nil && m.tier != *tier {
+			continue
+		}
 		if link := m.current(); link != nil {
 			up = append(up, link)
 		}

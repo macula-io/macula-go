@@ -501,3 +501,67 @@ func TestALateAnswerIsAnswered(t *testing.T) {
 		t.Fatalf("an answer after the handle ended: %v, want invalid_handle", err)
 	}
 }
+
+// The two station lists cross the ABI: fallback_seeds is a second list beside
+// the public one, and the pool's status names the tier each link was given in.
+func TestTheABICarriesTheTwoStationLists(t *testing.T) {
+	f := newFleet(t, "tiers")
+	public, fallback := f.stations[0], f.stations[1]
+	options := fmt.Sprintf(`{"realm_trust": {}, "fallback_seeds": %s, "respawn_delay_ms": 100, "timeout_ms": 20000}`,
+		f.seedsJSON(fallback))
+	lp, err := connect(context.Background(), teststation.Key(t, profile.PQPure, "abi tiers"), f.seedsJSON(public), options)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(lp.close)
+	var links []map[string]any
+	if err := json.Unmarshal([]byte(statusJSON(lp.pool)), &links); err != nil {
+		t.Fatal(err)
+	}
+	tiers := map[string]any{}
+	for _, link := range links {
+		tiers[link["station"].(string)] = link["tier"]
+	}
+	if got := tiers[hex.EncodeToString(public.NodeID[:])]; got != "public" {
+		t.Errorf("the seed's tier is %v, want public: %v", got, links)
+	}
+	if got := tiers[hex.EncodeToString(fallback.NodeID[:])]; got != "fallback" {
+		t.Errorf("the fallback seed's tier is %v, want fallback: %v", got, links)
+	}
+	// The link event carries the same tier, so a binding reports it from the
+	// event that took the link down, not only from a status read afterwards.
+	want := map[string]string{hex.EncodeToString(public.NodeID[:]): "public",
+		hex.EncodeToString(fallback.NodeID[:]): "fallback"}
+	seen := linkEventTiers(t, lp, len(want))
+	for station, tier := range want {
+		if seen[station] != tier {
+			t.Errorf("the link event for %s names tier %q, want %q", station, seen[station], tier)
+		}
+	}
+}
+
+// linkEventTiers is the tier each of count stations' link events named, read
+// off the pool's own inbox.
+func linkEventTiers(t *testing.T, lp *livePool, count int) map[string]string {
+	t.Helper()
+	seen := map[string]string{}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for left := 2 * count; len(seen) < count && left > 0; left-- {
+		item, state := lp.events.next(ctx)
+		if state != inboxItemReady {
+			t.Fatalf("%d link events, want %d: %v", len(seen), count, state)
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(item.json), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event["kind"] != "link" || event["up"] != float64(1) {
+			continue
+		}
+		station, _ := event["station"].(string)
+		tier, _ := event["tier"].(string)
+		seen[station] = tier
+	}
+	return seen
+}
