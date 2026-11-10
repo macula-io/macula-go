@@ -117,6 +117,9 @@ func TestAStationQueryContinuesOnTheFallbackWhenTheLastPublicLinkEnds(t *testing
 	p := connectTiered(t, "tier walk", realm, []*teststation.Station{public}, []*teststation.Station{fallback})
 	eventually(t, "both links up", func() bool { return upCount(p) == 2 })
 	public.Silence(p.NodeID(), 30*time.Second)
+	// The public station refuses the redial for the length of the test, so the
+	// tier the walk sees cannot switch back underneath the assertion below.
+	public.Refuse(time.Minute)
 	out := queried(t, p, key)
 	time.Sleep(200 * time.Millisecond)
 	public.Drop(p.NodeID())
