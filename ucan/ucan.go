@@ -89,7 +89,8 @@ func RefusalName(err error) string {
 	return ""
 }
 
-// Policy is what a gated procedure requires of a request's token.
+// Policy is what a served procedure requires of its callers: Open serves any
+// caller, and the other two judge the request's token.
 type Policy interface{ isPolicy() }
 
 // Open is the policy of a procedure that serves any caller, written in the
@@ -260,9 +261,12 @@ type checked struct {
 }
 
 // Authorize is whether token authorizes ctx's caller under p: the token's
-// claims when it does, or the first refusal, in macula_ucan's order. A binary
-// without ML-DSA (GOFIPS140=v1.0.0) checks nothing and returns
-// identity.ErrPostQuantumUnavailable, which is no refusal.
+// claims when it does, or the first refusal, in macula_ucan's order. A p of
+// Open serves any caller, so the token is not read at all — it answers before
+// the checks below, malformed token and all. p is never nil here: a procedure
+// with no policy serves nobody, and its offer is refused where it is made
+// (macula-go#57, #60). A binary without ML-DSA (GOFIPS140=v1.0.0) checks
+// nothing and returns identity.ErrPostQuantumUnavailable, which is no refusal.
 func Authorize(token []byte, p Policy, ctx Context) (map[string]any, error) {
 	if _, open := p.(Open); open {
 		// An open procedure constrains no token: there is nothing to judge, and
