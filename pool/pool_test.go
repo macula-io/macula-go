@@ -204,7 +204,8 @@ func TestACallTrustsOnlyThePinnedRealm(t *testing.T) {
 	caller := connect(t, "trusting caller", realm, s)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	if _, err := caller.Call(ctx, Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Map(nil)}); !errors.Is(err, ErrNoProvider) {
+	if _, err := caller.Call(ctx, Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Map(nil),
+		Timeout: 200 * time.Millisecond}); !errors.Is(err, ErrNoProvider) {
 		t.Errorf("an untrusted provider: %v, want ErrNoProvider", err)
 	}
 	if _, err := caller.Call(ctx, Call{Realm: [32]byte{9}, Procedure: procedure, Payload: cbor.Map(nil)}); !errors.Is(err, ErrNoRealmKey) {
@@ -283,7 +284,7 @@ func TestAMissingStationEndpointNamesTheStation(t *testing.T) {
 	p := connect(t, "endpoint caller", realm, s)
 	var nobody [32]byte
 	nobody[0] = 0x42
-	_, err := p.endpointOf(t.Context(), nobody)
+	_, _, err := p.endpointOf(t.Context(), nobody)
 	var refused *StationEndpointError
 	if !errors.As(err, &refused) || refused.Station != nobody || refused.Reason != EndpointAbsent {
 		t.Fatalf("no endpoint record: %#v, want the station and %q", err, EndpointAbsent)
@@ -313,7 +314,7 @@ func TestAStationEndpointMustBeTheStationsOwn(t *testing.T) {
 		t.Fatalf("encode: %v", err)
 	}
 	s.Forge(record.StationEndpointKey(victim.NodeID), wire)
-	_, err = p.endpointOf(t.Context(), victim.NodeID)
+	_, _, err = p.endpointOf(t.Context(), victim.NodeID)
 	if !errors.Is(err, ErrNoStationEndpoint) {
 		t.Errorf("an endpoint the liar signed for the victim: %v, want ErrNoStationEndpoint", err)
 	}
@@ -325,7 +326,7 @@ func TestAStationEndpointMustBeTheStationsOwn(t *testing.T) {
 	if !strings.Contains(err.Error(), fmt.Sprintf("%x", victim.NodeID)) {
 		t.Errorf("the message %q does not name the station", err)
 	}
-	if target, err := p.endpointOf(t.Context(), s.NodeID); err != nil || target.ExpectedNodeID != s.NodeID {
+	if target, _, err := p.endpointOf(t.Context(), s.NodeID); err != nil || target.ExpectedNodeID != s.NodeID {
 		t.Errorf("the liar's own endpoint: %+v, %v", target, err)
 	}
 }
@@ -341,7 +342,7 @@ func TestAnUnreachedDirectStationIsNotKept(t *testing.T) {
 	p := connect(t, "keeper", realm, s)
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	if _, err := p.linkTo(ctx, gone.NodeID); err == nil {
+	if _, _, err := p.linkTo(ctx, gone.NodeID, 0, attempt{}); err == nil {
 		t.Fatal("a stopped station was linked")
 	}
 	for _, l := range p.Status() {

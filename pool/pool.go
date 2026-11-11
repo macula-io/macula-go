@@ -121,7 +121,16 @@ type Opts struct {
 	RespawnDelay time.Duration
 	// Redial is the schedule a station is dialed again on while its tier is
 	// not the active one. Zero fields take macula's defaults.
-	Redial         Redial
+	Redial Redial
+	// Resolve is the schedule a call or stream asks the DHT again on while
+	// nothing has been sent: a miss is not final until the deadline
+	// (macula-go#76). Zero fields take macula's defaults.
+	Resolve Resolve
+	// DialTimeout bounds a stream's resolve-and-reach phase: how long an
+	// OpenStream keeps asking the DHT and reaching for a provider before it
+	// gives up. Zero takes macula's dial timeout, DefaultDialTimeout. It never
+	// bounds the stream itself.
+	DialTimeout    time.Duration
 	MaxSeeds       int
 	MaxDirectLinks int
 	// Admission bounds the requests the node's served procedures take; zero
@@ -245,6 +254,17 @@ func checked(seeds []Seed, opts Opts) (Opts, error) {
 		return opts, err
 	}
 	opts.Redial = redial
+	resolve, err := opts.Resolve.checked()
+	if err != nil {
+		return opts, err
+	}
+	opts.Resolve = resolve
+	if opts.DialTimeout < 0 {
+		return opts, fmt.Errorf("%w: a dial timeout of %s", ErrInvalidOpts, opts.DialTimeout)
+	}
+	if opts.DialTimeout == 0 {
+		opts.DialTimeout = DefaultDialTimeout
+	}
 	if opts.Admission == (stationlink.AdmissionLimits{}) {
 		opts.Admission = stationlink.DefaultAdmissionLimits()
 		opts.Admission.Cap = opts.Admission.Share * (opts.MaxSeeds + opts.MaxDirectLinks)

@@ -83,6 +83,9 @@ type Station struct {
 	// it counted.
 	relayed int
 	stopped bool
+	// arrivals counts every connection that reached the station, refused or
+	// not: a test counts the dials made against it.
+	arrivals int
 	// refuseUntil is when a Refuse ends, zero for none: every connection that
 	// arrives before it is closed without a handshake.
 	refuseUntil time.Time
@@ -273,6 +276,14 @@ func (s *Station) Allow() {
 	s.refuseUntil = time.Time{}
 }
 
+// Arrivals reports how many connections reached the station, refused or not: a
+// test's count of the dials made against it.
+func (s *Station) Arrivals() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.arrivals
+}
+
 // refusing reports whether a connection arriving now is refused.
 func (s *Station) refusing() bool {
 	s.mu.Lock()
@@ -418,6 +429,9 @@ func (s *Station) accept(ctx context.Context) {
 // serve runs the station's side of the handshake on one connection, then its
 // frames until it ends.
 func (s *Station) serve(ctx context.Context, qconn *quic.Conn) {
+	s.mu.Lock()
+	s.arrivals++
+	s.mu.Unlock()
 	if s.refusing() {
 		_ = qconn.CloseWithError(1, "refusing")
 		return
