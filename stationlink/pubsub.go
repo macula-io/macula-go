@@ -2,6 +2,7 @@ package stationlink
 
 import (
 	"context"
+	"crypto/sha512"
 	"errors"
 	"sync"
 	"time"
@@ -133,7 +134,16 @@ type SignedPublication struct {
 	// resendUntil is the last moment a re-send can still land, in Unix
 	// milliseconds: past it a subscriber would refuse it (frame.ResendUntil).
 	resendUntil uint64
+	// identity is the SHA-384 of the signed bytes: every copy of one
+	// publication, on whichever link, carries the same, which is how a pool
+	// recognises a copy of one it already carried (macula-go#78).
+	identity [48]byte
 }
+
+// Identity is what tells this publication from another: the SHA-384 of its
+// signed bytes, the same value frame.VerifiedPublication.PublicationHash is for
+// a subscriber.
+func (p SignedPublication) Identity() [48]byte { return p.identity }
 
 // ResendUntil is the last moment, in Unix milliseconds, this publication can be
 // sent again and still be delivered.
@@ -160,8 +170,9 @@ func SignPublication(key *identity.NodeKey, seq *PublicationSeq, p Publication) 
 	if err != nil {
 		return SignedPublication{}, err
 	}
-	return SignedPublication{encoded: cbor.Encode(publish),
-		resendUntil: frame.ResendUntil(spec.PublishedAt, spec.TTLMs)}, nil
+	encoded := cbor.Encode(publish)
+	return SignedPublication{encoded: encoded, resendUntil: frame.ResendUntil(spec.PublishedAt, spec.TTLMs),
+		identity: sha512.Sum384(encoded)}, nil
 }
 
 // AfterHeld runs between recording a publication's hold and writing its first

@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -222,11 +223,9 @@ func TestTheWaitingQueueCountsWhatItCannotKeep(t *testing.T) {
 	t.Parallel()
 	a := teststation.Start(t, profile.PQPure, "queue bounds a")
 	_, _, publisher, realm := listening(t, "queue bounds", []*teststation.Station{a}, []*teststation.Station{a})
-	small := signedFor(t, publisher, realm, "small", nil)
-	for range maxWaiting {
-		publisher.keep(small)
+	for i := range maxWaiting + 1 {
+		publisher.keep(signedFor(t, publisher, realm, fmt.Sprintf("small %d", i), nil))
 	}
-	publisher.keep(small)
 	if sent := publisher.UnsentPublications(); sent != 1 {
 		t.Errorf("%d publications counted unsent over the entry cap, want 1", sent)
 	}
@@ -388,4 +387,61 @@ func TestAnUnansweredSubscribeDoesNotDelayTheTierRearm(t *testing.T) {
 	eventuallyWithin(t, "the tier notice re-armed the parked station", 2*time.Second, func() bool {
 		return attempts(p, a.NodeID) == 0
 	})
+}
+
+// At the default ReplicationFactor a publication is written to two links, and
+// each hand-over carries a copy of it: with no link left to take it, the pool
+// queues it once and counts it once.
+func TestAPublicationItsLinksBothEndedWaitsOnceAndIsCountedOnce(t *testing.T) {
+	t.Parallel()
+	a := teststation.Start(t, profile.PQPure, "two copies a")
+	b := teststation.Start(t, profile.PQPure, "two copies b")
+	_, _, publisher, realm := listening(t, "two copies", []*teststation.Station{a, b}, []*teststation.Station{a, b})
+	eventually(t, "both links up", func() bool { return len(publisher.links()) == 2 })
+	once := signedFor(t, publisher, realm, "held by both links", nil)
+	// No link is left to take it, and the station takes nothing more.
+	a.Refuse(time.Minute)
+	b.Refuse(time.Minute)
+	a.Drop(publisher.NodeID())
+	b.Drop(publisher.NodeID())
+	eventually(t, "no link up", func() bool { return len(publisher.links()) == 0 })
+	publisher.resend([]stationlink.SignedPublication{once, once}) // what both hand-overs carry
+	if n := waitingLen(publisher); n != 1 {
+		t.Fatalf("%d publications wait after both copies were handed over, want the one", n)
+	}
+	if err := publisher.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if sent := publisher.UnsentPublications(); sent != 1 {
+		t.Errorf("%d publications counted unsent at close, want the one", sent)
+	}
+}
+
+// A copy handed over after the publication already went out on another link is
+// neither queued again nor counted.
+func TestACopyOfAPublicationThatWentOutIsNotCounted(t *testing.T) {
+	t.Parallel()
+	a := teststation.Start(t, profile.PQPure, "copy went out a")
+	b := teststation.Start(t, profile.PQPure, "copy went out b")
+	_, _, publisher, realm := listening(t, "copy went out", []*teststation.Station{a, b}, []*teststation.Station{a, b})
+	eventually(t, "both links up", func() bool { return len(publisher.links()) == 2 })
+	once := signedFor(t, publisher, realm, "carried on the other link", nil)
+	publisher.resend([]stationlink.SignedPublication{once}) // a link takes it, as a hand-over's copy
+	// The second link's copy arrives after the first went out, and with no link
+	// left to take it.
+	a.Refuse(time.Minute)
+	b.Refuse(time.Minute)
+	a.Drop(publisher.NodeID())
+	b.Drop(publisher.NodeID())
+	eventually(t, "no link up", func() bool { return len(publisher.links()) == 0 })
+	publisher.resend([]stationlink.SignedPublication{once})
+	if n := waitingLen(publisher); n != 0 {
+		t.Errorf("%d publications wait after a copy of one that went out, want none", n)
+	}
+	if err := publisher.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if sent := publisher.UnsentPublications(); sent != 0 {
+		t.Errorf("%d publications counted unsent, want none: a copy already went out", sent)
+	}
 }

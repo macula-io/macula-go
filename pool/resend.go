@@ -21,6 +21,10 @@ import (
 const (
 	maxWaiting      = 4096
 	maxWaitingBytes = stationlink.MaxUnconfirmedBytes
+	// doneRemembered is how many dealt-with publications a pool remembers, the
+	// same bound as the queue: a copy handed over long after its publication
+	// went out or was counted is out of reach of any held set by then.
+	doneRemembered = maxWaiting
 )
 
 // UnsentPublications is how many publications this pool accepted and could not
@@ -42,20 +46,84 @@ func (p *Pool) resend(held []stationlink.SignedPublication) {
 
 // carry sends publication on a link up now, or keeps it for the next one, or
 // counts it unsent when it can go nowhere. It answers whether a link took it.
+//
+// Every link the publication was published to held a copy of the same signed
+// bytes, and each hands its copy over when it ends, so a publication the pool
+// has already dealt with — one a link took, one waiting, one counted — is
+// dropped here and says nothing: without that, two links ending would queue and
+// count one publication twice, and halve what the queue's bounds can carry.
 func (p *Pool) carry(publication stationlink.SignedPublication) bool {
+	if p.dealtWith(publication.Identity()) {
+		return true
+	}
 	if p.isClosed() {
-		p.unsent.Add(1)
+		p.countUnsent(publication)
 		return false
 	}
 	if p.tooLate(publication) {
-		p.unsent.Add(1)
+		p.countUnsent(publication)
 		return false
 	}
 	if p.send(publication) {
+		p.dealt(publication.Identity())
 		return true
 	}
 	p.keep(publication)
 	return false
+}
+
+// dealtWith reports whether this publication waits, went out, or was counted.
+func (p *Pool) dealtWith(id [48]byte) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.dealtWithLocked(id)
+}
+
+// dealtWithLocked is dealtWith under p.mu.
+func (p *Pool) dealtWithLocked(id [48]byte) bool {
+	if _, waiting := p.waitingSeen[id]; waiting {
+		return true
+	}
+	_, done := p.done[id]
+	return done
+}
+
+// dealt records a publication the pool has finished with, keeping the newest
+// doneRemembered of them.
+func (p *Pool) dealt(id [48]byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.dealtLocked(id)
+}
+
+// dealtLocked is dealt under p.mu.
+func (p *Pool) dealtLocked(id [48]byte) {
+	if _, seen := p.done[id]; seen {
+		return
+	}
+	p.done[id] = struct{}{}
+	p.doneOrder = append(p.doneOrder, id)
+	for len(p.doneOrder) > doneRemembered {
+		delete(p.done, p.doneOrder[0])
+		p.doneOrder = p.doneOrder[1:]
+	}
+}
+
+// countUnsent counts publication unsent, once however many links held a copy of
+// it, and never for one a link has already taken.
+func (p *Pool) countUnsent(publication stationlink.SignedPublication) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.countLocked(publication.Identity())
+}
+
+// countLocked is countUnsent under p.mu.
+func (p *Pool) countLocked(id [48]byte) {
+	if p.dealtWithLocked(id) {
+		return
+	}
+	p.unsent.Add(1)
+	p.dealtLocked(id)
 }
 
 // tooLate reports whether a subscriber would refuse publication now: a re-send
@@ -78,16 +146,21 @@ func (p *Pool) send(publication stationlink.SignedPublication) bool {
 }
 
 // keep holds publication until a link is up, or counts it unsent when the queue
-// is full by entries or bytes, or the pool has closed.
+// is full by entries or bytes, or the pool has closed. A copy of a publication
+// that already waits is not kept again.
 func (p *Pool) keep(publication stationlink.SignedPublication) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.dealtWithLocked(publication.Identity()) {
+		return
+	}
 	if p.closed || len(p.waiting) >= maxWaiting || p.waitingBytes+publication.Size() > maxWaitingBytes {
-		p.unsent.Add(1)
+		p.countLocked(publication.Identity())
 		return
 	}
 	p.waiting = append(p.waiting, publication)
 	p.waitingBytes += publication.Size()
+	p.waitingSeen[publication.Identity()] = struct{}{}
 }
 
 // drainWaiting sends what waits, oldest first, on the links up now: once a new
@@ -101,10 +174,17 @@ func (p *Pool) drainWaiting() {
 			return
 		}
 		if p.tooLate(publication) {
-			p.unsent.Add(1)
+			p.mu.Lock()
+			delete(p.waitingSeen, publication.Identity())
+			p.countLocked(publication.Identity())
+			p.mu.Unlock()
 			continue
 		}
 		if p.send(publication) {
+			p.dealt(publication.Identity())
+			p.mu.Lock()
+			delete(p.waitingSeen, publication.Identity())
+			p.mu.Unlock()
 			continue
 		}
 		p.restoreWaiting(publication)
@@ -112,7 +192,9 @@ func (p *Pool) drainWaiting() {
 	}
 }
 
-// takeWaiting removes the oldest waiting publication from the queue.
+// takeWaiting removes the oldest waiting publication from the queue. It stays
+// in waitingSeen until it is sent or counted, so a copy handed over meanwhile is
+// still recognised as one that waits.
 func (p *Pool) takeWaiting() (stationlink.SignedPublication, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -132,7 +214,8 @@ func (p *Pool) restoreWaiting(publication stationlink.SignedPublication) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
-		p.unsent.Add(1)
+		delete(p.waitingSeen, publication.Identity())
+		p.countLocked(publication.Identity())
 		return
 	}
 	p.waiting = append([]stationlink.SignedPublication{publication}, p.waiting...)
@@ -145,6 +228,11 @@ func (p *Pool) restoreWaiting(publication stationlink.SignedPublication) {
 func (p *Pool) countWaiting() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.unsent.Add(uint64(len(p.waiting)))
+	for _, publication := range p.waiting {
+		id := publication.Identity()
+		delete(p.waitingSeen, id)
+		p.unsent.Add(1)
+		p.dealtLocked(id)
+	}
 	p.waiting, p.waitingBytes = nil, 0
 }

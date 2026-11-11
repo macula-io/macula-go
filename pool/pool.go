@@ -159,9 +159,18 @@ type Pool struct {
 	served   map[*Served]struct{}
 	remember map[resolvedKey]candidate
 	// waiting holds the publications no link of the active tier took, oldest
-	// first, until a link comes up (resend.go), with their size on the wire.
+	// first, until a link comes up (resend.go), with their size on the wire;
+	// waitingSeen is what waits, by publication identity, so a second link that
+	// held the same publication does not queue it again.
 	waiting      []stationlink.SignedPublication
+	waitingSeen  map[[48]byte]struct{}
 	waitingBytes int
+	// done is the publications the pool has dealt with — one a link took, or
+	// one counted unsent — by identity, oldest first in doneOrder and at most
+	// doneRemembered of them: a copy handed over after its publication already
+	// went out is dropped, and one already counted is not counted again.
+	done      map[[48]byte]struct{}
+	doneOrder [][48]byte
 	// unsent counts the publications this pool accepted and could not carry:
 	// expired, no room to wait, or the pool closed with them waiting.
 	unsent atomic.Uint64
@@ -210,8 +219,8 @@ func Connect(ctx context.Context, seeds []Seed, opts Opts) (*Pool, error) {
 			Keyring: keyring, KEMAdvertise: opts.KEMAdvertise,
 			Admission: stationlink.NewAdmission(opts.Admission), Dedup: stationlink.NewEventDedup()},
 		subs: map[*Subscription]struct{}{}, served: map[*Served]struct{}{}, remember: map[resolvedKey]candidate{},
-		learnt: map[resolvedKey]learntKey{},
-		ctx:    runCtx, cancel: cancel}
+		learnt: map[resolvedKey]learntKey{}, waitingSeen: map[[48]byte]struct{}{}, done: map[[48]byte]struct{}{},
+		ctx: runCtx, cancel: cancel}
 	go issuer.Run(runCtx, opts.OnIssuerError)
 	for _, seed := range seeds {
 		p.startMember(seed.target(opts.IdentityKey), false, TierPublic)
