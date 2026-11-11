@@ -272,6 +272,17 @@ on macula-go v0.18.0's shared library):
   stream` answered, `clear call` refused `sealed_required`, `off by direct
   dial` refused `off_needs_explicit_target`. Exit 0.
 
+Last run of this leg (2026-11-11, `macula-ci-otp@sha256:aff1d39b...`,
+@macula-io/ts 0.31.0 on macula-go's shared library): macula 17.2.0 from hex
+with `MACULA_OFF_REFUSED=1`, pq_hybrid and pq_pure, both ways — the TypeScript
+caller's `sealed call` and `sealed stream` answered by the Erlang provider, the
+TypeScript provider's `sealed call` and `sealed stream` answered, `clear call`
+refused `sealed_required`, `off by direct dial` refused
+`off_needs_explicit_target`. Exit 0 in both profiles. The pin was
+@macula-io/ts 0.25.0 before this run, and that version's shared library times
+out connecting to the test station (`Pool.connect`: "the call's timeout ran
+out"), so the leg could not run at all until it moved to 0.31.0.
+
 ## Sealed groups (macula 13.2)
 
 `groups.sh` runs macula's own distributor (`macula_group_keys`, policy
@@ -307,3 +318,14 @@ npm.
 GROUPS_PEER=ts MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh pq_hybrid
 GROUPS_PEER=ts MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh pq_pure
 ```
+
+Last run of this leg (2026-11-11, `macula-ci-otp@sha256:aff1d39b...`,
+@macula-io/ts 0.31.0-rc.2 on macula-go's shared library, macula 15.6.0 from
+hex): pq_hybrid — the TypeScript member opened the Erlang member's event under
+one epoch, the TypeScript node published and the Erlang member opened it, and
+the removed node was refused `not_a_member`. Exit 0.
+
+It does not run on macula 17.2.0: `erlang_groups.escript` starts the
+distributor with `macula_group_keys:start_link/1` taking the pre-17 option map
+(`org`, `policy`, `membership`, `removed`), and no clause of that function
+accepts it any more.
