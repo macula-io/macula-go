@@ -442,6 +442,9 @@ func ContentProcedureBound(procedure string, node [32]byte) bool {
 
 // fetchFrom fetches mcid from one sharer.
 func (p *Pool) fetchFrom(ctx context.Context, realm [32]byte, s sharer, mcid manifest.Mcid, o ContentOptions) ([]byte, error) {
+	// A content fetch resolves its sharers once and dials each of them once:
+	// there is no prior attempt to compare an endpoint record against, so
+	// nothing is passed over.
 	link, _, err := p.linkTo(ctx, s.station, 0, attempt{})
 	if err != nil {
 		return nil, err
