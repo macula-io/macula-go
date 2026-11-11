@@ -122,6 +122,11 @@ func checkReEncodes(t *testing.T, data []byte, frameVal cbor.Value) {
 	if !bytes.Equal(encoded, second) {
 		t.Fatalf("re-encoding is not deterministic: %x, then %x", encoded, second)
 	}
+	// And it is canonical: the encoding reads back with every map in key order,
+	// the order Encode writes, not the order the peer happened to send.
+	if err := cbor.Canonical(again.Frame); err != nil {
+		t.Fatalf("an encoding that is not canonical: %v (%x)", err, encoded)
+	}
 	if len(encoded) > maxEncodedPerInputByte*len(data)+encodeSlack {
 		t.Fatalf("%d input bytes carry a %d-byte frame", len(data), len(encoded))
 	}
