@@ -87,6 +87,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tssealed.mjs` (the stream read) nested three deep and passed. The two rules
   now carry the floor's numbers, and the two functions are split rather than
   silenced — `heardFromErlang` and `readStream`.
+- **The TypeScript sealed interop client runs again.** `tssealed` pinned
+  @macula-io/ts 0.25.0, whose shared library times out connecting to the test
+  station (`Pool.connect`: "the call's timeout ran out"), so
+  `SEALED_PEER=ts scripts/interop/sealed.sh` could not get past connect. Pinned
+  to 0.31.0; both profiles run and pass.
 
 - **A re-arm that lands while a retry is being parked no longer leaves its
   count behind (macula-go#82).** `pause` reads a station's retry count, plans
