@@ -404,3 +404,25 @@ func TestAPublicationIsRefusedForItsFirstFaultInMaculasOrder(t *testing.T) {
 	_, err = verifyCraftedPublication(t, withEntry(namingAnotherPublisher(testNow), "ttl_ms", cbor.Uint64(3_600_001)), keys.caller)
 	wantStreamRefusal(t, "a publication with a ttl_ms over an hour naming another publisher", err, ErrMalformedFrame)
 }
+
+// A publication's acceptance and re-send deadlines come from one place: the
+// same two constants a verifier refuses by, so a sender bounding a re-send
+// cannot disagree with the verifier that would drop it.
+func TestAPublicationsDeadlinesAreItsLifePlusTheClockTolerance(t *testing.T) {
+	publishedAt := uint64(1_700_000_000_000)
+	none := AcceptedUntil(publishedAt, nil)
+	if want := publishedAt + publicationDefaultTTLMs + publicationToleranceMs; none != want {
+		t.Errorf("AcceptedUntil without a ttl = %d, want %d", none, want)
+	}
+	ttl := uint64(90_000)
+	with := AcceptedUntil(publishedAt, &ttl)
+	if want := publishedAt + ttl + publicationToleranceMs; with != want {
+		t.Errorf("AcceptedUntil with ttl_ms 90000 = %d, want %d", with, want)
+	}
+	if got, want := ResendUntil(publishedAt, nil), none-publicationToleranceMs; got != want {
+		t.Errorf("ResendUntil = %d, want %d: the acceptance window less the clock tolerance", got, want)
+	}
+	if got, want := ResendUntil(publishedAt, &ttl), with-publicationToleranceMs; got != want {
+		t.Errorf("ResendUntil with ttl_ms 90000 = %d, want %d", got, want)
+	}
+}

@@ -64,11 +64,32 @@ type PublicationSpec struct {
 	TTLMs  *uint64
 }
 
+// AcceptedUntil is the last moment, in Unix milliseconds, a subscriber accepts
+// a publication made at publishedAt with ttlMs: its time to live, or the
+// default, then the clock tolerance, as macula-rust's frame::accepted_until
+// (src/frame/publication.rs:175-177). One function computes it, so a sender
+// bounding a re-send and a verifier refusing an expired one cannot disagree.
+func AcceptedUntil(publishedAt uint64, ttlMs *uint64) uint64 {
+	ttl := uint64(publicationDefaultTTLMs)
+	if ttlMs != nil {
+		ttl = *ttlMs
+	}
+	return publishedAt + ttl + publicationToleranceMs
+}
+
+// ResendUntil is the last moment a re-send can still land: AcceptedUntil minus
+// the clock tolerance, so a re-send is never sent on the last millisecond of the
+// subscriber's acceptance window. With the default life it is the publication's
+// own TTL.
+func ResendUntil(publishedAt uint64, ttlMs *uint64) uint64 {
+	return AcceptedUntil(publishedAt, ttlMs) - publicationToleranceMs
+}
+
 // VerifiedPublication is a publication that verified: its fields, the
 // publisher's key as carried, PublicationHash, the SHA-384 of its tbs, which
 // deduplication and Plumtree bookkeeping key on, and ExpiresAt, the last moment
-// a verifier accepts it: PublishedAt plus its ttl_ms, or 10 minutes without one,
-// plus 5 minutes. A subscriber keeps a delivered publication's hash until then.
+// a verifier accepts it, which AcceptedUntil computes. A subscriber keeps a
+// delivered publication's hash until then.
 // TTLMs is nil when the publication carries none.
 type VerifiedPublication struct {
 	Publisher   [32]byte
@@ -256,12 +277,11 @@ func verifiedPublication(verified identity.VerifiedObject, fields map[string]cbo
 	}
 	fixedBytes(publication.Publisher[:], fields["publisher"])
 	fixedBytes(publication.Realm[:], fields["realm"])
-	ttl := uint64(publicationDefaultTTLMs)
 	if value, has := fields["ttl_ms"]; has {
 		n, _ := value.AsInt64()
-		ttl = uint64(n)
+		ttl := uint64(n)
 		publication.TTLMs = &ttl
 	}
-	publication.ExpiresAt = publication.PublishedAt + ttl + publicationToleranceMs
+	publication.ExpiresAt = AcceptedUntil(publication.PublishedAt, publication.TTLMs)
 	return publication
 }
