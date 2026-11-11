@@ -63,66 +63,75 @@ func TestAProcedureNobodyServesIsNoProviderAtTheDeadline(t *testing.T) {
 	}
 }
 
-// At the deadline the call reports, in macula's order, the most recent
-// candidate's failure, then a lookup that found nothing (the bare sentinel,
-// which pullGroupKey compares by identity), then the latest failed lookup, and
-// only then the deadline itself (macula_direct_dial.erl:61-67).
-func TestTheDeadlineReportsMaculasOrder(t *testing.T) {
-	t.Run("a candidate that was never reached", func(t *testing.T) {
-		serving, dht := teststation.Start(t, profile.PQPure, "order a serving"), teststation.Start(t, profile.PQPure, "order a dht")
-		teststation.ShareDHT(serving, dht)
-		realm := teststation.NewRealm(t, profile.PQPure, "order a", org)
-		realm.Admit(t, serving, nodeIDOf(t, "order a provider"))
-		provider := connect(t, "order a provider", realm, serving)
-		if _, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
-			t.Fatalf("Serve: %v", err)
-		}
-		serving.Put(endpointWire(t, serving, 1))
-		caller := connect(t, "order a caller", realm, dht)
-		_, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("x"),
-			Timeout: 400 * time.Millisecond})
-		if !errors.Is(err, ErrNoProvider) {
-			t.Fatalf("Call: %v, want a failure joined with ErrNoProvider", err)
-		}
-		if !contains(err, "provider ") {
-			t.Errorf("Call: %v, want the candidate's own failure in the error", err)
-		}
-	})
-	t.Run("a lookup that found nothing", func(t *testing.T) {
-		caller, realm := unserved(t, "order b", func(*Opts) {})
-		_, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("x"),
-			Timeout: 300 * time.Millisecond})
-		if err != ErrNoProvider {
-			t.Errorf("Call: %v, want the bare ErrNoProvider, which pullGroupKey compares by identity", err)
-		}
-	})
-	t.Run("a lookup that failed", func(t *testing.T) {
-		s := teststation.Start(t, profile.PQPure, "order c")
-		realm := teststation.NewRealm(t, profile.PQPure, "order c", org)
-		caller := connect(t, "order c caller", realm, s)
-		// A station that is gone cannot answer the lookup at all: each round's
-		// read fails with ErrNoLink, which is the latest failed lookup.
-		s.Stop()
-		_, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("x"),
-			Timeout: 500 * time.Millisecond})
-		if !errors.Is(err, ErrNoLink) || !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("Call: %v, want the failed lookup joined with the deadline", err)
-		}
-		if errors.Is(err, ErrNoProvider) {
-			t.Errorf("Call: %v, want no conclusion in a failed lookup's error", err)
-		}
-	})
-	t.Run("the deadline alone", func(t *testing.T) {
-		s := teststation.Start(t, profile.PQPure, "order d")
-		realm := teststation.NewRealm(t, profile.PQPure, "order d", org)
-		caller := connect(t, "order d caller", realm, s)
-		s.Silence(caller.NodeID(), time.Minute)
-		_, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("x"),
-			Timeout: 300 * time.Millisecond})
-		if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrNoProvider) {
-			t.Errorf("Call: %v, want the call's own deadline and no conclusion", err)
-		}
-	})
+// At the deadline a candidate that was never reached outranks everything else,
+// and is joined with ErrNoProvider so that a binding still reads no_provider
+// (macula_direct_dial.erl:61-67).
+func TestADeadlineCandidateFailureIsNoProvider(t *testing.T) {
+	serving, dht := teststation.Start(t, profile.PQPure, "order a serving"), teststation.Start(t, profile.PQPure, "order a dht")
+	teststation.ShareDHT(serving, dht)
+	realm := teststation.NewRealm(t, profile.PQPure, "order a", org)
+	realm.Admit(t, serving, nodeIDOf(t, "order a provider"))
+	provider := connect(t, "order a provider", realm, serving)
+	if _, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	refuser := teststation.Start(t, profile.PQPure, "order a refuser")
+	refuser.Refuse(10 * time.Second)
+	serving.Put(endpointWire(t, serving, refuser.Port))
+	caller := connect(t, "order a caller", realm, dht)
+	_, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("x"),
+		Timeout: 600 * time.Millisecond})
+	if !errors.Is(err, ErrNoProvider) {
+		t.Fatalf("Call: %v, want a failure joined with ErrNoProvider", err)
+	}
+	if !contains(err, "provider ") {
+		t.Errorf("Call: %v, want the candidate's own failure in the error", err)
+	}
+}
+
+// A lookup that found nothing concludes with the bare ErrNoProvider, not a
+// wrapper: pullGroupKey tells "not advertised" from "unreachable" by identity
+// (pool/group.go:74).
+func TestADeadlineEmptyLookupIsTheBareSentinel(t *testing.T) {
+	caller, realm := unserved(t, "order b", func(*Opts) {})
+	_, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("x"),
+		Timeout: 300 * time.Millisecond})
+	if err != ErrNoProvider {
+		t.Errorf("Call: %v, want the bare ErrNoProvider, which pullGroupKey compares by identity", err)
+	}
+}
+
+// A lookup that failed concludes with that failure joined with the call's own
+// deadline, so it reads the same under an unbounded context and a bounded one.
+func TestADeadlineFailedLookupCarriesTheDeadline(t *testing.T) {
+	s := teststation.Start(t, profile.PQPure, "order c")
+	realm := teststation.NewRealm(t, profile.PQPure, "order c", org)
+	caller := connect(t, "order c caller", realm, s)
+	// A station that is gone cannot answer the lookup at all: each round's read
+	// fails with ErrNoLink, which is the latest failed lookup.
+	s.Stop()
+	_, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("x"),
+		Timeout: 500 * time.Millisecond})
+	if !errors.Is(err, ErrNoLink) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Call: %v, want the failed lookup joined with the deadline", err)
+	}
+	if errors.Is(err, ErrNoProvider) {
+		t.Errorf("Call: %v, want no conclusion in a failed lookup's error", err)
+	}
+}
+
+// With nothing else to report, the deadline is the error: a lookup the deadline
+// cut off records nothing (macula_direct_dial.erl:61-67).
+func TestADeadlineAloneIsTheTimeout(t *testing.T) {
+	s := teststation.Start(t, profile.PQPure, "order d")
+	realm := teststation.NewRealm(t, profile.PQPure, "order d", org)
+	caller := connect(t, "order d caller", realm, s)
+	s.Silence(caller.NodeID(), time.Minute)
+	_, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("x"),
+		Timeout: 300 * time.Millisecond})
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrNoProvider) {
+		t.Errorf("Call: %v, want the call's own deadline and no conclusion", err)
+	}
 }
 
 // A call that is cancelled reports the cancellation, and carries no

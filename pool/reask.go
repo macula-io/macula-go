@@ -161,30 +161,9 @@ func reask[T any](p *Pool, ctx context.Context, ask func(context.Context) ([]can
 	var last conclusion
 	pause := p.opts.Resolve.Base
 	for {
-		if ctx.Err() != nil {
-			return zero, last.error(ctx)
-		}
-		cands, err := ask(ctx)
-		switch {
-		case err != nil:
-			// A lookup the deadline cut off records nothing (macula).
-			if ctx.Err() != nil {
-				return zero, last.error(ctx)
-			}
-			last.lookup, last.empty = err, false
-		case len(cands) == 0:
-			last.lookup, last.empty = nil, true
-		default:
-			result := walk(ctx, cands)
-			if result.sent {
-				return result.out, result.outcome
-			}
-			if result.stop != nil {
-				return zero, result.stop
-			}
-			if len(result.failed) > 0 {
-				last.failed, last.empty = result.failed, false
-			}
+		out, sent, err := round(ctx, ask, walk, &last)
+		if sent || err != nil {
+			return out, err
 		}
 		if p.isClosed() {
 			return zero, errors.Join(ErrClosed, ctx.Err())
@@ -196,4 +175,39 @@ func reask[T any](p *Pool, ctx context.Context, ask func(context.Context) ([]can
 		pauseFor(ctx, min(pause, left))
 		pause = p.opts.Resolve.next(pause)
 	}
+}
+
+// round is one ask of the DHT and one walk of what it found, folding what they
+// leave behind into last: the answer when something was sent, and otherwise
+// why to stop when the round cannot carry on.
+func round[T any](ctx context.Context, ask func(context.Context) ([]candidate, error),
+	walk func(context.Context, []candidate) walkResult[T], last *conclusion) (T, bool, error) {
+	var zero T
+	if ctx.Err() != nil {
+		return zero, false, last.error(ctx)
+	}
+	cands, err := ask(ctx)
+	switch {
+	case err != nil:
+		// A lookup the deadline cut off records nothing (macula).
+		if ctx.Err() != nil {
+			return zero, false, last.error(ctx)
+		}
+		last.lookup, last.empty = err, false
+		return zero, false, nil
+	case len(cands) == 0:
+		last.lookup, last.empty = nil, true
+		return zero, false, nil
+	}
+	result := walk(ctx, cands)
+	if result.sent {
+		return result.out, true, result.outcome
+	}
+	if result.stop != nil {
+		return zero, false, result.stop
+	}
+	if len(result.failed) > 0 {
+		last.failed, last.empty = result.failed, false
+	}
+	return zero, false, nil
 }

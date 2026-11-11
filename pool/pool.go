@@ -249,21 +249,8 @@ func checked(seeds []Seed, opts Opts) (Opts, error) {
 	if opts.RespawnDelay <= 0 {
 		opts.RespawnDelay = DefaultRespawnDelay
 	}
-	redial, err := opts.Redial.checked()
-	if err != nil {
+	if err := checkSchedules(&opts); err != nil {
 		return opts, err
-	}
-	opts.Redial = redial
-	resolve, err := opts.Resolve.checked()
-	if err != nil {
-		return opts, err
-	}
-	opts.Resolve = resolve
-	if opts.DialTimeout < 0 {
-		return opts, fmt.Errorf("%w: a dial timeout of %s", ErrInvalidOpts, opts.DialTimeout)
-	}
-	if opts.DialTimeout == 0 {
-		opts.DialTimeout = DefaultDialTimeout
 	}
 	if opts.Admission == (stationlink.AdmissionLimits{}) {
 		opts.Admission = stationlink.DefaultAdmissionLimits()
@@ -289,6 +276,29 @@ func checked(seeds []Seed, opts Opts) (Opts, error) {
 		return opts, fmt.Errorf("%w: %s", ErrStationInBothTiers, seed.address())
 	}
 	return opts, nil
+}
+
+// checkSchedules fills in and refuses the three schedules a pool runs on: the
+// redial schedule of a station whose tier is not active, the resolve schedule
+// of a call that has sent nothing, and the window a stream's resolve phase gets.
+func checkSchedules(opts *Opts) error {
+	redial, err := opts.Redial.checked()
+	if err != nil {
+		return err
+	}
+	opts.Redial = redial
+	resolve, err := opts.Resolve.checked()
+	if err != nil {
+		return err
+	}
+	opts.Resolve = resolve
+	switch {
+	case opts.DialTimeout < 0:
+		return fmt.Errorf("%w: a dial timeout of %s", ErrInvalidOpts, opts.DialTimeout)
+	case opts.DialTimeout == 0:
+		opts.DialTimeout = DefaultDialTimeout
+	}
+	return nil
 }
 
 // checkRealmTrust refuses a realm key that is not well formed under the
