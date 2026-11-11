@@ -99,6 +99,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that moment. `stationlink.NotCarried` and `stationlink.Procedure*` are new;
   `pool.ErrNotRetryable` names a procedure outside the set. A call to a
   provider is unchanged: it still moves on only before the CALL is sent.
+- **The structural floor holds the interop clients too.** Both
+  `scripts/interop/*/eslint.config.mjs` capped block depth at 3 where the floor
+  (macula-codebase-checks#9) is 2, so the `structural floor (interop clients)`
+  CI job ran a relaxed rule: `tsgroups.mjs` (the member's event scan) and
+  `tssealed.mjs` (the stream read) nested three deep and passed. The two rules
+  now carry the floor's numbers, and the two functions are split rather than
+  silenced — `heardFromErlang` and `readStream`.
+- **The TypeScript sealed interop client runs again.** `tssealed` pinned
+  @macula-io/ts 0.25.0, whose shared library times out connecting to the test
+  station (`Pool.connect`: "the call's timeout ran out"), so
+  `SEALED_PEER=ts scripts/interop/sealed.sh` could not get past connect. Pinned
+  to 0.31.0; both profiles run and pass.
 
 - **A re-arm that lands while a retry is being parked no longer leaves its
   count behind (macula-go#82).** `pause` reads a station's retry count, plans

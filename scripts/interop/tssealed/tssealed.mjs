@@ -74,10 +74,7 @@ async function runStream(pool, watch) {
   const seen = { chunk: null, reply: null };
   let streamReport = null;
   try {
-    for (let i = 0; i < 4 && seen.reply === null; i++) {
-      const event = await stream.recv({ timeoutMs: 10_000 });
-      if (applyStreamEvent(event, seen)) break;
-    }
+    await readStream(stream, seen);
     // Settled on the provider's first chunk opened under the stream's key, and
     // kept after the end.
     streamReport = stream.report();
@@ -87,6 +84,15 @@ async function runStream(pool, watch) {
     await stream.free();
   }
   return { ...seen, streamReport };
+}
+
+// Reads the stream's events into seen until the reply arrives or the stream
+// ends.
+async function readStream(stream, seen) {
+  for (let i = 0; i < 4 && seen.reply === null; i++) {
+    const event = await stream.recv({ timeoutMs: 10_000 });
+    if (applyStreamEvent(event, seen)) return;
+  }
 }
 
 // What the stream must have delivered, sealed to that provider.
