@@ -13,6 +13,11 @@ import (
 // declaration without the byte cap would bound the entries only, and one
 // publication may be frame.MaxFrameBytes, 16 MiB, so 4096 of them would be
 // 64 GiB.
+//
+// What a pool can hold in all is (MaxSeeds + MaxDirectLinks) ×
+// stationlink.MaxUnconfirmedBytes, plus this queue once: the default link
+// ceiling is 16 + 8, and checkLinkLimits lets each go to maxLinkLimit 64, so
+// that is 768 MiB + 32 MiB at the defaults and 4 GiB + 32 MiB at the cap.
 const (
 	maxWaiting      = 4096
 	maxWaitingBytes = stationlink.MaxUnconfirmedBytes
