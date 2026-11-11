@@ -380,3 +380,31 @@ func TestOnlyChangedCandidatesAreTriedAgain(t *testing.T) {
 func contains(err error, part string) bool {
 	return err != nil && strings.Contains(err.Error(), part)
 }
+
+// The schedules are refused outside the bounds that make them schedules, and
+// held to them at the edges: a factor of one keeps the pause at its floor, and a
+// cap below the base is refused rather than silently grown.
+func TestTheSchedulesRefuseWhatCannotBeOne(t *testing.T) {
+	if _, err := (Resolve{Base: 2 * time.Second, Cap: time.Second}).checked(); !errors.Is(err, ErrInvalidOpts) {
+		t.Errorf("a cap below the base: %v, want ErrInvalidOpts", err)
+	}
+	if _, err := (Resolve{Factor: -1}).checked(); !errors.Is(err, ErrInvalidOpts) {
+		t.Errorf("a negative factor: %v, want ErrInvalidOpts", err)
+	}
+	at := Resolve{Base: time.Second, Factor: 1, Cap: time.Second}
+	if got := at.next(at.Base); got != time.Second {
+		t.Errorf("a factor of one from the base pauses %s, want %s", got, time.Second)
+	}
+	filled, err := (Resolve{}).checked()
+	if err != nil || filled != (Resolve{Base: DefaultResolveBase, Factor: DefaultResolveFactor, Cap: DefaultResolveCap}) {
+		t.Errorf("the zero schedule: %+v, %v, want macula's defaults", filled, err)
+	}
+	opts := Opts{DialTimeout: -time.Second}
+	if err := checkSchedules(&opts); !errors.Is(err, ErrInvalidOpts) {
+		t.Errorf("a negative dial timeout: %v, want ErrInvalidOpts", err)
+	}
+	opts = Opts{}
+	if err := checkSchedules(&opts); err != nil || opts.DialTimeout != DefaultDialTimeout {
+		t.Errorf("the zero dial timeout: %s, %v, want macula's default", opts.DialTimeout, err)
+	}
+}
