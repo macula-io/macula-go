@@ -217,6 +217,24 @@ func TestAPublicationPastItsResendDeadlineIsCountedUnsent(t *testing.T) {
 	}
 }
 
+// A copy handed over past its deadline is counted unsent rather than queued:
+// the hand-over path checks the deadline itself, before it looks for a link.
+func TestACopyHandedOverPastItsDeadlineIsCountedUnsent(t *testing.T) {
+	t.Parallel()
+	a := teststation.Start(t, profile.PQPure, "hand-over too old a")
+	_, _, publisher, realm := listening(t, "hand-over too old", []*teststation.Station{a}, []*teststation.Station{a})
+	ttl := uint64(0)
+	tooOld := signedFor(t, publisher, realm, "handed over too old", &ttl)
+	time.Sleep(2 * time.Millisecond) // past the moment a subscriber would accept it
+	publisher.resend([]stationlink.SignedPublication{tooOld})
+	if sent := publisher.UnsentPublications(); sent != 1 {
+		t.Errorf("%d publications counted unsent, want the expired copy", sent)
+	}
+	if n := waitingLen(publisher); n != 0 {
+		t.Errorf("%d publications wait, want none: the expired copy was counted", n)
+	}
+}
+
 // The waiting queue is bounded by entries and by bytes, and counts what it
 // cannot keep.
 func TestTheWaitingQueueCountsWhatItCannotKeep(t *testing.T) {
