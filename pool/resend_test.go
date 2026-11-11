@@ -256,18 +256,28 @@ func TestTheWaitingQueueCountsWhatItCannotKeep(t *testing.T) {
 	}
 }
 
-// A close counts every publication still held or waiting exactly once.
+// A close counts every publication still waiting exactly once, after the
+// members have stopped: what an ended link still held is counted by the
+// hand-over that finds the pool closed, and what waits is counted here.
 func TestClosingCountsEveryHeldAndWaitingPublicationOnce(t *testing.T) {
 	t.Parallel()
 	a := teststation.Start(t, profile.PQPure, "closing a")
-	_, _, publisher, realm := listening(t, "closing", []*teststation.Station{a}, []*teststation.Station{a})
-	publisher.keep(signedFor(t, publisher, realm, "waiting", nil))
+	_, sub, publisher, realm := listening(t, "closing", []*teststation.Station{a}, []*teststation.Station{a})
 	say(t, publisher, realm, "held on the link")
+	if got := firstDelivery(t, sub, 3*time.Second); got.Kind != KindEvent {
+		t.Fatalf("delivered %s, want the publication", shown([]Delivery{got}))
+	}
+	// The station takes nothing more, so what the link held waits and nothing
+	// drains it.
+	a.Refuse(time.Minute)
+	a.Drop(publisher.NodeID())
+	eventually(t, "the held publication waits", func() bool { return waitingLen(publisher) == 1 })
+	publisher.keep(signedFor(t, publisher, realm, "waits with it", nil))
 	if err := publisher.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	if sent := publisher.UnsentPublications(); sent != 2 {
-		t.Errorf("%d publications counted unsent at close, want the waiting one and the held one", sent)
+		t.Errorf("%d publications counted unsent at close, want the held one and the one kept with it", sent)
 	}
 }
 
