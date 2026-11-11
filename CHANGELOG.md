@@ -141,6 +141,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cabi/CONTRACT.md` defines it. No kind is added, no field is added, and
   `MACULA_ABI_VERSION` does not move.
 
+- **The subscription-notice tests wait for the node to carry the subscription,
+  not for the stations to hold it (macula-go#88).** `listening()` waits until
+  every station reports the subscription, and a station records a SUBSCRIBE
+  before it acknowledges it, so a test could end a link while one of the node's
+  own attachments was still in flight — and that ending link then read as the
+  last one carrying the subscription, delivering `interrupted` and `gap` for a
+  gap that never happened. `TestOneOfTwoLinksEndingDeliversNoNotice` flaked
+  this way on CI (2 in 50 runs here). The two tests that end a link now wait
+  for the node's own attachments first, and
+  `TestStationsHoldingTheSubscriptionIsNotTheNodeCarryingIt` pins the window
+  with `teststation.HoldAcks`. No pool behaviour changes: a false notice stays
+  safer than a silent loss, so the pool is untouched.
+
 - **A station procedure in flight when its link ends is asked again on the
   next link, and nothing that could give a different result is
   (macula-go#74).** A pool's DHT reads and puts moved to the next link only on
