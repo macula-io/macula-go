@@ -279,10 +279,13 @@ func TestStationsHoldingTheSubscriptionIsNotTheNodeCarryingIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
-	// b answered; a accepted and recorded it and is holding its answer.
-	if !a.Subscribed(listener.NodeID(), realm.ID, topic) || !b.Subscribed(listener.NodeID(), realm.ID, topic) {
-		t.Fatal("not every station holds the subscription")
-	}
+	// b answered; a records the subscription when it reads the frame and is
+	// holding its answer. Subscribe returned on b's answer, so a may not have
+	// read it yet: wait for both stations, which is a wait on them, not on the
+	// node (whose one attachment stays in flight while a's answer is held).
+	eventually(t, "both stations hold the subscription", func() bool {
+		return a.Subscribed(listener.NodeID(), realm.ID, topic) && b.Subscribed(listener.NodeID(), realm.ID, topic)
+	})
 	if links := carriedLinks(sub); links != 1 {
 		t.Fatalf("both stations hold it but %d link carries it, want 1 while a's answer is held", links)
 	}
