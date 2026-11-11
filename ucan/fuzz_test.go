@@ -116,35 +116,43 @@ func FuzzParsed(f *testing.F) {
 	})
 }
 
-// FuzzAuthorize fuzzes a token's header and claims bytes, signed with the
-// fixture's key, and presents it to its audience with the token itself among the
-// proofs.
+// FuzzAuthorize fuzzes a token's header and claims bytes, signed by the
+// fixture's delegate, and presents it to its audience with the delegate's parent
+// beside it as a proof. A claims block that names that parent's id is walked up
+// it, so the delegation checks run on fuzzed bytes; one that does not is refused
+// for the unused proof.
 func FuzzAuthorize(f *testing.F) {
 	fixture := newFuzzToken(f)
 	for _, seed := range fixture.seeds(f) {
 		f.Add(seed.header, seed.claims)
 	}
 	f.Fuzz(func(t *testing.T, header, claims []byte) {
-		token := signedSegment(t, fixture.issuer, header, claims)
-		if _, err := Authorize(token, fixture.policy, fixture.context()); err != nil {
+		if _, err := fixture.authorize(t, header, claims); err != nil {
 			refusalAsOneOf(t, err)
 		}
 	})
 }
 
-// fuzzToken is what a fuzzed token is signed by and presented to: a test key as
-// issuer, its own policy, and the context of its audience.
+// fuzzToken is what a fuzzed token is signed by and presented to: the delegate
+// key signs it, the delegate's parent is the policy's issuer, and the context is
+// the audience's. The two keys are what make a chain walkable: a token signed by
+// a key nobody delegates to would be refused before the delegation checks ran.
+// root is the parent, signed once, because a proof is named by the hash of a
+// token and a second signing of it would carry another hash.
 type fuzzToken struct {
-	issuer  *identity.NodeKey
-	policy  UCANRequired
-	request *Request
-	now     int64
-	caller  [32]byte
+	issuer   *identity.NodeKey
+	delegate *identity.NodeKey
+	policy   UCANRequired
+	request  *Request
+	now      int64
+	caller   [32]byte
+	root     []byte
 }
 
 func newFuzzToken(t testing.TB) fuzzToken {
 	t.Helper()
 	issuer := teststation.Key(t, profile.PQPure, "ucan fuzz issuer")
+	delegate := teststation.Key(t, profile.PQPure, "ucan fuzz delegate")
 	audience := teststation.Key(t, profile.PQPure, "ucan fuzz audience")
 	caller, err := audience.NodeID()
 	if err != nil {
@@ -157,21 +165,38 @@ func newFuzzToken(t testing.TB) fuzzToken {
 	// The vectors' own clock: their tokens are minted around it, so a token
 	// this fixture signs at it is valid in the same window.
 	_, now := fuzzTokens(t)
-	return fuzzToken{
-		issuer:  issuer,
-		policy:  UCANRequired{Issuer: issuerNode},
-		request: &Request{Realm: sha256.Sum256([]byte("io.macula")), Procedure: fuzzProcedure},
-		now:     now,
-		caller:  caller,
+	f := fuzzToken{
+		issuer:   issuer,
+		delegate: delegate,
+		policy:   UCANRequired{Issuer: issuerNode},
+		request:  &Request{Realm: sha256.Sum256([]byte(fuzzRealm)), Procedure: fuzzProcedure},
+		now:      now,
+		caller:   caller,
 	}
+	f.root = f.signRoot(t)
+	return f
 }
 
-const fuzzProcedure = "acme/count_v1"
+const (
+	fuzzProcedure = "acme/count_v1"
+	fuzzRealm     = "io.macula"
+	// fuzzWith is the grant the fixture's tokens carry: the procedure above, in
+	// the realm the request names.
+	fuzzWith = "mri:proc:" + fuzzRealm + "/" + fuzzProcedure
+)
 
-// context is the token presented by the audience it names, with the tokens in
-// proofs beside it, keyed as a chain names them. A token whose claims name none
-// of them is refused for it (unreferenced_proof), which is the rule for a proof
-// nobody used: the fuzzer supplies one only where the seed has a chain.
+// authorize is how a fuzzed header and claims are judged: a token over exactly
+// those bytes, signed by the delegate, presented to the audience with root
+// beside it. FuzzAuthorize and TestFuzzedSeedsReachTheGrants judge a seed through
+// this one function, so what the seed test reports is what the target runs.
+func (f fuzzToken) authorize(t testing.TB, header, claims []byte) (map[string]any, error) {
+	t.Helper()
+	return Authorize(signedSegment(t, f.delegate, header, claims), f.policy, f.context(f.root))
+}
+
+// context is the token presented by the audience it names, with the proofs the
+// chain names beside it, keyed as a chain names them. A proof nobody names is
+// refused for it (unreferenced_proof), so a token without a chain carries none.
 func (f fuzzToken) context(proofs ...[]byte) Context {
 	ids := make(map[string][]byte, len(proofs))
 	for _, proof := range proofs {
@@ -180,14 +205,14 @@ func (f fuzzToken) context(proofs ...[]byte) Context {
 	return Context{Caller: f.caller, Profile: profile.PQPure, Now: f.now, Request: f.request, Proofs: ids}
 }
 
-// claims is a claims object for this fixture: issued by the fixture's issuer to
-// its audience, valid at now, carrying what extra gives.
+// claims is a claims object for this fixture: issued by the delegate to its
+// audience, valid at now, carrying what extra gives.
 func (f fuzzToken) claims(t testing.TB, extra map[string]any) []byte {
 	t.Helper()
 	claims := map[string]any{
-		"iss": DIDKey(f.issuer.PublicKey(), f.issuer.Profile()),
+		"iss": DIDKey(f.delegate.PublicKey(), f.delegate.Profile()),
 		"aud": hex.EncodeToString(f.caller[:]),
-		"cap": []Capability{{With: "mri:proc:io.macula/acme/count_v1", Can: "invoke"}},
+		"cap": []Capability{{With: fuzzWith, Can: "invoke"}},
 		"exp": f.now + 3600,
 	}
 	for name, value := range extra {
@@ -198,6 +223,22 @@ func (f fuzzToken) claims(t testing.TB, extra map[string]any) []byte {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// signRoot is the token above a fuzzed one: the policy's issuer granting the
+// delegate the procedure the fixture's claims carry, so a chain from the
+// delegate up to the issuer can be walked.
+func (f fuzzToken) signRoot(t testing.TB) []byte {
+	t.Helper()
+	delegate, err := f.delegate.NodeID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := f.claims(t, map[string]any{
+		"iss": DIDKey(f.issuer.PublicKey(), f.issuer.Profile()),
+		"aud": hex.EncodeToString(delegate[:]),
+	})
+	return signedSegment(t, f.issuer, f.header(t), claims)
 }
 
 // header is the header this fixture's profile signs with.
@@ -227,38 +268,49 @@ func signedSegment(t testing.TB, issuer *identity.NodeKey, header, claims []byte
 	return []byte(input + "." + base64.RawURLEncoding.EncodeToString(signature))
 }
 
-// fuzzSeed is one seed of FuzzAuthorize: the bytes it fuzzes, and the proofs
-// that go beside the token so a chain can be walked.
+// fuzzSeed is one seed of FuzzAuthorize: the header and claims bytes it fuzzes,
+// and whether those claims name a proof, so the seed test can say which seeds
+// go through the walk.
 type fuzzSeed struct {
 	header, claims []byte
-	proofs         [][]byte
+	chained        bool
 }
 
 // seeds is the corpus FuzzAuthorize starts from: the vectors' own tokens and
 // claims, and the claims of this fixture that get a token past the signature,
-// the audience and the clock into the capability and chain checks.
+// the audience and the clock into the capability and chain checks. The chained
+// seeds name the root's id, so the walk runs on every push and not only under a
+// -fuzz run: a fuzzer whose seeds never name a proof spends the run refusing at
+// the proof lookup.
 func (f fuzzToken) seeds(t testing.TB) []fuzzSeed {
 	t.Helper()
 	header := f.header(t)
+	root := f.root
 	out := []fuzzSeed{
-		// The fixture's own token: it authorizes, so the grants and the chain
-		// both run.
+		// The fixture's own token, naming no proof: the grants check runs, and
+		// the walk finds a token nobody delegated to.
 		{header: header, claims: f.claims(t, nil)},
 		// A capability that does not cover the request: the grants check runs
 		// and refuses.
 		{header: header, claims: f.claims(t, map[string]any{
-			"cap": []Capability{{With: "mri:realm:io.macula", Can: "invoke"}},
+			"cap": []Capability{{With: "mri:realm:" + fuzzRealm, Can: "invoke"}},
 		})},
-	}
-	parent := signedSegment(t, f.issuer, header, f.claims(t, nil))
-	// A chain whose parent is beside it, and one whose parent is missing: the
-	// walk runs, and reaches the delegation and narrowing checks or the proof
-	// lookup.
-	out = append(out,
-		fuzzSeed{header: header, claims: f.claims(t, map[string]any{"prf": []string{ProofID(parent)}}), proofs: [][]byte{parent}},
-		fuzzSeed{header: header, claims: f.claims(t, map[string]any{"prf": []string{ProofID(parent)}})},
+		// The chained token: it names the root as its proof, so the walk runs
+		// from the delegate up to the issuer and the delegation checks decide.
+		{header: header, claims: f.claims(t, map[string]any{"prf": []string{ProofID(root)}}), chained: true},
+		// A chained token that hands on more than the root granted: the
+		// narrowing check runs and refuses.
+		{header: header, claims: f.claims(t, map[string]any{
+			"cap": []Capability{{With: "mri:realm:" + fuzzRealm, Can: "invoke"}},
+			"prf": []string{ProofID(root)},
+		}), chained: true},
+		// A chained token naming a proof nobody supplies: the lookup runs, and
+		// the token is refused for the missing proof.
+		{header: header, claims: f.claims(t, map[string]any{
+			"prf": []string{ProofID([]byte("a token nobody supplies"))},
+		}), chained: true},
 		// The vectors' own tokens, as the header and claims they carry.
-	)
+	}
 	for _, token := range fuzzVectorSegments(t) {
 		out = append(out, fuzzSeed{header: token[0], claims: token[1]})
 	}
@@ -343,13 +395,17 @@ func reachedTheGrants(err error) bool {
 // TestFuzzedSeedsReachTheGrants shows what FuzzAuthorize's seeds cover: a seed
 // that authorizes, so the grants and chain run to the end; and a seed whose
 // chain is walked, so a delegated token's parent is read too. Without this the
-// target would only re-test the decoder with extra steps.
+// target would only re-test the decoder with extra steps. A seed is judged
+// through the same authorize the target runs, so the count is about what a push
+// actually does.
 func TestFuzzedSeedsReachTheGrants(t *testing.T) {
 	fixture := newFuzzToken(t)
-	authorized, walked := 0, 0
+	authorized, walked, delegated := 0, 0, 0
 	for _, seed := range fixture.seeds(t) {
-		token := signedSegment(t, fixture.issuer, seed.header, seed.claims)
-		_, err := Authorize(token, fixture.policy, fixture.context(seed.proofs...))
+		_, err := fixture.authorize(t, seed.header, seed.claims)
+		if seed.chained && err == nil {
+			delegated++
+		}
 		if err != nil && !reachedTheGrants(err) {
 			continue
 		}
@@ -364,7 +420,11 @@ func TestFuzzedSeedsReachTheGrants(t *testing.T) {
 	if walked == 0 {
 		t.Fatalf("no seed reached the chain walk")
 	}
-	t.Logf("seeds reaching the grants: %d, of them through a chain walk: %d", authorized, walked)
+	if delegated == 0 {
+		t.Fatalf("no seed authorized through its chain: the delegation checks decide nothing")
+	}
+	t.Logf("seeds reaching the grants: %d, of them through a chain walk: %d, of them authorizing through a chain: %d",
+		authorized, walked, delegated)
 }
 
 // refusalAsOneOf fails t unless err is one of macula_ucan's refusals, or the
