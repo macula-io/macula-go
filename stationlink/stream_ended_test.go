@@ -45,3 +45,27 @@ func TestAStreamWhoseLinkEndsNamesTheEnding(t *testing.T) {
 		t.Errorf("the message does not name the ending: %v", err)
 	}
 }
+
+// A stream whose link its own owner closes is named as the link's ending too:
+// end ends every stream it still holds with the ending wrapped, so a reader
+// sees the link and not the bare ErrClosed the link ended with (macula-go#75).
+func TestAStreamWhoseLinkItsOwnerClosesNamesTheEnding(t *testing.T) {
+	w := newStreamWorld(t, "owner-closed stream")
+	w.serve(t, frame.ServerStream, func(ctx context.Context, _ *stationlink.Stream) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	stream := w.open(t, frame.ServerStream, cbor.Map(nil))
+	stationlink.EndLink(w.caller, stationlink.ErrClosed)
+
+	_, err := recv(t, stream)
+	if !errors.Is(err, stationlink.ErrLinkEnded) {
+		t.Fatalf("the stream of a link its owner closed: %v, want the link's ending", err)
+	}
+	if got := stationlink.EndReason(err); got != "closed" {
+		t.Errorf("EndReason: %q, want closed", got)
+	}
+	if !strings.Contains(err.Error(), "(closed)") {
+		t.Errorf("the message does not name the ending: %v", err)
+	}
+}

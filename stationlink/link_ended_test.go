@@ -13,6 +13,7 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/profile"
+	"github.com/macula-io/macula-go/record"
 )
 
 // dropped is a station closing the caller's connection with QUIC application
@@ -179,6 +180,31 @@ func TestAWriteBeforeTheEndingIsRecordedIsNamedAndNotCarried(t *testing.T) {
 	}
 }
 
+// The window test above swaps connEnded for a value; the real one reads the
+// connection's own cause, and this test calls it against a connection the
+// station has dropped, so the read the not-sent path depends on runs under a
+// test (macula-go#75).
+func TestTheConnectionsOwnEndingIsReadFromTheConnection(t *testing.T) {
+	link, s := linkWithStation(t, profile.PQPure)
+	s.dropConn()
+	select {
+	case <-link.conn.Context().Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the connection never ended after the station dropped it")
+	}
+	ended := connEnded(link)
+	if ended == nil {
+		t.Fatal("the connection has ended and connEnded says the link has not")
+	}
+	if got := EndReason(ended); got != "closed_by_station" {
+		t.Errorf("EndReason: %q, want closed_by_station", got)
+	}
+	var app *quic.ApplicationError
+	if !errors.As(ended, &app) || !app.Remote {
+		t.Errorf("the transport's close is not reachable from %v", ended)
+	}
+}
+
 // A publication the link could not send because its link ended is named too:
 // Publish and PublishSigned surface the same value as a call (macula-go#75).
 func TestAPublishOnAnEndedLinkNamesTheEnding(t *testing.T) {
@@ -246,60 +272,135 @@ func TestASubscribeWhoseLinkEndsNamesTheEnding(t *testing.T) {
 	}
 }
 
+// A SUBSCRIBE written on a link that has already ended is named at the write
+// itself, not only while its verdict is awaited: the frame never left the
+// link, and the caller is told the link ended rather than handed the
+// transport's raw close (macula-go#75).
+func TestASubscribeOnAnEndedLinkNamesTheEnding(t *testing.T) {
+	link, _ := linkWithStation(t, profile.PQPure)
+	link.end(ErrClosed)
+	_, err := link.Subscribe([32]byte{1}, "link-ended/topic")
+	namedEnding(t, err, "closed")
+	link.mu.Lock()
+	left := len(link.subs)
+	link.mu.Unlock()
+	if left != 0 {
+		t.Errorf("%d subscriptions left on a link whose SUBSCRIBE was never written", left)
+	}
+}
+
+// An ADVERTISE written on a link that has already ended is named too: a serve
+// on a link that is gone is the same failure as a call, and an own-namespace
+// procedure needs nothing but the write to reach it (macula-go#75).
+func TestAServeOnAnEndedLinkNamesTheEnding(t *testing.T) {
+	link, _ := linkWithStation(t, profile.PQPure)
+	link.end(ErrLivenessLost)
+	own := record.OwnProcedure(link.NodeID(), "ring")
+	_, err := link.Serve(context.Background(), Offer{Realm: [32]byte{1}, Procedure: own, Handler: echo})
+	namedEnding(t, err, "liveness_lost")
+}
+
+// The renewal's own write is named as well: a served procedure whose ADVERTISE
+// cannot be sent because the link ended says so in its error, and the renewal
+// leaves on link.done before it gets there, so the write is driven here
+// (macula-go#75).
+func TestARenewalsAdvertisementOnAnEndedLinkNamesTheEnding(t *testing.T) {
+	link, _ := linkWithStation(t, profile.PQPure)
+	link.end(ErrStatusExpired)
+	err := link.announce(context.Background(), []byte("advertisement"))
+	namedEnding(t, err, "status_expired")
+}
+
 // What is not the link's ending keeps its own value: a caller's cancellation,
-// a call over the frame cap and a station's answer are not the link failing to
-// carry a request, and naming them as one would tell a caller its link died
-// when it did not (macula-go#75).
+// a call, a publication or an open over the frame cap and a station's answer
+// are not the link failing to carry a request, and naming them as one would
+// tell a caller its link died when it did not (macula-go#75).
 func TestWhatIsNotTheLinksEndingIsNotNamed(t *testing.T) {
-	t.Run("cancelled", func(t *testing.T) {
-		link, s := linkWithStation(t, profile.PQPure)
-		s.answerCalls(func(frame.VerifiedRequest) (cbor.Value, bool) { return cbor.Value{}, false })
-		ctx, cancel := context.WithCancel(context.Background())
-		out := make(chan error, 1)
-		go func() {
-			_, err := link.Call(ctx, stationCall(ProcedureFindRecord, cbor.Text("held")))
-			out <- err
-		}()
-		time.Sleep(200 * time.Millisecond)
-		cancel()
-		err := <-out
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("a cancelled call: %v, want context.Canceled", err)
-		}
-		if errors.Is(err, ErrLinkEnded) {
-			t.Errorf("a caller's own cancellation was named as the link's ending: %v", err)
-		}
+	t.Run("cancelled", aCancellationIsNotTheEnding)
+	t.Run("station_answer", anAnswerIsNotTheEnding)
+	t.Run("frame_too_large", aCallOverTheCapIsNotTheEnding)
+	t.Run("publish_too_large", aPublicationOverTheCapIsNotTheEnding)
+	t.Run("stream_open_too_large", anOpenOverTheCapIsNotTheEnding)
+}
+
+// aCancellationIsNotTheEnding: the caller gave up, the link did not.
+func aCancellationIsNotTheEnding(t *testing.T) {
+	link, s := linkWithStation(t, profile.PQPure)
+	s.answerCalls(func(frame.VerifiedRequest) (cbor.Value, bool) { return cbor.Value{}, false })
+	ctx, cancel := context.WithCancel(context.Background())
+	out := make(chan error, 1)
+	go func() {
+		_, err := link.Call(ctx, stationCall(ProcedureFindRecord, cbor.Text("held")))
+		out <- err
+	}()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	err := <-out
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled call: %v, want context.Canceled", err)
+	}
+	if errors.Is(err, ErrLinkEnded) {
+		t.Errorf("a caller's own cancellation was named as the link's ending: %v", err)
+	}
+}
+
+// anAnswerIsNotTheEnding: the station answered, so the link carried the call.
+func anAnswerIsNotTheEnding(t *testing.T) {
+	link, s := linkWithStation(t, profile.PQPure)
+	detail := "no such key"
+	s.answerCalls(func(r frame.VerifiedRequest) (cbor.Value, bool) {
+		reply, err := frame.SignProviderError(r, "not_found", &detail, nil, s.key)
+		return reply, err == nil
 	})
-	t.Run("station_answer", func(t *testing.T) {
-		link, s := linkWithStation(t, profile.PQPure)
-		detail := "no such key"
-		s.answerCalls(func(r frame.VerifiedRequest) (cbor.Value, bool) {
-			reply, err := frame.SignProviderError(r, "not_found", &detail, nil, s.key)
-			return reply, err == nil
-		})
-		_, err := callWithin(t, link, stationCall(ProcedureFindRecord, cbor.Map(nil)))
-		var provider *ProviderError
-		if !errors.As(err, &provider) {
-			t.Fatalf("the station's answer: %v, want the provider's error", err)
-		}
-		if errors.Is(err, ErrLinkEnded) {
-			t.Errorf("a station's own answer was named as the link's ending: %v", err)
-		}
-	})
-	t.Run("frame_too_large", func(t *testing.T) {
-		link, _ := linkWithStation(t, profile.PQPure)
-		// Half a signature of headroom keeps the payload under the payload cap
-		// and pushes the CALL that wraps it, signature and all, over the frame
-		// cap, as stationlink/call_test.go does.
-		payload := MaxFrameBytes - mldsa.MLDSA87().SignatureSize()/2
-		_, err := callWithin(t, link, stationCall(ProcedureFindRecord, cbor.Bytes(make([]byte, payload))))
-		if !errors.Is(err, ErrFrameTooLarge) {
-			t.Fatalf("a call over the cap: %v, want ErrFrameTooLarge", err)
-		}
-		if errors.Is(err, ErrLinkEnded) {
-			t.Errorf("a call every link refuses was named as the link's ending: %v", err)
-		}
-	})
+	_, err := callWithin(t, link, stationCall(ProcedureFindRecord, cbor.Map(nil)))
+	var provider *ProviderError
+	if !errors.As(err, &provider) {
+		t.Fatalf("the station's answer: %v, want the provider's error", err)
+	}
+	if errors.Is(err, ErrLinkEnded) {
+		t.Errorf("a station's own answer was named as the link's ending: %v", err)
+	}
+}
+
+// aCallOverTheCapIsNotTheEnding: every link refuses it, an ending or not.
+func aCallOverTheCapIsNotTheEnding(t *testing.T) {
+	link, _ := linkWithStation(t, profile.PQPure)
+	// Half a signature of headroom keeps the payload under the payload cap
+	// and pushes the CALL that wraps it, signature and all, over the frame
+	// cap, as stationlink/call_test.go does.
+	payload := MaxFrameBytes - mldsa.MLDSA87().SignatureSize()/2
+	_, err := callWithin(t, link, stationCall(ProcedureFindRecord, cbor.Bytes(make([]byte, payload))))
+	if !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("a call over the cap: %v, want ErrFrameTooLarge", err)
+	}
+	if errors.Is(err, ErrLinkEnded) {
+		t.Errorf("a call every link refuses was named as the link's ending: %v", err)
+	}
+}
+
+// aPublicationOverTheCapIsNotTheEnding: the write on a live link refuses it.
+func aPublicationOverTheCapIsNotTheEnding(t *testing.T) {
+	link, _ := linkWithStation(t, profile.PQPure)
+	err := link.PublishSigned(SignedPublication{encoded: make([]byte, MaxFrameBytes+1)})
+	if !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("a publication over the cap: %v, want ErrFrameTooLarge", err)
+	}
+	if errors.Is(err, ErrLinkEnded) {
+		t.Errorf("a publication every link refuses was named as the link's ending: %v", err)
+	}
+}
+
+// anOpenOverTheCapIsNotTheEnding: the open is refused before any stream exists.
+func anOpenOverTheCapIsNotTheEnding(t *testing.T) {
+	link, _ := linkWithStation(t, profile.PQPure)
+	open := StreamCall{Procedure: "mcl-tube/watch", Payload: cbor.Bytes(make([]byte, streamOpenBytes))}
+	_, err := link.OpenStream(context.Background(), open)
+	if !errors.Is(err, ErrStreamOpenTooLarge) {
+		t.Fatalf("an open over the cap: %v, want ErrStreamOpenTooLarge", err)
+	}
+	if errors.Is(err, ErrLinkEnded) {
+		t.Errorf("an open every link refuses was named as the link's ending: %v", err)
+	}
 }
 
 // A call on a link that has ended carries one name, not a stack of them: the

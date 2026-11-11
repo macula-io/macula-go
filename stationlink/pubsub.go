@@ -207,7 +207,7 @@ func (l *Link) subscribed(key topicKey) error {
 	answer := l.expect(r)
 	if err := l.sendTopicFrame(frame.SubscribeFrame, key); err != nil {
 		l.forget(r, answer)
-		return err
+		return l.namedEnding(err)
 	}
 	return l.verdict(context.Background(), r, answer)
 }

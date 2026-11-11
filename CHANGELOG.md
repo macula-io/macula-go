@@ -63,17 +63,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A request whose link ends under it comes back named, in this library's own
   words (macula-go#75).** A call waiting when its link ended returned whatever
   the transport reported — `Application error 0x0 (remote): dropped`, a QUIC
-  type with no place in this SDK's vocabulary — and so did an open, a publish
-  and a subscription, while a bare `ErrClosed` stood in for an ending that was
-  not the link's owner closing it. Every one of those now returns a
+  type with no place in this SDK's vocabulary — and so did an open, a publish,
+  a subscription and a serve, while a bare `ErrClosed` stood in for an ending
+  that was not the link's owner closing it. Every one of those now returns a
   `*stationlink.LinkEndedError`: `errors.Is(err, stationlink.ErrLinkEnded)` is
   true, `stationlink.EndReason(err)` names the ending in the snake_case
   vocabulary it already uses (`closed_by_station`, `idle_timeout`, `goodbye`,
   …), the message carries that name, and the transport's own error stays
   reachable with `errors.As` through `Unwrap`. `Link.NotCarried` answers as it
   did, so macula-go#74's walk is unchanged and its tests run unedited; a
-  caller's cancellation, a call over the frame cap and a station's own answer
-  keep their own values and are not named as an ending. A CALL the link could
+  caller's cancellation, a call, a publication or an open over the frame cap and
+  a station's own answer keep their own values and are not named as an ending. A CALL the link could
   not write keeps its `callNotSent` arm outermost, with the ending named inside
   it, so a failure in the window before the link records its own error is still
   one the link did not carry.
