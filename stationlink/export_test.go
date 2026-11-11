@@ -32,3 +32,7 @@ func SetRegisterAckTimeout(d time.Duration) func() {
 	registerAckTimeout = d
 	return func() { registerAckTimeout = old }
 }
+
+// EndLink ends l with err, as the link's own ending paths do, for a test that
+// needs a chosen ending without racing the transport's close (macula-go#75).
+func EndLink(l *Link, err error) { l.end(err) }

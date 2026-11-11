@@ -533,12 +533,14 @@ func (s *Stream) readEnded(err error) {
 	if ended {
 		return
 	}
-	select {
-	case <-s.link.done:
-		s.end(s.link.Err())
-	default:
-		s.end(fmt.Errorf("stationlink: the stream was lost before its end: %w", err))
+	// The read fails before the link's own reader has recorded its ending, so
+	// the link — or its connection — is asked, not the stream's own error
+	// (macula-go#75).
+	if ended := s.link.ending(); ended != nil {
+		s.end(ended)
+		return
 	}
+	s.end(fmt.Errorf("stationlink: the stream was lost before its end: %w", err))
 }
 
 // received handles one frame from the peer, and reports whether reading stops.

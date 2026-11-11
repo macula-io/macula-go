@@ -116,6 +116,6 @@ func (l *Link) verdict(ctx context.Context, r registration, answer chan frame.Re
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-l.done:
-		return l.Err()
+		return &LinkEndedError{Cause: l.Err()}
 	}
 }

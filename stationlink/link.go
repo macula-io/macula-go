@@ -59,7 +59,73 @@ var (
 	// ErrInvalidConfig is a Config Dial cannot use: no identity key, no
 	// issuer, or a key of another profile than the target's.
 	ErrInvalidConfig = errors.New("stationlink: the link configuration is not usable")
+	// ErrLinkEnded is what errors.Is asks about a request this link did not
+	// carry because the link ended under it.
+	ErrLinkEnded = errors.New("stationlink: the link ended")
 )
+
+// LinkEndedError is a request a link did not carry because the link ended under
+// it: a call that was waiting, a CALL it could not write, an open, a publish or
+// a registration. Cause is the ending — ErrClosed when the link's owner closed
+// it, a *GoodbyeError, ErrStatusExpired, ErrBindingExpired, ErrLivenessLost, the
+// transport's own error for a connection that ended — and errors.Is and
+// errors.As reach it through Unwrap. The name in the message is EndReason's, so
+// a reason added there is named here the same day.
+//
+// It is the value a caller receives in place of the ending itself. It says the
+// link ended, not why the call was made: what may be sent again after it is the
+// caller's business (Link.NotCarried answers that).
+type LinkEndedError struct {
+	Cause error
+}
+
+func (e *LinkEndedError) Error() string {
+	return "stationlink: the link ended (" + EndReason(e.Cause) + "): " + e.Cause.Error()
+}
+
+// Unwrap is the ending, so errors.Is(err, l.Err()) and errors.As to the
+// transport's own type keep working.
+func (e *LinkEndedError) Unwrap() error { return e.Cause }
+
+// Is matches ErrLinkEnded, and leaves every other question to Unwrap.
+func (e *LinkEndedError) Is(target error) bool { return target == ErrLinkEnded }
+
+// connEnded is the link's connection error, nil while the connection is open: a
+// write can fail in the window before end records the ending, and the
+// connection knows first. A variable for the test that drives that window
+// (macula-go#75).
+var connEnded = func(l *Link) error {
+	if l.conn == nil {
+		return nil
+	}
+	// Cause, not Err: a cancelled context answers context.Canceled to Err and
+	// the connection's own error to Cause, which is what the link's watcher on
+	// the same context ends the link with.
+	return context.Cause(l.conn.Context())
+}
+
+// ending is the link's ending when it has one: its own error once end recorded
+// it, else its connection's. nil when the link has not ended, which is what
+// keeps a caller's cancellation and a request every link refuses out of this
+// value.
+func (l *Link) ending() *LinkEndedError {
+	if ended := l.Err(); ended != nil {
+		return &LinkEndedError{Cause: ended}
+	}
+	if ended := connEnded(l); ended != nil {
+		return &LinkEndedError{Cause: ended}
+	}
+	return nil
+}
+
+// namedEnding is err named as the link's ending when the link has ended, else
+// err as it is.
+func (l *Link) namedEnding(err error) error {
+	if ended := l.ending(); ended != nil {
+		return ended
+	}
+	return err
+}
 
 // GoodbyeError is a station that ended the link with a GOODBYE.
 type GoodbyeError struct {
@@ -619,7 +685,7 @@ func (l *Link) end(err error) {
 		l.unsubscribe()
 		l.closeSubscriptions()
 		l.endServed(err)
-		l.endStreams(err)
+		l.endStreams(&LinkEndedError{Cause: err})
 		_ = l.conn.CloseWithError(0, "link ended")
 		close(l.done)
 	})
