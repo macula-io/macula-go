@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "macula.h"
 
@@ -297,7 +298,24 @@ int main(int argc, char **argv) {
   free(data);
 
   /* A key signs and verifies. */
-  macula_handle key = macula_key_load_or_create("/nonexistent-dir/x.key", NULL, 0, &err);
+  macula_handle key;
+
+  /* A key is not saved where its directory cannot be made, and the failing
+   * attempt is the save itself. The key's directory is a dangling symlink:
+   * reading the key under it reports not-exist, so the loader generates a key
+   * and goes on to save it, and making that directory fails because the link
+   * is already there -- for root as well. A permission or a location such as
+   * /nonexistent-dir would not stop root (it creates that one and the save
+   * succeeds). Both paths are derived from the key directory the test was
+   * given, and neither is truncated. */
+  char keydir[512], gone[512], barred[1200];
+  if (snprintf(keydir, sizeof keydir, "%s/key-dir", dir) >= (int)sizeof keydir ||
+      snprintf(gone, sizeof gone, "%s/gone", dir) >= (int)sizeof gone ||
+      snprintf(barred, sizeof barred, "%s/x.key", keydir) >= (int)sizeof barred) {
+    fail("a key path that fits the case's buffers", NULL);
+  }
+  if (symlink(gone, keydir) != 0) fail("a dangling link in the way of a key's directory", NULL);
+  key = macula_key_load_or_create(barred, NULL, 0, &err);
   if (!err || key) fail("a key saved where it cannot be", NULL);
   macula_free_string(err);
   err = NULL;
