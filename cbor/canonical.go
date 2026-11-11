@@ -10,24 +10,34 @@ import "fmt"
 func Canonical(v Value) error {
 	switch v.Kind() {
 	case KindMap:
-		entries, _ := v.AsMap()
-		if err := canonicalMap(entries); err != nil {
+		return canonicalMapValue(v)
+	case KindList:
+		return canonicalListValue(v)
+	}
+	return nil
+}
+
+func canonicalMapValue(v Value) error {
+	entries, _ := v.AsMap()
+	if err := canonicalMap(entries); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := Canonical(e.Key); err != nil {
 			return err
 		}
-		for _, e := range entries {
-			if err := Canonical(e.Key); err != nil {
-				return err
-			}
-			if err := Canonical(e.Val); err != nil {
-				return err
-			}
+		if err := Canonical(e.Val); err != nil {
+			return err
 		}
-	case KindList:
-		items, _ := v.AsList()
-		for _, item := range items {
-			if err := Canonical(item); err != nil {
-				return err
-			}
+	}
+	return nil
+}
+
+func canonicalListValue(v Value) error {
+	items, _ := v.AsList()
+	for _, item := range items {
+		if err := Canonical(item); err != nil {
+			return err
 		}
 	}
 	return nil
