@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-11
+
+A served procedure says who may call it, and the C ABI moves to 2 to carry
+that: an offer that names no policy is refused, so every app that serves gains
+one and every binding written for ABI 1 moves with it — that breaks, hence the
+minor. Since v0.30.0 the wire parsers are fuzzed on every push, the public and
+fallback station tiers arrive as the Go half of macula#201, sealed key files
+land as the Go half of WP-K2, and a publication a link held is re-sent rather
+than lost (macula-go#78).
+
 ### Security (breaking)
 
 - **A served procedure names who may call it, and an offer that names no
