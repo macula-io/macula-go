@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -227,6 +228,57 @@ func TestAFallbackRetryRearmsWhenThePublicTierDies(t *testing.T) {
 	if got := attemptsOf(p, lan.NodeID); got != 0 {
 		t.Errorf("the re-armed retry counted %d before it dialled, want 0", got)
 	}
+}
+
+// A re-arm can land in the window pause keeps between reading the count and
+// counting the retry: the tier switches to this member's while its next wait is
+// already planned (macula#201 §3, macula-go#82). The count the re-arm cleared
+// must not be counted back, or the retry after the one it woke waits one step
+// further along the schedule than the floor the re-arm promised.
+//
+// Every wait is placed at the top of its range, so the retry after the re-armed
+// one plans the grown ceiling when it counted one and the base exactly when it
+// did not: no draw can decide the test.
+func TestAReArmInsideThePauseWindowLeavesNoCount(t *testing.T) {
+	public, lan, realm := tiers(t)
+	drawsWith(t, func(n time.Duration) time.Duration { return n - 1 }, func() {
+		var mu sync.Mutex
+		var plans []time.Duration
+		rearmAt := -1
+		beforePauseCount = func(m *member, wait time.Duration) {
+			if m.target.ExpectedNodeID != lan.NodeID {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			plans = append(plans, wait)
+			if rearmAt >= 0 {
+				return
+			}
+			rearmAt = len(plans) - 1
+			// The window itself: parked, the wait planned, the count not yet
+			// taken. This is a tier switch landing here.
+			m.rearm()
+		}
+		t.Cleanup(func() { beforePauseCount = nil })
+		p := connectTieredWith(t, "rearm window", realm, []*teststation.Station{public},
+			[]*teststation.Station{lan}, watched())
+		eventually(t, "both links up", func() bool { return upCount(p) == 2 })
+		lan.Refuse(time.Minute)
+		lan.Drop(p.NodeID())
+		eventually(t, "the retry after the re-armed one", func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return rearmAt >= 0 && len(plans) > rearmAt+1
+		})
+		mu.Lock()
+		after := plans[rearmAt+1]
+		mu.Unlock()
+		if after != p.opts.Redial.Base {
+			t.Errorf("the retry after a re-arm in the pause window plans %s, want the redial base %s exactly",
+				after, p.opts.Redial.Base)
+		}
+	})
 }
 
 // And the other way: a public link that comes up makes the public tier active
