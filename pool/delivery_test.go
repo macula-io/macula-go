@@ -248,6 +248,40 @@ func TestOneOfTwoLinksEndingDeliversNoNotice(t *testing.T) {
 	}
 }
 
+// A link that ends while the OTHER link's SUBSCRIBE is still awaiting its
+// verdict is no gap either: the station had already accepted the subscription
+// on that link, so nothing was missed and neither notice is owed. The station
+// holds its REGISTER_ACK until the test releases it, which is the window a
+// slow answer leaves open on CI and what made the test above flake.
+func TestOneOfTwoLinksEndingBeforeTheOtherAnsweredDeliversNoNotice(t *testing.T) {
+	a := teststation.Start(t, profile.PQPure, "slow answer a")
+	b := teststation.Start(t, profile.PQPure, "slow answer b")
+	release := a.HoldAcks()
+	defer release()
+	realm := teststation.NewRealm(t, profile.PQPure, "slow answer", org)
+	listener := connect(t, "slow answer listener", realm, a, b)
+	eventually(t, "every listener link up", func() bool { return len(listener.links()) == len([]*teststation.Station{a, b}) })
+	publisher := connect(t, "slow answer publisher", realm, a)
+	sub, err := listener.Subscribe(realm.ID, topic)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	// The station a accepted the subscription and is holding its answer, so
+	// the node has not been told; b's link then ends for real.
+	b.Stop()
+	eventually(t, "the link to b ended", func() bool { return len(listener.links()) == 1 })
+	release()
+	eventually(t, "the link to a carries the subscription", func() bool {
+		sub.mu.Lock()
+		defer sub.mu.Unlock()
+		return len(sub.onLinks) == 1
+	})
+	say(t, publisher, realm, "still")
+	if got := delivered(sub, 2*time.Second); len(got) != 1 || got[0].Kind != KindEvent {
+		t.Errorf("with a's answer in flight when b ended: %s, want the event alone", shown(got))
+	}
+}
+
 // With two links that both end and one that returns, the subscription is
 // interrupted once and given one Gap; the other station staying down adds
 // nothing.

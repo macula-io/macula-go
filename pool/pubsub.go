@@ -36,10 +36,14 @@ type Subscription struct {
 	onLinks map[*stationlink.Link]*stationlink.Subscription
 	// attaching is the links a SUBSCRIBE awaits its verdict on.
 	attaching map[*stationlink.Link]bool
-	cover     coverage[*stationlink.Link]
-	ended     bool
-	dropped   uint64
-	refused   uint64
+	// pending is the links that ended while a SUBSCRIBE was still awaiting its
+	// verdict, weighed once none is: a station that accepted the subscription
+	// is not answered yet, and its link carries it all the same.
+	pending map[*stationlink.Link]struct{}
+	cover   coverage[*stationlink.Link]
+	ended   bool
+	dropped uint64
+	refused uint64
 }
 
 // Subscribe subscribes the node to topic in realm on every link, and on every
@@ -59,7 +63,7 @@ func (p *Pool) Subscribe(realm [32]byte, topic string) (*Subscription, error) {
 func (p *Pool) subscribe(realm [32]byte, topic, prefix string) (*Subscription, error) {
 	sub := &Subscription{pool: p, realm: realm, topic: topic, events: make(chan Delivery, subscriptionBuffer),
 		group: prefix, onLinks: map[*stationlink.Link]*stationlink.Subscription{}, attaching: map[*stationlink.Link]bool{},
-		cover: newCoverage[*stationlink.Link]()}
+		pending: map[*stationlink.Link]struct{}{}, cover: newCoverage[*stationlink.Link]()}
 	sub.ctx, sub.cancel = context.WithCancel(p.ctx)
 	if prefix != "" {
 		sub.opening = make(chan Delivery, subscriptionBuffer)
@@ -184,6 +188,7 @@ func (s *Subscription) attach(link *stationlink.Link) error {
 	s.mu.Lock()
 	delete(s.attaching, link)
 	if err != nil {
+		s.settleEnds()
 		s.mu.Unlock()
 		return err
 	}
@@ -192,10 +197,15 @@ func (s *Subscription) attach(link *stationlink.Link) error {
 		return linkSub.Unsubscribe()
 	}
 	s.onLinks[link] = linkSub
-	s.endEnded()
+	// The link carries the subscription from the station's acceptance, which is
+	// what its answer says: it joins the cover BEFORE any other link's end is
+	// weighed, so a link that ended while this answer was in flight cannot be
+	// read as the last one carrying the subscription.
 	if gap, owed := s.cover.covers(link, uint64(time.Now().UnixMilli())); owed {
 		s.notify(gap)
 	}
+	s.endEnded()
+	s.settleEnds()
 	s.mu.Unlock()
 	go s.forward(link, linkSub)
 	return nil
@@ -215,10 +225,33 @@ func (s *Subscription) endEnded() {
 // linkEnded removes the ended link from the set under s.mu and notifies the
 // Interrupted when that empties it. A closing pool ends its links after its
 // context: that is no interruption, the subscription ends with it.
+//
+// While a SUBSCRIBE is still awaiting its verdict the end is held instead: this
+// node cannot yet tell "no link carries the subscription" from "one is about
+// to", and a station that has accepted the subscription on that link carries
+// it already, so an Interrupted now would say events were missed when none
+// were. The ends are weighed by settleEnds once the answers are in.
 func (s *Subscription) linkEnded(link *stationlink.Link) {
+	if len(s.attaching) > 0 {
+		s.pending[link] = struct{}{}
+		return
+	}
 	interrupted, owed := s.cover.ended(link, link.LastHeard(), stationlink.EndReason(link.Err()))
 	if owed && s.ctx.Err() == nil {
 		s.notify(interrupted)
+	}
+}
+
+// settleEnds weighs the ends that arrived while a SUBSCRIBE was in flight, once
+// none is, in the order they arrived.
+func (s *Subscription) settleEnds() {
+	if len(s.attaching) > 0 || len(s.pending) == 0 {
+		return
+	}
+	pending := s.pending
+	s.pending = map[*stationlink.Link]struct{}{}
+	for link := range pending {
+		s.linkEnded(link)
 	}
 }
 
