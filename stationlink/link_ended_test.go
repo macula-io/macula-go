@@ -50,6 +50,27 @@ func endedCall(t *testing.T, link *Link, s *testStation, ends <-chan struct{}) e
 	}
 }
 
+// namedEnding asserts err is the link's ending, named want, and returns it: the
+// value a caller holds, the question errors.Is answers, and the name in the
+// message cannot disagree (macula-go#75).
+func namedEnding(t *testing.T, err error, want string) *LinkEndedError {
+	t.Helper()
+	var ended *LinkEndedError
+	if !errors.As(err, &ended) {
+		t.Fatalf("%v (%T), want a *LinkEndedError", err, err)
+	}
+	if !errors.Is(err, ErrLinkEnded) {
+		t.Errorf("errors.Is(err, ErrLinkEnded) is false for %v", err)
+	}
+	if got := EndReason(err); got != want {
+		t.Errorf("EndReason: %q, want %q", got, want)
+	}
+	if !strings.Contains(err.Error(), "("+want+")") {
+		t.Errorf("the message does not name the ending: %v", err)
+	}
+	return ended
+}
+
 // A call whose link the station ends is named as the link's ending: the caller
 // can tell a station that never answered because its link died from a provider
 // that answered an error, and the transport's own close is still reachable
@@ -67,20 +88,8 @@ func TestACallWhoseLinkEndsNamesTheEnding(t *testing.T) {
 				return cbor.Value{}, false
 			})
 			err := endedCall(t, link, s, reached)
+			namedEnding(t, err, "closed_by_station")
 
-			var ended *LinkEndedError
-			if !errors.As(err, &ended) {
-				t.Fatalf("Call: %v (%T), want a *LinkEndedError", err, err)
-			}
-			if !errors.Is(err, ErrLinkEnded) {
-				t.Errorf("errors.Is(err, ErrLinkEnded) is false for %v", err)
-			}
-			if got := EndReason(err); got != "closed_by_station" {
-				t.Errorf("EndReason: %q, want closed_by_station", got)
-			}
-			if !strings.Contains(err.Error(), "(closed_by_station)") {
-				t.Errorf("the message does not name the ending: %v", err)
-			}
 			var app *quic.ApplicationError
 			if !errors.As(err, &app) || !app.Remote {
 				t.Errorf("the transport's close is not reachable from %v", err)
@@ -126,15 +135,7 @@ func TestEveryEndingIsNamedTheSame(t *testing.T) {
 			if want != name {
 				t.Fatalf("EndReason(%v) is %q, want %q: the table names the ending wrongly", ending, want, name)
 			}
-			if !errors.Is(err, ErrLinkEnded) {
-				t.Errorf("a %s ending reached the caller as %v, not as the link's ending", name, err)
-			}
-			if got := EndReason(err); got != want {
-				t.Errorf("EndReason of the caller's value: %q, want %q", got, want)
-			}
-			if !strings.Contains(err.Error(), "("+want+")") {
-				t.Errorf("the message does not name %q: %v", want, err)
-			}
+			namedEnding(t, err, want)
 		})
 	}
 }
