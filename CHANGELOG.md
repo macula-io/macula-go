@@ -43,6 +43,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check, before anything serves; macula-ts, macula-php, macula-py and
   macula-dotnet each take ABI 2 and a required policy in their own packages.
 
+### Security
+
+- **The module requires Go 1.27.4, which closes GO-2026-6859 (macula-go#97).**
+  The `go` directive moves from 1.27.3 to 1.27.4. Every CI job reads the
+  toolchain from `go.mod` through `setup-go`'s `go-version-file`, so the
+  dependency-advisories scan now scans a stdlib where the net/http
+  `MaxBytesReader` header race is fixed, and `release.yml` scans the same
+  toolchain on the tagged commit. A consuming module built with an older
+  toolchain and `GOTOOLCHAIN=local` has to move to 1.27.4; under the default
+  `auto` the go command fetches it.
+
 ### Added
 
 - **The wire parsers are fuzzed, and CI fuzzes every one of them on each push
