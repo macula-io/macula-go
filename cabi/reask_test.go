@@ -25,6 +25,26 @@ func TestAConnectWithNoAnsweringSeedIsATimeout(t *testing.T) {
 	}
 }
 
+// A call to a procedure nobody serves reads no_provider through the ABI, not
+// timeout: the clock is what ended the wait, but what the call found is that
+// nobody serves it, and a binding has to see that (macula-go#76).
+func TestAnUnservedCallReadsNoProvider(t *testing.T) {
+	f := newFleet(t, "abi unserved call")
+	lp := f.join(t, "abi unserved caller", f.stations[0])
+	procedure := ownProcedure(lp, "nobody")
+	const timeoutMs = 300
+	timeout := timeoutMs * time.Millisecond
+	ctx, cancel, err := callContext(0, timeoutMs)
+	if err != nil {
+		t.Fatalf("callContext: %v", err)
+	}
+	defer cancel()
+	_, err = call(ctx, lp.pool, f.realm.ID, procedure, `null`, timeout, callOptions{})
+	if got := classify(ctx, err); got.kind != kindNoProvider {
+		t.Errorf("an unserved call at timeout_ms %d: %s (%v), want no_provider", timeoutMs, got.kind, err)
+	}
+}
+
 // A lookup that failed is a timeout under an unbounded context too: the call
 // joins it with its own deadline, so a binding reads the same kind whether or
 // not it passed timeout_ms (cabi/cancel.go makes timeout_ms 0 unbounded).

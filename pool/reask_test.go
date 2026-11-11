@@ -158,7 +158,8 @@ func TestACancelledCallStaysCancelled(t *testing.T) {
 // deadline: how long a stream may live is not how long its resolve may take
 // (macula's ?DEFAULT_DIAL_TIMEOUT_MS, macula_direct_dial.erl:184).
 func TestAnUnservedStreamGivesUpInsideTheDialWindow(t *testing.T) {
-	caller, realm := unserved(t, "reask stream window", func(o *Opts) { o.DialTimeout = 300 * time.Millisecond })
+	window := 300 * time.Millisecond
+	caller, realm := unserved(t, "reask stream window", func(o *Opts) { o.DialTimeout = window })
 	start := time.Now()
 	_, err := caller.OpenStream(t.Context(), StreamCall{Realm: realm.ID, Procedure: procedure,
 		Mode: frame.ServerStream, Payload: cbor.Text("x"), Deadline: 10 * time.Second})
@@ -166,8 +167,13 @@ func TestAnUnservedStreamGivesUpInsideTheDialWindow(t *testing.T) {
 	if !errors.Is(err, ErrNoProvider) {
 		t.Fatalf("OpenStream: %v, want ErrNoProvider", err)
 	}
-	if took > 5*time.Second {
-		t.Errorf("OpenStream gave up after %s, want inside its 300ms dial window, not the stream's 10s deadline", took)
+	// The bound is the window the caller set, not a number of our own: the phase
+	// re-asks until it, and nothing runs it for ten times as long.
+	if took > 3*window {
+		t.Errorf("OpenStream gave up after %s, want inside its %s dial window, not the stream's 10s deadline", took, window)
+	}
+	if took < window/2 {
+		t.Errorf("OpenStream gave up after %s, want the phase to keep asking until its %s window", took, window)
 	}
 }
 
