@@ -8,6 +8,7 @@ import (
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // The schedule these tests watch. It is a test's own numbers, not macula's:
@@ -291,7 +292,7 @@ func TestAPublicRetryRearmsWhenAPublicLinkReturns(t *testing.T) {
 	teststation.ShareDHT(serving, lan)
 	realm.Admit(t, serving, nodeIDOf(t, "rearm provider"))
 	provider := connect(t, "rearm provider", realm, serving)
-	if _, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
+	if _, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	public.Refuse(time.Minute)

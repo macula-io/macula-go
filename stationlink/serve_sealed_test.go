@@ -144,7 +144,7 @@ func TestAKeyedProviderNamesItsKEMKey(t *testing.T) {
 		})
 	}
 	link, s, fixture, _ := startSealedServing(t, profile.PQPure)
-	serveOffer(t, link, Offer{Realm: servedRealm, Procedure: servedProcedure, Handler: echo, RealmKey: fixture.realm.PublicKey(),
+	serveOffer(t, link, Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: servedProcedure, Handler: echo, RealmKey: fixture.realm.PublicKey(),
 		Confidential: ConfidentialOff})
 	if ad := advertisedKEMKey(t, s); ad.KEMKey != nil {
 		t.Error("an offer with confidentiality off named a key")
@@ -154,7 +154,7 @@ func TestAKeyedProviderNamesItsKEMKey(t *testing.T) {
 	if ad := advertisedKEMKey(t, ps); ad.KEMKey != nil {
 		t.Error("a link with kem_advertise off named a key")
 	}
-	_, err := plain.Serve(t.Context(), Offer{Realm: servedRealm, Procedure: "mcl-echo/other", Handler: echo,
+	_, err := plain.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: "mcl-echo/other", Handler: echo,
 		RealmKey: pfixture.realm.PublicKey(), Confidential: ConfidentialRequired})
 	if !errors.Is(err, ErrKEMAdvertiseDisabled) {
 		t.Errorf("a required offer with kem_advertise off: %v, want ErrKEMAdvertiseDisabled", err)
@@ -315,7 +315,7 @@ func TestWhatDoesNotOpenIsRefusedInTheClear(t *testing.T) {
 // the moment it was first keyed.
 func TestAKeyedProcedureRefusesClearCallsPastItsWindow(t *testing.T) {
 	link, s, fixture, _ := startSealedServing(t, profile.PQPure)
-	serveOffer(t, link, Offer{Realm: servedRealm, Procedure: servedProcedure, Handler: echo, RealmKey: fixture.realm.PublicKey(),
+	serveOffer(t, link, Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: servedProcedure, Handler: echo, RealmKey: fixture.realm.PublicKey(),
 		Confidential: ConfidentialRequired})
 	s.nextControl(t)
 	_, request := s.call(t, link.NodeID(), servedProcedure, cbor.Text("x"), time.Now().Add(5*time.Second))
@@ -323,7 +323,7 @@ func TestAKeyedProcedureRefusesClearCallsPastItsWindow(t *testing.T) {
 		t.Errorf("a clear CALL to a required procedure: %+v, %v", reply, err)
 	}
 
-	within := serveOffer(t, link, Offer{Realm: servedRealm, Procedure: "mcl-echo/within", Handler: echo,
+	within := serveOffer(t, link, Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: "mcl-echo/within", Handler: echo,
 		RealmKey: fixture.realm.PublicKey()})
 	s.nextControl(t)
 	_, request = s.call(t, link.NodeID(), "mcl-echo/within", cbor.Text("x"), time.Now().Add(5*time.Second))
@@ -331,7 +331,7 @@ func TestAKeyedProcedureRefusesClearCallsPastItsWindow(t *testing.T) {
 		t.Errorf("a clear CALL inside the window: %+v, %v", reply, err)
 	}
 	_ = within
-	serveOffer(t, link, Offer{Realm: servedRealm, Procedure: "mcl-echo/past", Handler: echo, RealmKey: fixture.realm.PublicKey(),
+	serveOffer(t, link, Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: "mcl-echo/past", Handler: echo, RealmKey: fixture.realm.PublicKey(),
 		KeyedSince: time.Now().Add(-maxAdvertisementTTL - record.ClockToleranceMs*time.Millisecond - time.Second)})
 	s.nextControl(t)
 	_, request = s.call(t, link.NodeID(), "mcl-echo/past", cbor.Text("x"), time.Now().Add(5*time.Second))

@@ -12,6 +12,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // lagging is a context whose deadline has passed while its timer has not yet
@@ -36,7 +37,7 @@ func TestNothingIsSentPastTheCallersDeadline(t *testing.T) {
 	realm.Admit(t, s, nodeIDOf(t, "late provider"))
 	var entered atomic.Int32
 	provider := connect(t, "late provider", realm, s)
-	if _, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure,
+	if _, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure,
 		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
 			entered.Add(1)
 			return r.Payload, nil
@@ -44,7 +45,7 @@ func TestNothingIsSentPastTheCallersDeadline(t *testing.T) {
 		t.Fatalf("Serve: %v", err)
 	}
 	streamProcedure := procedure + "_stream"
-	if _, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: streamProcedure,
+	if _, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: streamProcedure,
 		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, st *stationlink.Stream) error {
 			entered.Add(1)
 			return st.Close()

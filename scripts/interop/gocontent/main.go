@@ -32,6 +32,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 func main() {
@@ -136,7 +137,7 @@ func sharePadded(ctx context.Context, pl *pool.Pool, key *identity.NodeKey, real
 		return errors.New("-pad-chunk needs content over one chunk")
 	}
 	procedure := record.OwnProcedure(pl.NodeID(), pool.ContentProcedureName)
-	if _, err := pl.Serve(ctx, pool.Offer{Realm: realm, Procedure: procedure, Stream: &stationlink.StreamOffer{
+	if _, err := pl.Serve(ctx, pool.Offer{Policy: ucan.Open{}, Realm: realm, Procedure: procedure, Stream: &stationlink.StreamOffer{
 		Mode: frame.ServerStream, Handler: paddedHandler(m, paddedChunks(m, chunks))}}); err != nil {
 		return err
 	}

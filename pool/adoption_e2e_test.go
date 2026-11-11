@@ -14,6 +14,7 @@ import (
 	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // A pool adopts the key a keyed provider's signed refusal carries, and uses it
@@ -77,7 +78,7 @@ func TestAPoolSealsTheCallItLearntTheKeyFrom(t *testing.T) {
 	s := teststation.Start(t, profile.PQPure, "adopt pool calls")
 	realm := teststation.NewRealm(t, profile.PQPure, "sealed-pools", org)
 	provider := newAdoptingProvider(t, s, realm, "adopt pool calls provider", time.Now)
-	provider.serve(t, realm, stationlink.Offer{Procedure: procedure, Confidential: stationlink.ConfidentialRequired,
+	provider.serve(t, realm, stationlink.Offer{Policy: ucan.Open{}, Procedure: procedure, Confidential: stationlink.ConfidentialRequired,
 		Handler: echo})
 	caller := connect(t, "adopt pool calls caller", realm, s)
 	for round := 0; round < 2; round++ {
@@ -97,7 +98,7 @@ func TestAPoolSealsTheOpenItLearntTheKeyFrom(t *testing.T) {
 	s := teststation.Start(t, profile.PQPure, "adopt pool opens")
 	realm := teststation.NewRealm(t, profile.PQPure, "sealed-pools", org)
 	provider := newAdoptingProvider(t, s, realm, "adopt pool opens provider", time.Now)
-	provider.serve(t, realm, stationlink.Offer{Procedure: procedure, Confidential: stationlink.ConfidentialRequired,
+	provider.serve(t, realm, stationlink.Offer{Policy: ucan.Open{}, Procedure: procedure, Confidential: stationlink.ConfidentialRequired,
 		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
 			Handler: func(_ context.Context, st *stationlink.Stream) error { return st.Reply(cbor.Text("opened")) }}})
 	caller := connect(t, "adopt pool opens caller", realm, s)
@@ -142,7 +143,7 @@ func TestAnAdoptedCallRefusedSealedRefusedIsNeverSealedAndClear(t *testing.T) {
 	s := teststation.Start(t, profile.PQPure, "adopt a1")
 	realm := teststation.NewRealm(t, profile.PQPure, "sealed-pools", org)
 	provider := newAdoptingProvider(t, s, realm, "adopt a1 provider", rotatingClock())
-	provider.serve(t, realm, stationlink.Offer{Procedure: procedure, Confidential: stationlink.ConfidentialRequired,
+	provider.serve(t, realm, stationlink.Offer{Policy: ucan.Open{}, Procedure: procedure, Confidential: stationlink.ConfidentialRequired,
 		Handler: echo})
 	caller := connect(t, "adopt a1 caller", realm, s)
 	_, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("secret")})
@@ -182,7 +183,7 @@ func TestAPoolForgetsAKeyTheProviderRefused(t *testing.T) {
 	realm := teststation.NewRealm(t, profile.PQPure, "sealed-pools", org)
 	clock := &switchableClock{now: time.Now()}
 	provider := newAdoptingProvider(t, s, realm, "adopt rotated provider", clock.Now)
-	provider.serve(t, realm, stationlink.Offer{Procedure: procedure, Confidential: stationlink.ConfidentialRequired,
+	provider.serve(t, realm, stationlink.Offer{Policy: ucan.Open{}, Procedure: procedure, Confidential: stationlink.ConfidentialRequired,
 		Handler: echo})
 	caller := connect(t, "adopt rotated caller", realm, s)
 	assertCallEchoes(t, caller, realm, "one")

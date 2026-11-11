@@ -11,6 +11,7 @@ import (
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // A call or a stream to a provider states how it is kept (macula 13's
@@ -21,12 +22,12 @@ import (
 func TestAnExplicitTargetStatesSealedOrClear(t *testing.T) {
 	w := newSealedWorld(t, profile.PQPure, "explicit target")
 	var entered atomic.Int32
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/open", Confidential: stationlink.ConfidentialOff,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/open", Confidential: stationlink.ConfidentialOff,
 		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
 			entered.Add(1)
 			return r.Payload, nil
 		}})
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/watch", Confidential: stationlink.ConfidentialOff,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/watch", Confidential: stationlink.ConfidentialOff,
 		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
 			entered.Add(1)
 			return s.Reply(cbor.Text("watched"))

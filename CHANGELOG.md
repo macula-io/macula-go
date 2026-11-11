@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security (breaking)
+
+- **A served procedure names who may call it, and an offer that names no
+  policy is refused (macula-go#57, #60).** An app can no longer serve a
+  procedure to any caller unless its own code says so, as macula#150 did for
+  the Erlang SDK: an advertise with no auth is refused there, and serving
+  anyone is stated explicitly. `ucan.Open` is that statement — a policy like
+  the two gated ones, which `ucan.Authorize` answers before it reads a token,
+  so an open procedure serves a caller whose token is malformed too.
+  `stationlink.Offer.Policy` is required: `Link.Serve` refuses a nil one with
+  the new `stationlink.ErrPolicyRequired` (an invalid shape is still
+  `ErrInvalidOffer`), and the link's own `authorize` refuses a request whose
+  procedure has no policy with `unauthorized`, so no path built round the
+  pool serves anyone. `pool.Serve` refuses a nil policy with
+  `pool.ErrPolicyRequired` before a realm key is resolved or a link dialed,
+  and writes one `slog.Info` line naming the procedure when it accepts an
+  `Open` offer, so an operator can see an app that opted out of gating; a
+  gated offer logs nothing.
+
+  **Every existing offer gains a policy.** `ucan.Open{}` keeps today's
+  behaviour exactly — the sweep in this release covers the 86 offer literals
+  in this repo's own tests, examples and interop scripts — and
+  `ucan.UCANRequired` or `ucan.RealmMemberRequired` is what an offer that was
+  gated already carries.
+
+  **The C ABI closes with it: `MACULA_ABI_VERSION` is 2.** `macula_pool_serve`
+  and `macula_pool_serve_stream` are deleted — they served open without
+  saying so — and `macula_pool_serve_opts` and `_serve_stream_opts` require
+  `{"policy": ...}` in their options: absent, or options with no policy, is
+  `invalid_argument` naming both fixes. `{"kind":"open"}` is the third policy
+  kind `policy_json` accepts, and the `_gated` doors refuse it, naming
+  `macula_pool_serve_opts` with `{"policy":{"kind":"open"}}`. A library of
+  ABI 2 under a binding written for ABI 1 is refused at load by the version
+  check, before anything serves; macula-ts, macula-php, macula-py and
+  macula-dotnet each take ABI 2 and a required policy in their own packages.
+
 ### Added
 
 - **Public and fallback station tiers, the Go half of macula-io/macula#201

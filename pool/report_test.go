@@ -12,6 +12,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // A pool call's seal report (macula DESIGN_E2E_SEAL_REPORT §2, §5): CallReport
@@ -38,7 +39,7 @@ func adKeyID(t *testing.T, w sealedPools, procedure string) [8]byte {
 func TestACallReportNamesTheKeyItWasSealedTo(t *testing.T) {
 	w := newSealedPools(t, "report keyed", true)
 	var sealed atomic.Bool
-	w.serve(t, Offer{Procedure: procedure}, &sealed)
+	w.serve(t, Offer{Policy: ucan.Open{}, Procedure: procedure}, &sealed)
 	want := stationlink.Report{Sealed: 1, Provider: w.provider.NodeID(), SealKeyID: adKeyID(t, w, procedure)}
 	got, report, err := w.caller.CallReport(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("x")})
 	if text, _ := got.AsText(); err != nil || text != "x" || report != want || !sealed.Load() {
@@ -49,7 +50,7 @@ func TestACallReportNamesTheKeyItWasSealedTo(t *testing.T) {
 func TestACallReportOfAClearCallIsSealed0(t *testing.T) {
 	w := newSealedPools(t, "report keyless", false)
 	var sealed atomic.Bool
-	w.serve(t, Offer{Procedure: procedure}, &sealed)
+	w.serve(t, Offer{Policy: ucan.Open{}, Procedure: procedure}, &sealed)
 	got, report, err := w.caller.CallReport(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("x")})
 	want := stationlink.Report{Sealed: 0, Provider: w.provider.NodeID()}
 	if text, _ := got.AsText(); err != nil || text != "x" || report != want || sealed.Load() {
@@ -59,7 +60,7 @@ func TestACallReportOfAClearCallIsSealed0(t *testing.T) {
 
 func TestAFailedCallHasNoReport(t *testing.T) {
 	w := newSealedPools(t, "report error", true)
-	w.serve(t, Offer{Procedure: procedure, Handler: func(context.Context, stationlink.Request) (cbor.Value, error) {
+	w.serve(t, Offer{Policy: ucan.Open{}, Procedure: procedure, Handler: func(context.Context, stationlink.Request) (cbor.Value, error) {
 		return cbor.Value{}, errors.New("no")
 	}}, nil)
 	_, report, err := w.caller.CallReport(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("x")})
@@ -72,7 +73,7 @@ func TestAFailedCallHasNoReport(t *testing.T) {
 // A stream the pool opens reports as a stationlink stream does, once settled.
 func TestAPoolStreamReportsOnceSettled(t *testing.T) {
 	w := newSealedPools(t, "report stream", true)
-	w.serve(t, Offer{Procedure: "mcl-echo/stream", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
+	w.serve(t, Offer{Policy: ucan.Open{}, Procedure: "mcl-echo/stream", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
 		Handler: func(_ context.Context, s *stationlink.Stream) error { return s.Reply(cbor.Text("streamed")) }}}, nil)
 	want := stationlink.Report{Sealed: 1, Provider: w.provider.NodeID(), SealKeyID: adKeyID(t, w, "mcl-echo/stream")}
 	stream, err := w.caller.OpenStream(t.Context(), StreamCall{Realm: w.realm.ID, Procedure: "mcl-echo/stream",
