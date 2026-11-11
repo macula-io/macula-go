@@ -9,6 +9,7 @@ import (
 
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // The seal report through the ABI (macula's DESIGN_E2E_SEAL_REPORT §6):
@@ -67,7 +68,7 @@ func TestACallReportThroughTheABI(t *testing.T) {
 		procedure string
 		sealed    int
 	}{{provider, f.realm.Org + "/vault", 1}, {keyless, f.realm.Org + "/open", 0}} {
-		s, err := serve(c.lp, f.realm.ID, c.procedure, serveOptions{})
+		s, err := serve(c.lp, f.realm.ID, c.procedure, serveOptions{policy: ucan.Open{}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,7 +106,7 @@ func TestAStreamReportThroughTheABI(t *testing.T) {
 	caller := f.join(t, "stream report caller", f.stations[1])
 	f.realm.Admit(t, f.stations[0], provider.pool.NodeID())
 	procedure := f.realm.Org + "/watch"
-	s, err := serveStream(provider, f.realm.ID, procedure, frame.ServerStream, serveOptions{})
+	s, err := serveStream(provider, f.realm.ID, procedure, frame.ServerStream, serveOptions{policy: ucan.Open{}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // Both sides of a sealed bidi stream write more than any flow-control window
@@ -32,7 +33,7 @@ const (
 func assertBothSidesWriteBeforeReading(t *testing.T, p profile.Profile) {
 	t.Helper()
 	w := newSealedWorld(t, p, "both write")
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count",
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/count",
 		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: countingWithoutReading}})
 	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID,
 		Procedure: "mcl-vault/count", Target: w.provider.NodeID(), Mode: frame.Bidi,

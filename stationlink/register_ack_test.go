@@ -10,6 +10,7 @@ import (
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/record"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // Serve and Subscribe return the station's verdict on their registration
@@ -42,7 +43,7 @@ func TestServeReturnsTheStationsRefusalAndPutsNothing(t *testing.T) {
 	s.judge(refusing("advertise", "too_many_providers"))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	offer := Offer{Realm: servedRealm, Procedure: servedProcedure, Handler: echo, RealmKey: fixture.realm.PublicKey()}
+	offer := Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: servedProcedure, Handler: echo, RealmKey: fixture.realm.PublicKey()}
 	served, err := link.Serve(ctx, offer)
 	var refused *RefusedError
 	if !errors.As(err, &refused) || served != nil {
@@ -70,7 +71,7 @@ func TestServeWithNoAckIsUnacknowledgedAndWithdrawn(t *testing.T) {
 	s.judge(silentOn("advertise"))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	served, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: servedProcedure, Handler: echo,
+	served, err := link.Serve(ctx, Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: servedProcedure, Handler: echo,
 		RealmKey: fixture.realm.PublicKey()})
 	var silent *UnacknowledgedError
 	if !errors.As(err, &silent) || served != nil {
@@ -92,7 +93,7 @@ func TestServeEndsWithItsContext(t *testing.T) {
 	s.judge(silentOn("advertise"))
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	_, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: servedProcedure, Handler: echo,
+	_, err := link.Serve(ctx, Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: servedProcedure, Handler: echo,
 		RealmKey: fixture.realm.PublicKey()})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("Serve: %v, want context.DeadlineExceeded", err)

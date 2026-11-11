@@ -14,6 +14,7 @@ import (
 	"github.com/macula-io/macula-go/frame"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/record"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // dropped is a station closing the caller's connection with QUIC application
@@ -205,6 +206,42 @@ func TestTheConnectionsOwnEndingIsReadFromTheConnection(t *testing.T) {
 	}
 }
 
+// A stream whose read fails once the link has recorded its ending is named as
+// the link's ending even when the link's own sweep has not reached the stream:
+// readEnded asks the link rather than reporting the transport's error
+// (macula-go#75). A stream the sweep holds is named by whichever of the two
+// arrives first, so the read only decides the answer in the window before the
+// sweep, and a test that races the sweep catches this one run in eight. The
+// stream here is one the sweep never holds, so the answer can only come from
+// readEnded asking, and it holds on every run (Uranus's M9).
+func TestAStreamTheLinksSweepNeverReachedNamesItsEnding(t *testing.T) {
+	link, _ := linkWithStation(t, profile.PQPure)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	qs, err := link.conn.OpenStreamSync(ctx)
+	if err != nil {
+		t.Fatalf("open a stream the link does not hold: %v", err)
+	}
+	stream := newStream(link, qs, frame.VerifiedRequest{}, true)
+	go stream.read(frame.StreamState{})
+
+	recv := make(chan error, 1)
+	go func() {
+		_, err := stream.Recv(ctx)
+		recv <- err
+	}()
+
+	link.end(ErrLivenessLost)
+
+	select {
+	case err := <-recv:
+		namedEnding(t, err, "liveness_lost")
+	case <-time.After(10 * time.Second):
+		t.Fatal("Recv did not return after the link ended")
+	}
+}
+
 // A publication the link could not send because its link ended is named too:
 // Publish and PublishSigned surface the same value as a call (macula-go#75).
 func TestAPublishOnAnEndedLinkNamesTheEnding(t *testing.T) {
@@ -296,7 +333,7 @@ func TestAServeOnAnEndedLinkNamesTheEnding(t *testing.T) {
 	link, _ := linkWithStation(t, profile.PQPure)
 	link.end(ErrLivenessLost)
 	own := record.OwnProcedure(link.NodeID(), "ring")
-	_, err := link.Serve(context.Background(), Offer{Realm: [32]byte{1}, Procedure: own, Handler: echo})
+	_, err := link.Serve(context.Background(), Offer{Policy: ucan.Open{}, Realm: [32]byte{1}, Procedure: own, Handler: echo})
 	namedEnding(t, err, "liveness_lost")
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/macula-io/macula-go/examples/internal/meshflags"
 	"github.com/macula-io/macula-go/pool"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 func main() {
@@ -48,7 +49,7 @@ func run(mesh meshflags.Flags, procedure string) error {
 	if err != nil {
 		return err
 	}
-	served, err := p.Serve(ctx, pool.Offer{Realm: realm, Procedure: procedure, Handler: echo})
+	served, err := p.Serve(ctx, pool.Offer{Policy: ucan.Open{}, Realm: realm, Procedure: procedure, Handler: echo})
 	if err != nil {
 		return err
 	}

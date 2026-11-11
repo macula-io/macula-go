@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/macula-io/macula-go/cbor"
+	"github.com/macula-io/macula-go/ucan"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func TestADroppedCallReportsFailedAndNamesTheEnding(t *testing.T) {
 	provider := f.join(t, "ended provider", f.stations[0])
 	caller := f.join(t, "ended caller", f.stations[1])
 	procedure := ownProcedure(provider, "held")
-	s, err := serve(provider, f.realm.ID, procedure, serveOptions{})
+	s, err := serve(provider, f.realm.ID, procedure, serveOptions{policy: ucan.Open{}})
 	if err != nil {
 		t.Fatal(err)
 	}

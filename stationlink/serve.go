@@ -68,6 +68,10 @@ var (
 	// stream handler, an org procedure's offer without the realm key, or a
 	// realm member policy that names no can.
 	ErrInvalidOffer = errors.New("stationlink: an offer needs one handler, unary or streaming, for an org procedure the realm key, and for a realm member policy a can")
+	// ErrPolicyRequired is an offer that names no policy: a procedure serves
+	// the callers its policy names, and one that means to serve anyone says
+	// ucan.Open (macula-go#57, #60).
+	ErrPolicyRequired = errors.New("stationlink: an offer must name a policy: ucan.Open serves any caller")
 	// ErrStopped is a served procedure withdrawn by Stop.
 	ErrStopped = errors.New("stationlink: the procedure was withdrawn")
 )
@@ -107,9 +111,13 @@ type Handler func(ctx context.Context, r Request) (cbor.Value, error)
 // Offer is a procedure to serve: its realm and name, its handler, and, for an
 // org procedure, the realm key the org directory must be signed with, as the
 // realm's members pin it; a procedure in this node's own namespace needs none.
-// Policy gates it: nil serves any caller, and a ucan.UCANRequired or
+// Policy gates it, and every offer names one: ucan.Open serves any caller,
+// which is a procedure saying so in its source, and a ucan.UCANRequired or
 // ucan.RealmMemberRequired serves a caller whose UCAN ucan.Authorize accepts
-// for the request, as macula's link does.
+// for the request, as macula's link does. An offer that names no policy is
+// refused ErrPolicyRequired (macula-go#57, #60). The open opt-out is said
+// aloud by Pool.Serve, which is the SDK's front door; a link served directly
+// declares it without that line, as the lower layer it is.
 type Offer struct {
 	Realm     [32]byte
 	Procedure string
@@ -184,7 +192,13 @@ type Served struct {
 // its advertisement or in its refusal (namesItsKey).
 func (l *Link) Serve(ctx context.Context, o Offer) (*Served, error) {
 	own := record.InOwnNamespace(o.Procedure)
-	if (o.Handler == nil) == (o.Stream == nil || o.Stream.Handler == nil) || (!own && len(o.RealmKey) == 0) || !validPolicy(o.Policy) {
+	if (o.Handler == nil) == (o.Stream == nil || o.Stream.Handler == nil) || (!own && len(o.RealmKey) == 0) {
+		return nil, ErrInvalidOffer
+	}
+	switch {
+	case o.Policy == nil:
+		return nil, ErrPolicyRequired
+	case !validPolicy(o.Policy):
 		return nil, ErrInvalidOffer
 	}
 	if _, hasOrg, err := record.ProcedureOrg(o.Procedure); err != nil || !hasOrg {

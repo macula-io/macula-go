@@ -12,6 +12,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // Sealed groups end to end through one station: the org's distributor (a
@@ -41,7 +42,7 @@ func newGroupWorld(t *testing.T) *groupWorld {
 			AcceptUntil: now - 1_000 + group.DefaultRotateAfterMs + 65*60_000}}
 	w.epoch.ID[0], w.epoch.Key[0] = 0x51, 0x52
 	distributor := connectWith(t, "group distributor", realm, func(o *Opts) { o.KEMAdvertise = true }, s)
-	_, err := distributor.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: group.Procedure(org), Confidential: stationlink.ConfidentialRequired,
+	_, err := distributor.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: group.Procedure(org), Confidential: stationlink.ConfidentialRequired,
 		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
 			w.pulls.Add(1)
 			if !r.Sealed {
