@@ -95,6 +95,15 @@ func classify(ctx context.Context, err error) *abiError {
 	if errors.As(err, &ae) {
 		return ae
 	}
+	// A call that concluded nobody serves the procedure reports that, whatever
+	// the clock says: the conclusion is what the call found, not how long it
+	// looked (macula_direct_dial.erl:61-67, macula-go#76). Only this one
+	// conclusion is mapped ahead of the context: pool.awaitUp joins ErrNoLink
+	// with the context's error, so mapping that one here would turn a connect
+	// that ran out of timeout_ms into a failure.
+	if errors.Is(err, pool.ErrNoProvider) {
+		return newError(kindNoProvider, "%v", err)
+	}
 	if verdict := contextVerdict(ctx); verdict != nil {
 		return verdict
 	}
@@ -197,8 +206,6 @@ func stationVerdict(err error) *abiError {
 		return newError(kindClosed, "%v", err)
 	case errors.Is(err, pool.ErrConfidentialOff):
 		return newError(kindInvalidArgument, "%v", err)
-	case errors.Is(err, pool.ErrNoProvider):
-		return newError(kindNoProvider, "%v", err)
 	}
 	return nil
 }

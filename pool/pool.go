@@ -122,7 +122,16 @@ type Opts struct {
 	RespawnDelay time.Duration
 	// Redial is the schedule a station is dialed again on while its tier is
 	// not the active one. Zero fields take macula's defaults.
-	Redial         Redial
+	Redial Redial
+	// Resolve is the schedule a call or stream asks the DHT again on while
+	// nothing has been sent: a miss is not final until the deadline
+	// (macula-go#76). Zero fields take macula's defaults.
+	Resolve Resolve
+	// DialTimeout bounds a stream's resolve-and-reach phase: how long an
+	// OpenStream keeps asking the DHT and reaching for a provider before it
+	// gives up. Zero takes macula's dial timeout, DefaultDialTimeout. It never
+	// bounds the stream itself.
+	DialTimeout    time.Duration
 	MaxSeeds       int
 	MaxDirectLinks int
 	// Admission bounds the requests the node's served procedures take; zero
@@ -260,11 +269,9 @@ func checked(seeds []Seed, opts Opts) (Opts, error) {
 	if opts.RespawnDelay <= 0 {
 		opts.RespawnDelay = DefaultRespawnDelay
 	}
-	redial, err := opts.Redial.checked()
-	if err != nil {
+	if err := checkSchedules(&opts); err != nil {
 		return opts, err
 	}
-	opts.Redial = redial
 	if opts.Admission == (stationlink.AdmissionLimits{}) {
 		opts.Admission = stationlink.DefaultAdmissionLimits()
 		opts.Admission.Cap = opts.Admission.Share * (opts.MaxSeeds + opts.MaxDirectLinks)
@@ -289,6 +296,29 @@ func checked(seeds []Seed, opts Opts) (Opts, error) {
 		return opts, fmt.Errorf("%w: %s", ErrStationInBothTiers, seed.address())
 	}
 	return opts, nil
+}
+
+// checkSchedules fills in and refuses the three schedules a pool runs on: the
+// redial schedule of a station whose tier is not active, the resolve schedule
+// of a call that has sent nothing, and the window a stream's resolve phase gets.
+func checkSchedules(opts *Opts) error {
+	redial, err := opts.Redial.checked()
+	if err != nil {
+		return err
+	}
+	opts.Redial = redial
+	resolve, err := opts.Resolve.checked()
+	if err != nil {
+		return err
+	}
+	opts.Resolve = resolve
+	switch {
+	case opts.DialTimeout < 0:
+		return fmt.Errorf("%w: a dial timeout of %s", ErrInvalidOpts, opts.DialTimeout)
+	case opts.DialTimeout == 0:
+		opts.DialTimeout = DefaultDialTimeout
+	}
+	return nil
 }
 
 // checkRealmTrust refuses a realm key that is not well formed under the

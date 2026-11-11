@@ -43,6 +43,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check, before anything serves; macula-ts, macula-php, macula-py and
   macula-dotnet each take ABI 2 and a required policy in their own packages.
 
+### Security
+
+- **The module requires Go 1.27.4, which closes GO-2026-6859 (macula-go#97).**
+  The `go` directive moves from 1.27.3 to 1.27.4. Every CI job reads the
+  toolchain from `go.mod` through `setup-go`'s `go-version-file`, so the
+  dependency-advisories scan now scans a stdlib where the net/http
+  `MaxBytesReader` header race is fixed, and `release.yml` scans the same
+  toolchain on the tagged commit. A consuming module built with an older
+  toolchain and `GOTOOLCHAIN=local` has to move to 1.27.4; under the default
+  `auto` the go command fetches it. `.tool-versions`, a second copy of the
+  version that no job read, is deleted, so `go.mod` is the only place that
+  names a toolchain.
+
 ### Added
 
 - **The wire parsers are fuzzed, and CI fuzzes every one of them on each push
@@ -107,6 +120,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header, and a file shorter than its header.
 
 ### Fixed
+
+- **A lookup that found no advertisement is asked again until the call's
+  deadline (macula-go#76).** A pool resolved a procedure once and gave up, so a
+  record published on the provider's station but not yet readable at the
+  caller's — or a first lookup that landed on a LAN fallback that never held
+  it — ended a call to a provider that was there all along, which is the race
+  behind the flaky `TestAStationDialledForACallIsPublic`. A call and a stream
+  open now resolve, walk and, while nothing has been **sent**, ask the DHT
+  again after a pause that doubles from 100 ms to at most 1 s, macula's own
+  schedule (`macula_direct_dial.erl:56-59`), and pass over a candidate whose
+  advertisement and `station_endpoint` record have not changed since it failed.
+  A CALL that went out is still never sent again (macula-go#74): the re-ask is
+  of the DHT, never of a provider. At the deadline the call reports, in
+  macula's order, the most recent candidate's failure, then a lookup that found
+  nothing (still the bare `ErrNoProvider`), then the latest failed lookup's
+  error, then the deadline itself, so an unserved procedure still reports
+  `no_provider` and a cancelled call is still `cancelled`. A stream open's
+  resolve phase is bounded by macula's dial timeout, `pool.DefaultDialTimeout`
+  (10 s, `macula_direct_dial.erl:184`), overridable as `Opts.DialTimeout`; it
+  never shortens the stream's own signed deadline. **An unserved procedure now
+  costs the call's full timeout** (5 s by default) where it used to fail in
+  milliseconds — give a call a shorter `Timeout` where that wait is not wanted.
 
 - **An oversized frame's length header is refused as `ErrFrameTooLarge`
   (macula-go#39).** `frame.Decode` refused a claimed length over the cap with an
