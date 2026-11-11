@@ -5,7 +5,8 @@
 # publishes sealed under it; each must open the other's event. Then a Go node the distributor's removed set names
 # must be refused not_a_member. The Erlang side runs in macula's pinned CI image.
 #
-#   MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh [pq_hybrid|pq_pure]
+#   MACULA_BUILD=<the release .github/workflows/sealed-interop.yml pins, compiled>
+#     scripts/interop/groups.sh [pq_hybrid|pq_pure]
 #
 # MACULA_BUILD may be a rebar3 project that depends on macula from hex, as for sealed.sh.
 #
@@ -16,7 +17,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 image="${MACULA_CI_IMAGE:-ghcr.io/macula-io/macula-ci-otp@sha256:aff1d39bc4aa29d13044b90b38e9b7f4b757d50818cc11c5bb7e84cdbf82ac70}"
 profile="${1:-pq_hybrid}"
-: "${MACULA_BUILD:?a compiled macula at 15.0.0-rc.1 or later (wire 1.0)}"
+: "${MACULA_BUILD:?a compiled macula at the release .github/workflows/sealed-interop.yml pins as MACULA_VERSION}"
 work="$(mktemp -d)"
 shared="$work/shared"
 mkdir -p "$shared"

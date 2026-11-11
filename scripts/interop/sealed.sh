@@ -4,7 +4,8 @@
 # and streamed to by gosealed; then a Go provider, called and streamed to by
 # erlang_sealed.escript. The Erlang side runs in macula's pinned CI image.
 #
-#   MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/sealed.sh [pq_hybrid|pq_pure]
+#   MACULA_BUILD=<the release .github/workflows/sealed-interop.yml pins, compiled>
+#     scripts/interop/sealed.sh [pq_hybrid|pq_pure]
 #
 # SEALED_PEER=ts runs the same two directions with @macula-io/ts in place of
 # macula-go (scripts/interop/tssealed, over macula-go's shared library, from
@@ -25,7 +26,7 @@ image="${MACULA_CI_IMAGE:-ghcr.io/macula-io/macula-ci-otp@sha256:aff1d39bc4aa29d
 profile="${1:-pq_hybrid}"
 peer="${SEALED_PEER:-go}"
 case "$peer" in go|ts) ;; *) echo "sealed.sh: SEALED_PEER is go or ts, not $peer" >&2; exit 2 ;; esac
-: "${MACULA_BUILD:?a compiled macula at 15.0.0-rc.1 or later (wire 1.0)}"
+: "${MACULA_BUILD:?a compiled macula at the release .github/workflows/sealed-interop.yml pins as MACULA_VERSION}"
 work="$(mktemp -d)"
 erl_name="macula-go-sealed-$$"
 # stop_erl stops the Erlang serve this script started: the container by name,
@@ -114,8 +115,8 @@ stop_erl
 # Release A0 (DESIGN_E2E_SEALED_BY_DEFAULT.md section 8.1): a provider built to
 # name its key in a refusal, and a caller that only ever learns it there. The
 # TypeScript caller has no API for a clear request, so this runs for go alone.
-# It needs macula 17.2.0 or later, the release that knows refusal_names_key;
-# MACULA_VERSION pins that, so the run is no longer behind a flag.
+# It needs a release that knows refusal_names_key, which MACULA_VERSION pins;
+# the run is no longer behind a flag.
 if [ "$peer" = go ]; then
   echo "== $profile: an Erlang provider naming its key (release A0), a Go caller"
   erl serve_a0 180 > "$work/erlang-a0.out" 2>&1 &

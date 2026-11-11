@@ -152,7 +152,7 @@ escript scripts/interop/erlang_ownership_proof.escript emit <macula lib dir>/ebi
 ## Sealed calls and streams (macula 13, E2E seal scheme 1)
 
 `sealed.sh` runs macula-go's test station and, through it, both directions in
-one profile: an Erlang macula provider (15.0.0-rc.1 or later) (`erlang_sealed.escript serve`,
+one profile: an Erlang macula provider (`erlang_sealed.escript serve`,
 `kem_advertise` on, a call and a server stream in its own namespace, both
 `confidential => required`, their advertisements published for direct dial)
 called and streamed to by `gosealed call`, sealed to the key its advertisement
@@ -165,14 +165,30 @@ macula's direct dial does, and called in the clear at its station
 (`call_station/8`, `confidential => off`), which it must refuse. The Erlang side
 runs in macula's pinned CI image with the host's network.
 
+Both interop legs run against one macula release, the one the workflow pins:
+`.github/workflows/sealed-interop.yml` sets it as `MACULA_VERSION`, so moving the
+release is that one line. Build it from hex, then point the script at the build.
+
+No instruction here or in the scripts names that version: the usage lines and the
+`groups.sh`/`sealed.sh` messages say "the pinned release". The `Last run` records
+below do name one, and must: each dates a real run on the release that was pinned
+that day, so it stays put when the pin moves.
+
+That pin is not the newest release on hex — 18.3.0 when this was written — and it
+is held back on purpose. macula 18 refuses a subscription that does not name who
+may deliver to it (`sources`), and macula-go has no way to name one yet
+(macula-go#61). On 18.3.0 the distributor starts and advertises, and then the
+members never complete: a run with `macula_version: 18.3.0` stalls at the member
+stage instead of failing with a name. The pin moves with macula-go#61, not on its
+own.
+
 ```sh
-MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/sealed.sh pq_hybrid
-MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/sealed.sh pq_pure
+MACULA_BUILD=<the pinned release, compiled> scripts/interop/sealed.sh pq_hybrid
+MACULA_BUILD=<the pinned release, compiled> scripts/interop/sealed.sh pq_pure
 ```
 
 `MACULA_BUILD` may also be a rebar3 project that depends on macula from hex
-(`{deps, [{macula, "<version>"}]}`, the version `sealed-interop.yml` sets as
-`MACULA_VERSION` being the one CI proves), compiled in the same image: the script
+(`{deps, [{macula, "<version>"}]}`), compiled in the same image: the script
 reads `_build/default/lib/macula` and its dependencies beside it.
 
 The Erlang caller also calls with `confidential => off` by direct dial.
@@ -181,8 +197,8 @@ target), where macula-go's pool refuses it; macula 13.0.1 refuses it too, as
 `{error, {confidentiality, off_needs_explicit_target}}`. With
 `MACULA_OFF_REFUSED=1` the script requires exactly that refusal.
 
-Last run (2026-10-28, `macula-ci-otp@sha256:aff1d39b...`, macula 17.2.0 from
-hex as a rebar3 dependency, `MACULA_OFF_REFUSED=1`): both profiles, both ways,
+Last run (2026-10-28, `macula-ci-otp@sha256:aff1d39b...`, macula 17.2.0 from hex,
+`MACULA_OFF_REFUSED=1`): both profiles, both ways,
 `sealed call` and `sealed stream` answered, `clear call` refused
 `sealed_required`, `off by direct dial` refused `off_needs_explicit_target`, and
 the four release A0 programs answered after the caller resealed to the key the
@@ -191,10 +207,11 @@ refusal carried; exit 0, in CI (run 40616966173). macula v13.0.0, before
 `MACULA_OFF_REFUSED=1`, as it must.
 
 CI runs the Go leg on every PR and master push, and on a `v*` tag before the release
-is published (`.github/workflows/sealed-interop.yml`): macula from hex at the version
-above, compiled in the same image, both profiles, `MACULA_OFF_REFUSED=1`. The tag's
-release carries the log as `sealed-interop-<tag>.log`. Move the workflow's
-`MACULA_VERSION` together with the version recorded here.
+is published (`.github/workflows/sealed-interop.yml`): macula from hex at the pinned
+release, compiled in the same image, both profiles, `MACULA_OFF_REFUSED=1`. The tag's
+release carries the log as `sealed-interop-<tag>.log`. That workflow's build job makes
+the macula the sealed groups leg below runs too, so the two never test different
+releases.
 
 ### Release A0: a refusal that names its key
 
@@ -213,9 +230,9 @@ the provider answers only after the caller's first chunk, completes. Each
 program also checks that the key the refusal carried is the one the serve
 printed.
 
-It needs the release that knows `refusal_names_key`, macula 17.2.0 or later,
-which is what the workflow's `MACULA_VERSION` pins. Only the Go caller runs it:
-@macula-io/ts has no API for a clear request.
+It needs a release that knows `refusal_names_key`, which the pinned one does and
+no earlier one does. Only the Go caller runs it: @macula-io/ts has no API for a
+clear request.
 
 Against macula `ce067c47` (macula#145's fix) all four pass, in both profiles,
 three programs and the client stream alike. Before that fix, on `f1aea93b`, the
@@ -273,11 +290,11 @@ on macula-go v0.18.0's shared library):
   dial` refused `off_needs_explicit_target`. Exit 0.
 
 Last run of this leg (2026-11-11, `macula-ci-otp@sha256:aff1d39b...`,
-@macula-io/ts 0.31.0 on macula-go's shared library): macula 17.2.0 from hex
-with `MACULA_OFF_REFUSED=1`, pq_hybrid and pq_pure, both ways — the TypeScript
-caller's `sealed call` and `sealed stream` answered by the Erlang provider, the
-TypeScript provider's `sealed call` and `sealed stream` answered, `clear call`
-refused `sealed_required`, `off by direct dial` refused
+@macula-io/ts 0.31.0 on macula-go's shared library): macula 17.2.0 from hex,
+with `MACULA_OFF_REFUSED=1`, pq_hybrid and pq_pure, both ways —
+the TypeScript caller's `sealed call` and `sealed stream` answered by the Erlang
+provider, the TypeScript provider's `sealed call` and `sealed stream` answered,
+`clear call` refused `sealed_required`, `off by direct dial` refused
 `off_needs_explicit_target`. Exit 0 in both profiles. The pin was
 @macula-io/ts 0.25.0 before this run, and that version's shared library times
 out connecting to the test station (`Pool.connect`: "the call's timeout ran
@@ -287,7 +304,9 @@ out"), so the leg could not run at all until it moved to 0.31.0.
 
 `groups.sh` runs macula's own distributor (`macula_group_keys`, policy
 `required`) for the test realm's org, in Erlang, admitted by the org's
-delegation and advertised with its grant policy and `confidential => required`.
+delegation and advertised with `advertise_opts/0`: sealed calls only, with the
+caller's token handed to the handler, which checks the org's `group_keys` grant
+for the group each pull names.
 An Erlang member (`erlang_groups.escript member`) and a Go member
 (`gogroups member`) each get the org's `group_keys` grant from the test
 station (`grant <node_id>`), subscribe under the group, pulling its epoch over
@@ -295,15 +314,22 @@ a sealed call, and publish sealed under it; each must open the other's event,
 under the same epoch. Then a Go node the distributor's removed set names must
 be refused `not_a_member`. The Erlang side runs in macula's pinned CI image.
 
+It runs against the pinned release, as the sealed calls and streams leg does:
+
 ```sh
-MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh pq_hybrid
-MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh pq_pure
+MACULA_BUILD=<the pinned release, compiled> scripts/interop/groups.sh pq_hybrid
+MACULA_BUILD=<the pinned release, compiled> scripts/interop/groups.sh pq_pure
 ```
 
-Last run (2026-10-17, `macula-ci-otp@sha256:aff1d39b...`, macula 15.6.0
-from hex as a rebar3 dependency): both profiles, both members opened the
-other's event under one epoch, the removed node was refused `not_a_member`,
-exit 0.
+CI runs it on every PR and master push and on a `v*` tag before the release is
+published: the `groups` job in `.github/workflows/sealed-interop.yml`, both
+profiles with the Go peer, against the macula build that job shares with the
+sealed calls and streams leg. The tag's release carries the log as
+`groups-interop-<tag>.log`.
+
+Last run (2026-11-11, `macula-ci-otp@sha256:aff1d39b...`, macula 17.2.0 from
+hex): both profiles with the Go peer, both members opened the other's
+event under one epoch, the removed node was refused `not_a_member`, exit 0.
 
 ### The TypeScript leg (`GROUPS_PEER=ts`)
 
@@ -315,17 +341,17 @@ points it at a local @macula-io/ts checkout, built, instead. Needs node and
 npm.
 
 ```sh
-GROUPS_PEER=ts MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh pq_hybrid
-GROUPS_PEER=ts MACULA_BUILD=<macula 15.0.0-rc.1 or later, compiled> scripts/interop/groups.sh pq_pure
+GROUPS_PEER=ts MACULA_BUILD=<the pinned release, compiled> scripts/interop/groups.sh pq_hybrid
+GROUPS_PEER=ts MACULA_BUILD=<the pinned release, compiled> scripts/interop/groups.sh pq_pure
 ```
 
 Last run of this leg (2026-11-11, `macula-ci-otp@sha256:aff1d39b...`,
-@macula-io/ts 0.31.0-rc.2 on macula-go's shared library, macula 15.6.0 from
-hex): pq_hybrid — the TypeScript member opened the Erlang member's event under
-one epoch, the TypeScript node published and the Erlang member opened it, and
-the removed node was refused `not_a_member`. Exit 0.
+@macula-io/ts 0.31.0-rc.2 on macula-go's shared library, macula 17.2.0 from
+hex): both profiles — the TypeScript member opened the Erlang
+member's event under one epoch, the TypeScript node published and the Erlang
+member opened it, and the removed node was refused `not_a_member`. Exit 0.
 
-It does not run on macula 17.2.0: `erlang_groups.escript` starts the
-distributor with `macula_group_keys:start_link/1` taking the pre-17 option map
-(`org`, `policy`, `membership`, `removed`), and no clause of that function
-accepts it any more.
+The TypeScript peer is not in CI, as the sealed calls and streams leg's is not:
+it drives the same distributor escript, so the pin's drift is caught by the
+`groups` job without it, and an npm install of an @macula-io/ts release
+candidate need not run on every push.
