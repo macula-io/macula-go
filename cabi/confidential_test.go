@@ -26,23 +26,8 @@ func TestConfidentialOptionsAreChecked(t *testing.T) {
 			t.Errorf("call options %s: %v, want invalid_argument", text, err)
 		}
 	}
-	// Each serve refusal is for its own reason, with a valid policy beside the
-	// field under test: without one they would all be refused for the missing
-	// policy and prove nothing about the field (macula-go#57, #60).
-	for _, c := range []struct{ text, names string }{
-		{`{"confidential":"maybe","policy":{"kind":"open"}}`, "confidential"},
-		{`{"hint":1,"policy":{"kind":"open"}}`, "hint"},
-	} {
-		_, err := serveOptionsOf(c.text)
-		if kindOf(err) != kindInvalidArgument || !strings.Contains(err.Error(), c.names) {
-			t.Errorf("serve options %s: %v, want invalid_argument naming %s", c.text, err, c.names)
-		}
-	}
-	if opts, err := serveOptionsOf(`{"policy":{"kind":"open"}}`); err != nil || opts.policy == nil {
-		t.Errorf("serve options naming open alone: %+v, %v", opts, err)
-	}
-	opts, err := callOptionsOf(`{"confidential":"required","ucan":"t","proofs":["p"]}`)
-	if err != nil || opts.confidential != stationlink.ConfidentialRequired || string(opts.creds.token) != "t" || len(opts.creds.proofs) != 1 {
+	if opts, err := callOptionsOf(`{"confidential":"required","ucan":"t","proofs":["p"]}`); err != nil || opts.confidential != stationlink.ConfidentialRequired ||
+		string(opts.creds.token) != "t" || len(opts.creds.proofs) != 1 {
 		t.Errorf("call options: %+v, %v", opts, err)
 	}
 	if opts, err := callOptionsOf(""); err != nil || opts.confidential != stationlink.ConfidentialPreferred {
@@ -54,6 +39,24 @@ func TestConfidentialOptionsAreChecked(t *testing.T) {
 		if _, err := connect(context.Background(), nil, seeds, options); kindOf(err) != kindInvalidArgument {
 			t.Errorf("pool options %s: %v, want invalid_argument", options, err)
 		}
+	}
+}
+
+// A serve's options are refused each for its own reason, with a valid policy
+// beside the field under test: without one they would all be refused for the
+// missing policy and prove nothing about the field (macula-go#57, #60).
+func TestServeOptionsAreRefusedForTheirOwnReason(t *testing.T) {
+	for _, c := range []struct{ text, names string }{
+		{`{"confidential":"maybe","policy":{"kind":"open"}}`, "confidential"},
+		{`{"hint":1,"policy":{"kind":"open"}}`, "hint"},
+	} {
+		_, err := serveOptionsOf(c.text)
+		if kindOf(err) != kindInvalidArgument || !strings.Contains(err.Error(), c.names) {
+			t.Errorf("serve options %s: %v, want invalid_argument naming %s", c.text, err, c.names)
+		}
+	}
+	if opts, err := serveOptionsOf(`{"policy":{"kind":"open"}}`); err != nil || opts.policy == nil {
+		t.Errorf("serve options naming open alone: %+v, %v", opts, err)
 	}
 }
 

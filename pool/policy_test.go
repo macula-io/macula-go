@@ -63,32 +63,37 @@ func TestAServeWithNoPolicyIsRefused(t *testing.T) {
 			realm := teststation.NewRealm(t, profile.PQPure, "no policy "+c.name, org)
 			p := connect(t, "no policy "+c.name+" provider", realm, s)
 			// An own-namespace procedure: nothing but the policy can refuse it,
-			// so a serve that today succeeds is the hole itself.
+			// so a serve that succeeds today is the hole itself.
 			own := record.OwnProcedure(p.NodeID(), "echo")
-			offer := Offer{Realm: realm.ID, Procedure: own, Handler: echo}
-			if c.stream {
-				offer = Offer{Realm: realm.ID, Procedure: own,
-					Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: echoStream}}
-			}
-			if _, err := p.Serve(t.Context(), offer); !errors.Is(err, ErrPolicyRequired) {
+			if _, err := p.Serve(t.Context(), unpolicied(realm.ID, own, c.stream)); !errors.Is(err, ErrPolicyRequired) {
 				t.Fatalf("Serve with no policy: %v, want ErrPolicyRequired", err)
 			}
 			if s.Advertised(realm.ID, own) {
 				t.Error("the station advertises a procedure the pool refused to serve")
 			}
-			// The refusal is the pool's own and comes before a realm key is
-			// resolved: an org procedure in a realm this pool pins no key for
-			// is still refused for the policy it names, not for the key.
-			elsewhere := teststation.NewRealm(t, profile.PQPure, "unpinned "+c.name, org)
-			orgOffer := Offer{Realm: elsewhere.ID, Procedure: org + "/echo", Handler: echo}
-			if c.stream {
-				orgOffer = Offer{Realm: elsewhere.ID, Procedure: org + "/echo",
-					Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: echoStream}}
-			}
-			if _, err := p.Serve(t.Context(), orgOffer); !errors.Is(err, ErrPolicyRequired) {
-				t.Errorf("Serve with no policy in an unpinned realm: %v, want ErrPolicyRequired before any realm key", err)
-			}
+			assertPolicyBeforeAnyRealmKey(t, p, c.name, c.stream)
 		})
+	}
+}
+
+// unpolicied is an offer of one procedure that names no policy at all.
+func unpolicied(realm [32]byte, procedure string, stream bool) Offer {
+	if stream {
+		return Offer{Realm: realm, Procedure: procedure,
+			Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: echoStream}}
+	}
+	return Offer{Realm: realm, Procedure: procedure, Handler: echo}
+}
+
+// assertPolicyBeforeAnyRealmKey checks the refusal is the pool's own and comes
+// first: an org procedure in a realm this pool pins no key for is still refused
+// for the policy it names, not for the key.
+func assertPolicyBeforeAnyRealmKey(t *testing.T, p *Pool, name string, stream bool) {
+	t.Helper()
+	elsewhere := teststation.NewRealm(t, profile.PQPure, "unpinned "+name, org)
+	_, err := p.Serve(t.Context(), unpolicied(elsewhere.ID, org+"/echo", stream))
+	if !errors.Is(err, ErrPolicyRequired) {
+		t.Errorf("Serve with no policy in an unpinned realm: %v, want ErrPolicyRequired before any realm key", err)
 	}
 }
 
