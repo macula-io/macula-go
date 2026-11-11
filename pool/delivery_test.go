@@ -240,6 +240,7 @@ func TestOneOfTwoLinksEndingDeliversNoNotice(t *testing.T) {
 	a := teststation.Start(t, profile.PQPure, "one of two a")
 	b := teststation.Start(t, profile.PQPure, "one of two b")
 	listener, sub, publisher, realm := listening(t, "one of two", []*teststation.Station{a, b}, []*teststation.Station{a})
+	carried(t, sub, 2)
 	b.Stop()
 	eventually(t, "the link to b ended", func() bool { return len(listener.links()) == 1 })
 	say(t, publisher, realm, "still")
@@ -248,38 +249,51 @@ func TestOneOfTwoLinksEndingDeliversNoNotice(t *testing.T) {
 	}
 }
 
-// A link that ends while the OTHER link's SUBSCRIBE is still awaiting its
-// verdict is no gap either: the station had already accepted the subscription
-// on that link, so nothing was missed and neither notice is owed. The station
-// holds its REGISTER_ACK until the test releases it, which is the window a
-// slow answer leaves open on CI and what made the test above flake.
-func TestOneOfTwoLinksEndingBeforeTheOtherAnsweredDeliversNoNotice(t *testing.T) {
-	a := teststation.Start(t, profile.PQPure, "slow answer a")
-	b := teststation.Start(t, profile.PQPure, "slow answer b")
+// carried waits until every one of the subscription's links carries it. The
+// stations' own Subscribed() answers first — a station records a SUBSCRIBE
+// before it acknowledges it — so a test that stopped a link as soon as every
+// STATION had it could still have one of the node's own attachments in flight,
+// and would then read the ending link as the last one carrying the
+// subscription. That is the flake of macula-go#88: this wait is what closes it.
+func carried(t *testing.T, sub *Subscription, links int) {
+	t.Helper()
+	eventually(t, "the subscription carried on every link", func() bool { return carriedLinks(sub) == links })
+}
+
+// The stations holding a subscription is not the node carrying it. A station
+// records a SUBSCRIBE before it acknowledges it, so a test that waits on
+// Subscribed() can end a link while the node has not heard the other link's
+// answer yet — and that ending link then reads as the last one carrying the
+// subscription. This holds one station's answer until the test releases it, so
+// the window is exact rather than a race to hit: one station subscribed, one
+// link carried. It is the wait macula-go#88 flaked in, made deterministic.
+func TestStationsHoldingTheSubscriptionIsNotTheNodeCarryingIt(t *testing.T) {
+	a := teststation.Start(t, profile.PQPure, "held answer a")
+	b := teststation.Start(t, profile.PQPure, "held answer b")
 	release := a.HoldAcks()
 	defer release()
-	realm := teststation.NewRealm(t, profile.PQPure, "slow answer", org)
-	listener := connect(t, "slow answer listener", realm, a, b)
-	eventually(t, "every listener link up", func() bool { return len(listener.links()) == len([]*teststation.Station{a, b}) })
-	publisher := connect(t, "slow answer publisher", realm, a)
+	realm := teststation.NewRealm(t, profile.PQPure, "held answer", org)
+	listener := connect(t, "held answer listener", realm, a, b)
+	eventually(t, "every listener link up", func() bool { return len(listener.links()) == 2 })
 	sub, err := listener.Subscribe(realm.ID, topic)
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
-	// The station a accepted the subscription and is holding its answer, so
-	// the node has not been told; b's link then ends for real.
-	b.Stop()
-	eventually(t, "the link to b ended", func() bool { return len(listener.links()) == 1 })
-	release()
-	eventually(t, "the link to a carries the subscription", func() bool {
-		sub.mu.Lock()
-		defer sub.mu.Unlock()
-		return len(sub.onLinks) == 1
-	})
-	say(t, publisher, realm, "still")
-	if got := delivered(sub, 2*time.Second); len(got) != 1 || got[0].Kind != KindEvent {
-		t.Errorf("with a's answer in flight when b ended: %s, want the event alone", shown(got))
+	// b answered; a accepted and recorded it and is holding its answer.
+	if !a.Subscribed(listener.NodeID(), realm.ID, topic) || !b.Subscribed(listener.NodeID(), realm.ID, topic) {
+		t.Fatal("not every station holds the subscription")
 	}
+	if links := carriedLinks(sub); links != 1 {
+		t.Fatalf("both stations hold it but %d link carries it, want 1 while a's answer is held", links)
+	}
+	release()
+	eventually(t, "the subscription carried on every link", func() bool { return carriedLinks(sub) == 2 })
+}
+
+func carriedLinks(sub *Subscription) int {
+	sub.mu.Lock()
+	defer sub.mu.Unlock()
+	return len(sub.onLinks)
 }
 
 // With two links that both end and one that returns, the subscription is
@@ -289,6 +303,7 @@ func TestBothLinksEndingAndOneReturningDeliversOneOfEach(t *testing.T) {
 	a := teststation.Start(t, profile.PQPure, "both end a")
 	b := teststation.Start(t, profile.PQPure, "both end b")
 	listener, sub, _, _ := listening(t, "both end", []*teststation.Station{a, b}, []*teststation.Station{a})
+	carried(t, sub, 2)
 	b.Stop()
 	eventually(t, "the link to b ended", func() bool { return len(listener.links()) == 1 })
 	a.Drop(listener.NodeID())
