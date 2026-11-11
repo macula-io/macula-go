@@ -45,7 +45,10 @@ func (p *Pool) resend(held []stationlink.SignedPublication) {
 }
 
 // carry sends publication on a link up now, or keeps it for the next one, or
-// counts it unsent when it can go nowhere. It answers whether a link took it.
+// counts it unsent when it can go nowhere. It answers true when the pool is
+// done with the publication — a link took it, or it is a copy of one already
+// dealt with and is dropped here — and false when it waits for a link or was
+// counted unsent.
 //
 // Every link the publication was published to held a copy of the same signed
 // bytes, and each hands its copy over when it ends, so a publication the pool
