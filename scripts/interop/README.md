@@ -166,9 +166,21 @@ macula's direct dial does, and called in the clear at its station
 runs in macula's pinned CI image with the host's network.
 
 Both interop legs run against one macula release, the one the workflow pins:
-`.github/workflows/sealed-interop.yml` sets it as `MACULA_VERSION`, and neither
-this page nor the scripts names it anywhere else, so moving the release is that
-one line. Build it from hex, then point the script at the build.
+`.github/workflows/sealed-interop.yml` sets it as `MACULA_VERSION`, so moving the
+release is that one line. Build it from hex, then point the script at the build.
+
+No instruction here or in the scripts names that version: the usage lines and the
+`groups.sh`/`sealed.sh` messages say "the pinned release". The `Last run` records
+below do name one, and must: each dates a real run on the release that was pinned
+that day, so it stays put when the pin moves.
+
+That pin is not the newest release on hex — 18.3.0 when this was written — and it
+is held back on purpose. macula 18 refuses a subscription that does not name who
+may deliver to it (`sources`), and macula-go has no way to name one yet
+(macula-go#61). On 18.3.0 the distributor starts and advertises, and then the
+members never complete: a run with `macula_version: 18.3.0` stalls at the member
+stage instead of failing with a name. The pin moves with macula-go#61, not on its
+own.
 
 ```sh
 MACULA_BUILD=<the pinned release, compiled> scripts/interop/sealed.sh pq_hybrid
@@ -185,8 +197,8 @@ target), where macula-go's pool refuses it; macula 13.0.1 refuses it too, as
 `{error, {confidentiality, off_needs_explicit_target}}`. With
 `MACULA_OFF_REFUSED=1` the script requires exactly that refusal.
 
-Last run (2026-10-28, `macula-ci-otp@sha256:aff1d39b...`, macula from hex at the
-pinned release, `MACULA_OFF_REFUSED=1`): both profiles, both ways,
+Last run (2026-10-28, `macula-ci-otp@sha256:aff1d39b...`, macula 17.2.0 from hex,
+`MACULA_OFF_REFUSED=1`): both profiles, both ways,
 `sealed call` and `sealed stream` answered, `clear call` refused
 `sealed_required`, `off by direct dial` refused `off_needs_explicit_target`, and
 the four release A0 programs answered after the caller resealed to the key the
@@ -278,8 +290,8 @@ on macula-go v0.18.0's shared library):
   dial` refused `off_needs_explicit_target`. Exit 0.
 
 Last run of this leg (2026-11-11, `macula-ci-otp@sha256:aff1d39b...`,
-@macula-io/ts 0.31.0 on macula-go's shared library): macula from hex at the
-pinned release, with `MACULA_OFF_REFUSED=1`, pq_hybrid and pq_pure, both ways —
+@macula-io/ts 0.31.0 on macula-go's shared library): macula 17.2.0 from hex,
+with `MACULA_OFF_REFUSED=1`, pq_hybrid and pq_pure, both ways —
 the TypeScript caller's `sealed call` and `sealed stream` answered by the Erlang
 provider, the TypeScript provider's `sealed call` and `sealed stream` answered,
 `clear call` refused `sealed_required`, `off by direct dial` refused
@@ -315,8 +327,8 @@ profiles with the Go peer, against the macula build that job shares with the
 sealed calls and streams leg. The tag's release carries the log as
 `groups-interop-<tag>.log`.
 
-Last run (2026-11-11, `macula-ci-otp@sha256:aff1d39b...`, macula from hex at the
-pinned release): both profiles with the Go peer, both members opened the other's
+Last run (2026-11-11, `macula-ci-otp@sha256:aff1d39b...`, macula 17.2.0 from
+hex): both profiles with the Go peer, both members opened the other's
 event under one epoch, the removed node was refused `not_a_member`, exit 0.
 
 ### The TypeScript leg (`GROUPS_PEER=ts`)
@@ -334,8 +346,8 @@ GROUPS_PEER=ts MACULA_BUILD=<the pinned release, compiled> scripts/interop/group
 ```
 
 Last run of this leg (2026-11-11, `macula-ci-otp@sha256:aff1d39b...`,
-@macula-io/ts 0.31.0-rc.2 on macula-go's shared library, macula from hex at the
-pinned release): both profiles — the TypeScript member opened the Erlang
+@macula-io/ts 0.31.0-rc.2 on macula-go's shared library, macula 17.2.0 from
+hex): both profiles — the TypeScript member opened the Erlang
 member's event under one epoch, the TypeScript node published and the Erlang
 member opened it, and the removed node was refused `not_a_member`. Exit 0.
 
