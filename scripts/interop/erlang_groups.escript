@@ -7,9 +7,12 @@
 %%   escript erlang_groups.escript ... <work dir> member <prefix> <topic>
 %%
 %% distribute runs the org's distributor (macula_group_keys, policy required): it prints "node <hex>", waits for
-%% <work>/admitted.<hex> (the org's delegation to it is in the DHT), advertises <org>/group_keys_v1 with the org's
-%% grant policy and confidential => required, prints "serving" and holds. Its membership admits every caller; its
+%% <work>/admitted.<hex> (the org's delegation to it is in the DHT), advertises <org>/group_keys_v1 with
+%% macula_group_keys:advertise_opts/0 -- sealed calls only, the caller's token handed to the handler, which checks
+%% the org's group_keys grant per group -- prints "serving" and holds. Its membership admits every caller; its
 %% removed set is the node ids listed in <work>/removed, read at each pull.
+%% The distributor starts with the option map macula takes from 17 on (org, policy, org_key_id, realm, profile);
+%% the org grant used to be an advertise gate and is now the handler's own check (macula#129).
 %%
 %% member prints "node <hex>", waits for <work>/grant.<hex> (its org grant), subscribes to <topic> under the group
 %% <prefix>, writes <work>/ready.erlang, waits for <work>/ready.go, publishes {text, "from erlang"} sealed under the
@@ -29,7 +32,7 @@ main([Lib, Host, Port, Station, Realm, RealmKey, Profile, Work, Mode | Args]) ->
     R = binary:decode_hex(list_to_binary(Realm)),
     {ok, Pool} = macula:connect([Seed], #{realm_trust => #{R => binary:decode_hex(list_to_binary(RealmKey))}}),
     Self = up(Pool, 300),
-    Result = run(Mode, Pool, R, Self, Work, Args),
+    Result = run(Mode, P, Pool, R, Self, Work, Args),
     os:cmd("rm -rf " ++ Tmp),
     halt(Result).
 
@@ -45,21 +48,23 @@ healthy(_NotYet, Pool, N) ->
 
 hex(Bin) -> binary_to_list(binary:encode_hex(Bin, lowercase)).
 
-run("distribute", Pool, Realm, Self, Work, [Org, OrgKeyId, Hold]) ->
+run("distribute", Profile, Pool, Realm, Self, Work, [Org, OrgKeyId, Hold]) ->
     _ = waited(filename:join(Work, "admitted." ++ hex(Self)), 900),
     Removed = filename:join(Work, "removed"),
     {ok, Distributor} = macula_group_keys:start_link(#{org => list_to_binary(Org), policy => required,
+                                                       org_key_id => binary:decode_hex(list_to_binary(OrgKeyId)),
+                                                       realm => Realm, profile => Profile,
                                                        membership => fun(_Caller) -> ok end,
                                                        removed => fun(Caller) -> removed(Removed, Caller) end}),
     Procedure = <<(list_to_binary(Org))/binary, "/group_keys_v1">>,
-    Opts = macula_group_keys:advertise_opts(binary:decode_hex(list_to_binary(OrgKeyId))),
+    Opts = macula_group_keys:advertise_opts(),
     Advertised = until_ok(fun() -> macula:advertise(Pool, Realm, Procedure, macula_group_keys:handler(Distributor), Opts) end, 150),
     io:format("advertised: ~p~n", [Advertised]),
     ok = Advertised,
     io:format("serving~n"),
     timer:sleep(list_to_integer(Hold) * 1000),
     0;
-run("member", Pool, Realm, Self, Work, [Prefix, Topic]) ->
+run("member", _Profile, Pool, Realm, Self, Work, [Prefix, Topic]) ->
     Token = waited(filename:join(Work, "grant." ++ hex(Self)), 900),
     Opts = #{group => list_to_binary(Prefix), ucan_token => list_to_binary(string:trim(Token))},
     Subscribed = until_ok(fun() -> macula:subscribe(Pool, Realm, list_to_binary(Topic), self(), Opts) end, 150),
