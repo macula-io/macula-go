@@ -45,22 +45,46 @@ func (f frameReader) read(max int) ([]byte, error) {
 	return payload, nil
 }
 
+// errFrameRefused is a frame the writer was not allowed to send: hold refused
+// it, which no byte of it having gone out is the same thing as.
+var errFrameRefused = errors.New("stationlink: the frame was refused before it was written")
+
 // frameWriter writes <<Len:32/big, CBOR>> frames to a stream, one at a time.
 type frameWriter struct {
 	mu sync.Mutex
 	w  io.Writer
+	// frames counts the frames written, and a frame's number is how many went
+	// before it: numbered under mu, so the numbers follow the order the frames
+	// go onto the stream.
+	frames uint64
 }
 
 // write sends payload as one frame, refusing one over max.
 func (f *frameWriter) write(payload []byte, max int) error {
+	_, _, err := f.writeNumbered(payload, max, nil)
+	return err
+}
+
+// writeNumbered sends payload as one frame and answers its number on the
+// stream and the bytes that went out. hold, when set, runs once the number is
+// taken and before the first byte is written, under the writer's mutex, and
+// answers whether the frame may go out: that is what lets a publication be held
+// before any of it can leave, so a link that ends in between still carries it.
+// A refused frame wrote nothing and answers errFrameRefused.
+func (f *frameWriter) writeNumbered(payload []byte, max int, hold func(number uint64) bool) (number uint64, n int, err error) {
 	if len(payload) > max {
-		return fmt.Errorf("%w: %d bytes, over %d", ErrFrameTooLarge, len(payload), max)
+		return 0, 0, fmt.Errorf("%w: %d bytes, over %d", ErrFrameTooLarge, len(payload), max)
 	}
 	framed := make([]byte, 4+len(payload))
 	binary.BigEndian.PutUint32(framed, uint32(len(payload)))
 	copy(framed[4:], payload)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	_, err := f.w.Write(framed)
-	return err
+	number = f.frames
+	f.frames++
+	if hold != nil && !hold(number) {
+		return number, 0, errFrameRefused
+	}
+	n, err = f.w.Write(framed)
+	return number, n, err
 }

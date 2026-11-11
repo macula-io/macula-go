@@ -127,6 +127,11 @@ func (l *Link) namedEnding(err error) error {
 	return err
 }
 
+// endLink ends a link, and is a variable only so that a test can watch what a
+// partly written frame does on a link with no connection to close
+// (macula-go#78); nil in a build.
+var endLink = func(l *Link, err error) { l.end(err) }
+
 // GoodbyeError is a station that ended the link with a GOODBYE.
 type GoodbyeError struct {
 	Reason string
@@ -216,6 +221,10 @@ type Link struct {
 	station    handshake.Station
 	stationCap uint64
 	pongs      chan [16]byte // liveness answers, for probe
+
+	// unconfirmed is what this link sent that the station is not known to
+	// have read (unconfirmed.go).
+	unconfirmed unconfirmed
 
 	sendMu sync.Mutex // orders the link's own control frames
 
@@ -493,9 +502,18 @@ func (l *Link) Close(reason string) error {
 // proofs authenticated the station once, and QUIC's AEAD authenticates every
 // frame after HELLO.
 func (l *Link) sendControl(v cbor.Value) error {
+	_, err := l.sendControlNumbered(v)
+	return err
+}
+
+// sendControlNumbered sends a control frame and answers its number on the
+// stream, which is how the ping that confirms what the station read names
+// itself (macula-go#78).
+func (l *Link) sendControlNumbered(v cbor.Value) (uint64, error) {
 	l.sendMu.Lock()
 	defer l.sendMu.Unlock()
-	return l.writer.write(cbor.Encode(v), MaxFrameBytes)
+	number, _, err := l.writer.writeNumbered(cbor.Encode(v), MaxFrameBytes, nil)
+	return number, err
 }
 
 // sendStatements sends each statement the issuer reissues as a STATUS, until

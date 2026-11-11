@@ -381,7 +381,8 @@ func (l *Link) probeOnce() error {
 	case <-l.pongs:
 	default:
 	}
-	if err := l.sendControl(frame.LivenessPingFrame(nonce)); err != nil {
+	ping, err := l.sendControlNumbered(frame.LivenessPingFrame(nonce))
+	if err != nil {
 		return err
 	}
 	deadline := time.After(livenessTimeout)
@@ -389,6 +390,10 @@ func (l *Link) probeOnce() error {
 		select {
 		case answered := <-l.pongs:
 			if answered == nonce {
+				// The station answers its control stream in order: the pong of
+				// this ping says it read every publication sent before it
+				// (macula-go#78).
+				l.unconfirmed.confirmBefore(ping)
 				return nil
 			}
 		case <-deadline:

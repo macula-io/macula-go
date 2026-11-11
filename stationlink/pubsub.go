@@ -130,7 +130,17 @@ func (l *Link) Publish(p Publication) error {
 // several links delivers it once.
 type SignedPublication struct {
 	encoded []byte
+	// resendUntil is the last moment a re-send can still land, in Unix
+	// milliseconds: past it a subscriber would refuse it (frame.ResendUntil).
+	resendUntil uint64
 }
+
+// ResendUntil is the last moment, in Unix milliseconds, this publication can be
+// sent again and still be delivered.
+func (p SignedPublication) ResendUntil() uint64 { return p.resendUntil }
+
+// Size is the publication's size on the wire, in bytes.
+func (p SignedPublication) Size() int { return len(p.encoded) }
 
 // SignPublication signs p with key at the next seq of seq, as Publish does.
 func SignPublication(key *identity.NodeKey, seq *PublicationSeq, p Publication) (SignedPublication, error) {
@@ -150,17 +160,61 @@ func SignPublication(key *identity.NodeKey, seq *PublicationSeq, p Publication) 
 	if err != nil {
 		return SignedPublication{}, err
 	}
-	return SignedPublication{encoded: cbor.Encode(publish)}, nil
+	return SignedPublication{encoded: cbor.Encode(publish),
+		resendUntil: frame.ResendUntil(spec.PublishedAt, spec.TTLMs)}, nil
 }
+
+// AfterHeld runs between recording a publication's hold and writing its first
+// byte, the one window in which a frame is held and not yet written. It is a
+// variable only so that a test can end the link there (macula-go#78); nil in a
+// build.
+var AfterHeld func()
 
 // PublishSigned sends a publication SignPublication signed, as it is. Sign
 // with the node's own identity key: the publisher a subscriber hears is the
 // key that signed it, whichever link carried it.
+//
+// The frame is held before its first byte goes out, until a frame the station
+// answers proves it read it (unconfirmed.go). It answers nil when a link's
+// stream took the frame whole, or when the frame will be carried again by the
+// pool — because part of it went out, or because the pool took the held copy
+// while it was being written. An error says nothing was written and nothing is
+// held, so the caller may send the same publication elsewhere.
 func (l *Link) PublishSigned(p SignedPublication) error {
-	if err := l.writer.write(p.encoded, MaxFrameBytes); err != nil {
-		return l.namedEnding(err)
+	var letGo uint64
+	number, n, err := l.writer.writeNumbered(p.encoded, MaxFrameBytes, func(number uint64) bool {
+		held, dropped := l.unconfirmed.hold(number, p, len(p.encoded))
+		letGo = dropped
+		if held && AfterHeld != nil {
+			AfterHeld()
+		}
+		return held
+	})
+	if letGo > 0 {
+		l.count("publication_unconfirmed_let_go")
 	}
-	return nil
+	switch {
+	case errors.Is(err, ErrFrameTooLarge):
+		// Refused before it was numbered: nothing of it was held or written.
+		return l.namedEnding(err)
+	case errors.Is(err, errFrameRefused):
+		// The link ended and the pool took what it held: nothing was written.
+		return l.namedEnding(err)
+	case err == nil:
+		return nil
+	case n == 0:
+		// Nothing went out. If the hold is still here, nothing anywhere carries
+		// this frame; if it is gone, the pool took it and the hand-over will.
+		if l.unconfirmed.drop(number) {
+			return l.namedEnding(err)
+		}
+		return nil
+	default:
+		// A prefix of the frame is on a stream that is broken: the station will
+		// not route it, and the held copy is the one that counts.
+		endLink(l, err)
+		return nil
+	}
 }
 
 // Subscribe subscribes to topic in realm. The first subscription to a realm
