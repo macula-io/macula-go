@@ -52,7 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MaxBytesReader` header race is fixed, and `release.yml` scans the same
   toolchain on the tagged commit. A consuming module built with an older
   toolchain and `GOTOOLCHAIN=local` has to move to 1.27.4; under the default
-  `auto` the go command fetches it.
+  `auto` the go command fetches it. `.tool-versions`, a second copy of the
+  version that no job read, is deleted, so `go.mod` is the only place that
+  names a toolchain.
 
 ### Added
 
