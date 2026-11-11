@@ -96,6 +96,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A subscription is no longer told it may have missed events while another
+  of its links was carrying it (macula-go#88).** Two races said "no link
+  carries this subscription" before it was true: a link was weighed as ended
+  before the link that had just been answered for joined the covering set, and
+  a link that ended while another link's SUBSCRIBE was still awaiting its
+  verdict was taken as the last one, although the station had already accepted
+  the subscription there. The answered link now joins the set first, and an end
+  that arrives while a SUBSCRIBE is in flight is held until the answers are in,
+  so `KindInterrupted` is only delivered when nothing covers the subscription.
+  `teststation.HoldAcks` makes the second race deterministic in a test.
 - **A station procedure in flight when its link ends is asked again on the
   next link, and nothing that could give a different result is
   (macula-go#74).** A pool's DHT reads and puts moved to the next link only on
