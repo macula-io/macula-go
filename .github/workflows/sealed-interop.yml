@@ -1,15 +1,23 @@
 name: Sealed interop
 
-# macula (Erlang) and macula-go seal calls and streams to each other, both
-# ways, in both profiles (scripts/interop/sealed.sh, README "sealed"). This
-# runs it on every PR and master push, and on a v* tag through release.yml,
-# which attaches the log to the release: a cross-SDK sealing claim rests on a
-# recorded CI run at the released sha, not on a run by hand (#10).
+# macula (Erlang) and macula-go interop for the sealed features, both profiles:
+# sealed calls and streams, both ways (scripts/interop/sealed.sh, README
+# "sealed"), and sealed groups through macula's own distributor
+# (scripts/interop/groups.sh, README "Sealed groups"). Both legs run on every
+# PR and master push, and on a v* tag through release.yml, which attaches each
+# log to the release: a cross-SDK sealing claim rests on a recorded CI run at
+# the released sha, not on a run by hand (#10, #92).
 #
-# The Erlang side is macula from hex at MACULA_VERSION, compiled as a rebar3
-# dependency in macula's pinned CI image (the image sealed.sh runs it in), so
-# the build and the run use one toolchain. MACULA_OFF_REFUSED=1 also requires
-# macula's refusal of `confidential => off' by direct dial (13.0.1 on).
+# One job builds macula from hex at MACULA_VERSION, compiled as a rebar3
+# dependency in macula's pinned CI image (the image the legs run it in), so the
+# build and the runs use one toolchain, and both legs run against that one
+# build, handed over as an artifact. A leg reads each library's ebin and priv
+# and nothing else, so the 551 MB of cargo target directories a compile leaves
+# behind never travels: the artifact is 17 MB.
+#
+# MACULA_VERSION is the one macula pin for both legs; scripts/interop/README.md
+# and the scripts' own required-variable messages point at it instead of naming
+# a version, so a bump is one line and they cannot disagree.
 #
 # workflow_dispatch takes another macula version: a release without sealing
 # (any 12.x) must turn this red, which is how the job was shown able to fail.
@@ -30,13 +38,42 @@ permissions:
   contents: read
 
 env:
-  # The version scripts/interop/README.md records as last run; move both together.
   MACULA_VERSION: ${{ inputs.macula_version || '17.2.0' }}
   MACULA_CI_IMAGE: ghcr.io/macula-io/macula-ci-otp@sha256:aff1d39bc4aa29d13044b90b38e9b7f4b757d50818cc11c5bb7e84cdbf82ac70
 
 jobs:
+  macula:
+    name: macula from hex
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Build macula from hex in the CI image
+        run: |
+          echo "macula $MACULA_VERSION from hex, $MACULA_CI_IMAGE"
+          mkdir -p "$RUNNER_TEMP/macula-build"
+          printf '{deps, [{macula, "%s"}]}.\n' "$MACULA_VERSION" > "$RUNNER_TEMP/macula-build/rebar.config"
+          podman run --rm -v "$RUNNER_TEMP/macula-build:/b" -w /b "$MACULA_CI_IMAGE" rebar3 compile
+          test -d "$RUNNER_TEMP/macula-build/_build/default/lib/macula/ebin"
+      - name: Keep what a leg reads
+        run: |
+          out="$RUNNER_TEMP/macula-interop"
+          mkdir -p "$out/_build/default/lib"
+          for lib in "$RUNNER_TEMP"/macula-build/_build/default/lib/*; do
+            name="$(basename "$lib")"
+            mkdir -p "$out/_build/default/lib/$name"
+            for part in ebin priv; do
+              [ -d "$lib/$part" ] && cp -a "$lib/$part" "$out/_build/default/lib/$name/"
+            done
+          done
+          du -sh "$out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macula-build
+          path: ${{ runner.temp }}/macula-interop
+
   sealed:
-    name: sealed interop (macula ${{ inputs.macula_version || '17.2.0' }})
+    name: sealed calls and streams
+    needs: macula
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -44,18 +81,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build macula ${{ env.MACULA_VERSION }} from hex in the CI image
-        run: |
-          mkdir -p "$RUNNER_TEMP/macula-build"
-          printf '{deps, [{macula, "%s"}]}.\n' "$MACULA_VERSION" > "$RUNNER_TEMP/macula-build/rebar.config"
-          podman run --rm -v "$RUNNER_TEMP/macula-build:/b" -w /b "$MACULA_CI_IMAGE" rebar3 compile
-          test -d "$RUNNER_TEMP/macula-build/_build/default/lib/macula/ebin"
+      - uses: actions/download-artifact@v4
+        with:
+          name: macula-build
+          path: ${{ runner.temp }}/macula-interop
       - name: Both ways, pq_hybrid and pq_pure
         shell: bash
         env:
           MACULA_OFF_REFUSED: "1"
         run: |
-          export MACULA_BUILD="$RUNNER_TEMP/macula-build"
+          export MACULA_BUILD="$RUNNER_TEMP/macula-interop"
           {
             echo "macula-go $GITHUB_SHA, macula $MACULA_VERSION from hex, $MACULA_CI_IMAGE"
             scripts/interop/sealed.sh pq_hybrid
@@ -66,3 +101,32 @@ jobs:
         with:
           name: sealed-interop-log
           path: sealed-interop.log
+
+  groups:
+    name: sealed groups through macula's distributor
+    needs: macula
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v4
+        with:
+          name: macula-build
+          path: ${{ runner.temp }}/macula-interop
+      - name: Both profiles, the Go peer
+        shell: bash
+        run: |
+          export MACULA_BUILD="$RUNNER_TEMP/macula-interop"
+          {
+            echo "macula-go $GITHUB_SHA, macula $MACULA_VERSION from hex, $MACULA_CI_IMAGE"
+            scripts/interop/groups.sh pq_hybrid
+            scripts/interop/groups.sh pq_pure
+          } 2>&1 | tee groups-interop.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: groups-interop-log
+          path: groups-interop.log
