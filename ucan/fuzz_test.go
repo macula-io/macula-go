@@ -119,8 +119,9 @@ func FuzzParsed(f *testing.F) {
 // FuzzAuthorize fuzzes a token's header and claims bytes, signed by the
 // fixture's delegate, and presents it to its audience with the delegate's parent
 // beside it as a proof. A claims block that names that parent's id is walked up
-// it, so the delegation checks run on fuzzed bytes; one that does not is refused
-// for the unused proof.
+// it, so the delegation checks run on fuzzed bytes; one that names nothing is
+// refused with unreferenced_proof, and one that names another id with
+// missing_proof.
 func FuzzAuthorize(f *testing.F) {
 	fixture := newFuzzToken(f)
 	for _, seed := range fixture.seeds(f) {
