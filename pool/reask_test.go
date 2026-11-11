@@ -152,13 +152,13 @@ func TestAnUnservedStreamGivesUpInsideTheDialWindow(t *testing.T) {
 	caller, realm := unserved(t, "reask stream window", func(o *Opts) { o.DialTimeout = 300 * time.Millisecond })
 	start := time.Now()
 	_, err := caller.OpenStream(t.Context(), StreamCall{Realm: realm.ID, Procedure: procedure,
-		Mode: frame.ServerStream, Payload: cbor.Text("x"), Deadline: time.Hour})
+		Mode: frame.ServerStream, Payload: cbor.Text("x"), Deadline: 10 * time.Second})
 	took := time.Since(start)
 	if !errors.Is(err, ErrNoProvider) {
 		t.Fatalf("OpenStream: %v, want ErrNoProvider", err)
 	}
 	if took > 5*time.Second {
-		t.Errorf("OpenStream gave up after %s, want inside its 300ms dial window", took)
+		t.Errorf("OpenStream gave up after %s, want inside its 300ms dial window, not the stream's 10s deadline", took)
 	}
 }
 
