@@ -115,6 +115,12 @@ type learntKey struct {
 // is, a timeout included, so one Call enters a provider's handler at most once
 // (macula's call_work and failure_scope/1). A candidate that answered is
 // remembered until its advertisement expires.
+//
+// A lookup that found no advertisement is not final: the DHT is asked again
+// until the deadline, and a candidate whose advertisement and endpoint record
+// have not changed since it failed is passed over (macula-go#76). So a call to
+// a procedure nobody serves costs its whole Timeout before it reports
+// ErrNoProvider — give it a shorter Timeout when that wait is not wanted.
 func (p *Pool) Call(ctx context.Context, c Call) (cbor.Value, error) {
 	result, _, err := p.CallReport(ctx, c)
 	return result, err
@@ -142,54 +148,92 @@ func (p *Pool) CallReport(ctx context.Context, c Call) (cbor.Value, stationlink.
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	key := resolvedKey{c.Realm, c.Procedure, c.Provider}
-	candidates, err := p.candidates(ctx, key, realmKey)
-	if err != nil {
-		return cbor.Value{}, stationlink.Report{}, err
-	}
-	var errs []error
+	seen := map[candidateID]attempt{}
+	answer, err := reask(p, ctx, func(ctx context.Context) ([]candidate, error) {
+		return p.askCandidates(ctx, key, realmKey)
+	}, func(ctx context.Context, candidates []candidate) walkResult[callAnswer] {
+		return p.callWalk(ctx, key, candidates, c, seen)
+	})
+	return answer.value, answer.report, err
+}
+
+// callAnswer is a call's answer and the seal report that comes with it.
+type callAnswer struct {
+	value  cbor.Value
+	report stationlink.Report
+}
+
+// callWalk is one round of a call: it reaches each candidate in turn and calls
+// the first it reaches, remembering in seen each one that was reached and
+// failed, and passing over one that has not changed since the last round.
+func (p *Pool) callWalk(ctx context.Context, key resolvedKey, candidates []candidate, c Call,
+	seen map[candidateID]attempt) walkResult[callAnswer] {
+	var failed []error
 	for i, cand := range candidates {
-		sealTo, link, err := p.reach(ctx, cand, c.Confidential, len(candidates)-i)
+		sealTo, link, endpoint, err := p.reach(ctx, cand, c.Confidential, len(candidates)-i, seen[idOf(cand)])
 		if err == nil {
-			result, report, err := p.callAt(ctx, link, cand, c, sealTo)
-			return result, report, p.settled(key, cand, err)
+			value, report, err := p.callAt(ctx, link, cand, c, sealTo)
+			return walkResult[callAnswer]{out: callAnswer{value: value, report: report}, sent: true,
+				outcome: p.settled(key, cand, err)}
 		}
-		if err := p.unreached(ctx, err, errs); err != nil {
-			return cbor.Value{}, stationlink.Report{}, err
+		if errors.Is(err, errCandidateUnchanged) {
+			continue
 		}
+		seen[idOf(cand)] = attempt{advertised: cand.createdAt, endpoint: endpoint}
 		p.forget(key)
-		errs = append(errs, fmt.Errorf("provider %x at station %x: %w", cand.Node[:4], cand.Station[:4], err))
+		failed = append(failed, fmt.Errorf("provider %x at station %x: %w", cand.Node[:4], cand.Station[:4], err))
+		if end := p.walkEnd(err); end != nil {
+			return walkResult[callAnswer]{stop: end}
+		}
+		if ctx.Err() != nil {
+			return walkResult[callAnswer]{failed: failed}
+		}
 	}
-	return cbor.Value{}, stationlink.Report{}, errors.Join(append([]error{ErrNoProvider}, errs...)...)
+	return walkResult[callAnswer]{failed: failed}
 }
 
 // reach is the key a call to cand is sealed to under conf (nil for the
-// clear), and a link to its serving station, reached within the candidate's
-// share of ctx's deadline with left candidates to try. Nothing is sent.
-func (p *Pool) reach(ctx context.Context, cand candidate, conf stationlink.Confidentiality, left int) ([]byte, *stationlink.Link, error) {
+// clear), a link to its serving station, reached within the candidate's share
+// of ctx's deadline with left candidates to try, and the station_endpoint
+// record the dial read. Nothing is sent. A candidate whose endpoint record is
+// the one prior failed against is passed over with errCandidateUnchanged.
+func (p *Pool) reach(ctx context.Context, cand candidate, conf stationlink.Confidentiality, left int,
+	prior attempt) ([]byte, *stationlink.Link, endpointID, error) {
 	sealTo, err := p.sealTo(cand, conf)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, endpointID{}, err
 	}
 	share, cancel := context.WithTimeout(ctx, candidateShare(ctx, left))
 	defer cancel()
-	link, err := p.linkTo(share, cand.Station)
-	return sealTo, link, err
+	link, endpoint, err := p.linkTo(share, cand.Station, cand.createdAt, prior)
+	return sealTo, link, endpoint, err
 }
 
-// unreached is the error that ends a call whose candidate was not reached,
-// nil when the next candidate is worth trying: a confidentiality failure,
-// which every candidate would meet alike (macula's request scope), the call's
-// own deadline, or the pool closing under it.
-func (p *Pool) unreached(ctx context.Context, err error, errs []error) error {
+// walkEnd is how a walk that could not reach a candidate ends the call, nil
+// when the round carries on: a confidentiality failure ends it as it is (every
+// candidate would meet it alike, macula's request scope), and a closing pool
+// ends it with ErrClosed. A dial the call's own deadline cut off is not a stop —
+// the candidate's failure is what the call concludes with, so the walk records
+// it and the loop concludes (macula_direct_dial.erl:61-67).
+func (p *Pool) walkEnd(err error) error {
 	switch {
 	case answeredConfidentially(err):
 		return err
-	case ctx.Err() != nil:
-		return errors.Join(append(errs, err)...)
 	case p.isClosed():
 		return errors.Join(ErrClosed, err)
 	}
 	return nil
+}
+
+// askCandidates is one round's candidates. A lookup that answered with nothing
+// is an empty round, not a failed one: it is what the call concludes with when
+// no candidate failure outranks it.
+func (p *Pool) askCandidates(ctx context.Context, key resolvedKey, realmKey []byte) ([]candidate, error) {
+	cands, err := p.candidates(ctx, key, realmKey)
+	if errors.Is(err, ErrNoProvider) {
+		return nil, nil
+	}
+	return cands, err
 }
 
 // settled is the outcome of a call or stream sent to cand, final whatever it
@@ -517,10 +561,13 @@ func (p *Pool) linkedTo(station [32]byte) *stationlink.Link {
 
 // linkTo is a link to station: one the pool holds, or a direct link it dials
 // to the address in the station's own endpoint record, pinned by its node_id.
-// A direct link that does not come up on its first dial is not kept.
-func (p *Pool) linkTo(ctx context.Context, station [32]byte) (*stationlink.Link, error) {
+// A direct link that does not come up on its first dial is not kept. It returns
+// the endpoint record the dial read, and errCandidateUnchanged instead of
+// dialling when that is the record prior failed against and the advertisement
+// has not moved (macula_direct_dial.erl:56-59).
+func (p *Pool) linkTo(ctx context.Context, station [32]byte, advertised int64, prior attempt) (*stationlink.Link, endpointID, error) {
 	if link := p.linkedTo(station); link != nil {
-		return link, nil
+		return link, endpointID{}, nil
 	}
 	p.mu.Lock()
 	var existing *member
@@ -537,14 +584,27 @@ func (p *Pool) linkTo(ctx context.Context, station [32]byte) (*stationlink.Link,
 	fresh := existing == nil
 	if fresh {
 		if direct >= p.opts.MaxDirectLinks {
-			return nil, ErrDirectLinksFull
+			return nil, endpointID{}, ErrDirectLinksFull
 		}
-		target, err := p.endpointOf(ctx, station)
+		target, endpoint, err := p.endpointOf(ctx, station)
 		if err != nil {
-			return nil, err
+			return nil, endpoint, err
 		}
-		existing = p.startMember(target, true, TierPublic)
+		if prior.unchanged(advertised, endpoint) {
+			return nil, endpoint, errCandidateUnchanged
+		}
+		link, err := p.awaited(ctx, p.startMember(target, true, TierPublic), true, station)
+		return link, endpoint, err
 	}
+	// A member the pool already held was dialled from an address this call did
+	// not read, so it is awaited and no endpoint record is claimed.
+	link, err := p.awaited(ctx, existing, false, station)
+	return link, endpointID{}, err
+}
+
+// awaited is the link a member's dial brings up within ctx's deadline; a fresh
+// member that does not come up is dropped.
+func (p *Pool) awaited(ctx context.Context, existing *member, fresh bool, station [32]byte) (*stationlink.Link, error) {
 	if link := existing.awaitUp(ctx, fresh); link != nil {
 		return link, nil
 	}
@@ -591,11 +651,13 @@ func (e *StationEndpointError) Unwrap() []error {
 }
 
 // endpointOf is where station is dialed, from the station_endpoint record the
-// station signed itself. A refusal is a *StationEndpointError naming the
+// station signed itself, and that record's identity: its createdAt, or the
+// reason none was usable. A refusal is a *StationEndpointError naming the
 // station and the reason.
-func (p *Pool) endpointOf(ctx context.Context, station [32]byte) (transport.Target, error) {
-	refuse := func(reason string, err error) (transport.Target, error) {
-		return transport.Target{}, &StationEndpointError{Station: station, Reason: reason, Err: err}
+func (p *Pool) endpointOf(ctx context.Context, station [32]byte) (transport.Target, endpointID, error) {
+	refuse := func(reason string, err error) (transport.Target, endpointID, error) {
+		return transport.Target{}, endpointID{read: true, reason: reason},
+			&StationEndpointError{Station: station, Reason: reason, Err: err}
 	}
 	verified, err := p.FindRecord(ctx, record.StationEndpointKey(station))
 	switch {
@@ -620,7 +682,7 @@ func (p *Pool) endpointOf(ctx context.Context, station [32]byte) (transport.Targ
 		return refuse(EndpointNoHost, nil)
 	}
 	return transport.Target{Host: endpoint.HostAdvertised[0], Port: endpoint.QUICPort, Profile: p.key.Profile(),
-		ExpectedNodeID: station}, nil
+		ExpectedNodeID: station}, endpointID{read: true, createdAt: int64(r.CreatedAt)}, nil
 }
 
 func (p *Pool) rememberCandidate(key resolvedKey, cand candidate) {
@@ -843,24 +905,46 @@ func (p *Pool) OpenStream(ctx context.Context, c StreamCall) (*stationlink.Strea
 		return nil, err
 	}
 	key := resolvedKey{c.Realm, c.Procedure, c.Provider}
-	candidates, err := p.candidates(ctx, key, realmKey)
-	if err != nil {
-		return nil, err
-	}
-	var errs []error
+	// The phase bounds resolution and reaching only: the stream that is opened
+	// keeps its own signed deadline (stationlink's OpenStream reads it from
+	// c.Deadline, never from this context). macula's dial timeout is the
+	// window (macula_direct_dial.erl:184).
+	phase, cancel := context.WithTimeout(ctx, p.opts.DialTimeout)
+	defer cancel()
+	seen := map[candidateID]attempt{}
+	return reask(p, phase, func(ctx context.Context) ([]candidate, error) {
+		return p.askCandidates(ctx, key, realmKey)
+	}, func(ctx context.Context, candidates []candidate) walkResult[*stationlink.Stream] {
+		return p.streamWalk(ctx, key, candidates, c, seen)
+	})
+}
+
+// streamWalk is one round of a stream's open, as callWalk is one round of a
+// call: the first candidate it reaches is opened, and one that has not changed
+// since the last round is passed over.
+func (p *Pool) streamWalk(ctx context.Context, key resolvedKey, candidates []candidate, c StreamCall,
+	seen map[candidateID]attempt) walkResult[*stationlink.Stream] {
+	var failed []error
 	for i, cand := range candidates {
-		sealTo, link, err := p.reach(ctx, cand, c.Confidential, len(candidates)-i)
+		sealTo, link, endpoint, err := p.reach(ctx, cand, c.Confidential, len(candidates)-i, seen[idOf(cand)])
 		if err == nil {
 			stream, err := p.openAt(ctx, link, cand, c, sealTo)
-			return stream, p.settled(key, cand, err)
+			return walkResult[*stationlink.Stream]{out: stream, sent: true, outcome: p.settled(key, cand, err)}
 		}
-		if err := p.unreached(ctx, err, errs); err != nil {
-			return nil, err
+		if errors.Is(err, errCandidateUnchanged) {
+			continue
 		}
+		seen[idOf(cand)] = attempt{advertised: cand.createdAt, endpoint: endpoint}
 		p.forget(key)
-		errs = append(errs, fmt.Errorf("provider %x at station %x: %w", cand.Node[:4], cand.Station[:4], err))
+		failed = append(failed, fmt.Errorf("provider %x at station %x: %w", cand.Node[:4], cand.Station[:4], err))
+		if end := p.walkEnd(err); end != nil {
+			return walkResult[*stationlink.Stream]{stop: end}
+		}
+		if ctx.Err() != nil {
+			return walkResult[*stationlink.Stream]{failed: failed}
+		}
 	}
-	return nil, errors.Join(append([]error{ErrNoProvider}, errs...)...)
+	return walkResult[*stationlink.Stream]{failed: failed}
 }
 
 // openAt opens the stream at the candidate's provider on link, sealed to

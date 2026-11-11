@@ -63,7 +63,7 @@ func TestNothingIsSentPastTheCallersDeadline(t *testing.T) {
 		streams, _ = caller.resolve(t.Context(), resolvedKey{realm: realm.ID, procedure: streamProcedure}, realmKey)
 		return len(calls) == 1 && len(streams) == 1
 	})
-	link, err := caller.linkTo(t.Context(), calls[0].Station)
+	link, _, err := caller.linkTo(t.Context(), calls[0].Station, calls[0].createdAt, attempt{})
 	if err != nil {
 		t.Fatalf("linkTo: %v", err)
 	}
