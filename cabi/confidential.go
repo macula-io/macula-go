@@ -97,7 +97,11 @@ type serveOptionsJSON struct {
 	Confidential string      `json:"confidential"`
 }
 
-// serveOptionsOf reads options_json of a served procedure ("" for none).
+// serveOptionsOf reads options_json of a served procedure ("" for none). Its
+// policy is required, and is judged before the rest of the options: a
+// procedure serves the callers its policy names, and one that means to serve
+// anyone says {"policy":{"kind":"open"}} (macula-go#57, #60). So options that
+// name no policy are refused for that, whatever else they say.
 func serveOptionsOf(text string) (serveOptions, error) {
 	var o serveOptionsJSON
 	if text != "" {
@@ -105,19 +109,19 @@ func serveOptionsOf(text string) (serveOptions, error) {
 			return serveOptions{}, err
 		}
 	}
+	if o.Policy == nil {
+		return serveOptions{}, invalidArgument("options_json's policy is required: {\"policy\":{\"kind\":\"open\"}} " +
+			"serves any caller, or call macula_pool_serve_gated with a gated policy")
+	}
+	policy, err := policyValue(*o.Policy)
+	if err != nil {
+		return serveOptions{}, err
+	}
 	conf, err := confidentialityOf(o.Confidential)
 	if err != nil {
 		return serveOptions{}, err
 	}
-	opts := serveOptions{confidential: conf}
-	if o.Policy != nil {
-		policy, err := policyValue(*o.Policy)
-		if err != nil {
-			return serveOptions{}, err
-		}
-		opts.policy = policy
-	}
-	return opts, nil
+	return serveOptions{policy: policy, confidential: conf}, nil
 }
 
 // confidentialityOf is "confidential": preferred when absent.

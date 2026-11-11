@@ -91,6 +91,11 @@ func policyOf(text string) (ucan.Policy, error) {
 // policyValue is the policy p names.
 func policyValue(p policyJSON) (ucan.Policy, error) {
 	switch p.Kind {
+	case "open":
+		if p.Issuer != "" || p.KeyID != "" || p.Can != "" {
+			return nil, invalidArgument("policy_json: open names no issuer, key_id or can")
+		}
+		return ucan.Open{}, nil
 	case "ucan_required":
 		if p.KeyID != "" || p.Can != "" {
 			return nil, invalidArgument("policy_json: ucan_required names an issuer only")
@@ -113,7 +118,7 @@ func policyValue(p policyJSON) (ucan.Policy, error) {
 		}
 		return ucan.RealmMemberRequired{KeyID: keyID, Can: p.Can}, nil
 	}
-	return nil, invalidArgument("policy_json: kind is ucan_required or realm_member_required, not %q", p.Kind)
+	return nil, invalidArgument("policy_json: kind is ucan_required, realm_member_required or open, not %q", p.Kind)
 }
 
 //export macula_ucan_create
@@ -146,11 +151,21 @@ func macula_ucan_proof_id(token *C.char, errOut **C.char) *C.char {
 	return cString(ucan.ProofID([]byte(text)))
 }
 
-// gatedPolicy is policy_json of a gated serve, which must name one:
-// macula_pool_serve serves an open procedure.
+// gatedPolicy is policy_json of a gated serve, which must name one and must
+// name a gated one: a gated serve is gated, and a procedure that serves any
+// caller says so at macula_pool_serve_opts with {"policy":{"kind":"open"}}.
 func gatedPolicy(text string) (ucan.Policy, error) {
 	if text == "" {
-		return nil, invalidArgument("policy_json is required; serve an open procedure with macula_pool_serve")
+		return nil, invalidArgument("policy_json is required: serve an open procedure with macula_pool_serve_opts and " +
+			"{\"policy\":{\"kind\":\"open\"}}, or a gated one with macula_pool_serve_gated")
 	}
-	return policyOf(text)
+	policy, err := policyOf(text)
+	if err != nil {
+		return nil, err
+	}
+	if _, open := policy.(ucan.Open); open {
+		return nil, invalidArgument("policy_json: a gated serve is gated; serve an open procedure with " +
+			"macula_pool_serve_opts and {\"policy\":{\"kind\":\"open\"}}")
+	}
+	return policy, nil
 }

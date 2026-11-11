@@ -11,6 +11,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // Sealed calls and streams through the ABI (macula 13, E2E design): a pool
@@ -25,10 +26,20 @@ func TestConfidentialOptionsAreChecked(t *testing.T) {
 			t.Errorf("call options %s: %v, want invalid_argument", text, err)
 		}
 	}
-	for _, text := range []string{`{"confidential":"maybe"}`, `{"policy":{"kind":"open"}}`, `{"hint":1}`} {
-		if _, err := serveOptionsOf(text); kindOf(err) != kindInvalidArgument {
-			t.Errorf("serve options %s: %v, want invalid_argument", text, err)
+	// Each serve refusal is for its own reason, with a valid policy beside the
+	// field under test: without one they would all be refused for the missing
+	// policy and prove nothing about the field (macula-go#57, #60).
+	for _, c := range []struct{ text, names string }{
+		{`{"confidential":"maybe","policy":{"kind":"open"}}`, "confidential"},
+		{`{"hint":1,"policy":{"kind":"open"}}`, "hint"},
+	} {
+		_, err := serveOptionsOf(c.text)
+		if kindOf(err) != kindInvalidArgument || !strings.Contains(err.Error(), c.names) {
+			t.Errorf("serve options %s: %v, want invalid_argument naming %s", c.text, err, c.names)
 		}
+	}
+	if opts, err := serveOptionsOf(`{"policy":{"kind":"open"}}`); err != nil || opts.policy == nil {
+		t.Errorf("serve options naming open alone: %+v, %v", opts, err)
 	}
 	opts, err := callOptionsOf(`{"confidential":"required","ucan":"t","proofs":["p"]}`)
 	if err != nil || opts.confidential != stationlink.ConfidentialRequired || string(opts.creds.token) != "t" || len(opts.creds.proofs) != 1 {
@@ -64,7 +75,7 @@ func TestASealedCallThroughTheABI(t *testing.T) {
 	caller := f.join(t, "sealed abi caller", f.stations[1])
 	f.realm.Admit(t, f.stations[0], provider.pool.NodeID())
 	procedure := f.realm.Org + "/vault"
-	s, err := serve(provider, f.realm.ID, procedure, serveOptions{})
+	s, err := serve(provider, f.realm.ID, procedure, serveOptions{policy: ucan.Open{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +121,7 @@ func assertKeylessRefusals(t *testing.T, f fleet, caller *livePool, ctx context.
 	keyless := f.join(t, "keyless abi provider", f.stations[0])
 	f.realm.Admit(t, f.stations[0], keyless.pool.NodeID())
 	open := f.realm.Org + "/open"
-	ks, err := serve(keyless, f.realm.ID, open, serveOptions{})
+	ks, err := serve(keyless, f.realm.ID, open, serveOptions{policy: ucan.Open{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +131,7 @@ func assertKeylessRefusals(t *testing.T, f fleet, caller *livePool, ctx context.
 	if e.kind != kindConfidentiality || e.fields["reason"] != "no_kem_key" {
 		t.Errorf("a required call to a keyless provider: %s", e.JSON())
 	}
-	if _, err := serve(keyless, f.realm.ID, f.realm.Org+"/strict", serveOptions{confidential: stationlink.ConfidentialRequired}); classify(nil, err).kind != kindConfidentiality {
+	if _, err := serve(keyless, f.realm.ID, f.realm.Org+"/strict", serveOptions{policy: ucan.Open{}, confidential: stationlink.ConfidentialRequired}); classify(nil, err).kind != kindConfidentiality {
 		t.Errorf("a required serve without kem_advertise: %v", err)
 	}
 }
@@ -131,7 +142,7 @@ func TestASealedStreamThroughTheABI(t *testing.T) {
 	caller := f.join(t, "sealed stream caller", f.stations[1])
 	f.realm.Admit(t, f.stations[0], provider.pool.NodeID())
 	procedure := f.realm.Org + "/watch"
-	s, err := serveStream(provider, f.realm.ID, procedure, frame.ServerStream, serveOptions{confidential: stationlink.ConfidentialRequired})
+	s, err := serveStream(provider, f.realm.ID, procedure, frame.ServerStream, serveOptions{policy: ucan.Open{}, confidential: stationlink.ConfidentialRequired})
 	if err != nil {
 		t.Fatal(err)
 	}

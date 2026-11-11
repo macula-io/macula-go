@@ -16,6 +16,7 @@ import (
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 var contentRealm = [32]byte{0x0c}
@@ -109,7 +110,7 @@ func TestNothingASharerSaysIsTrusted(t *testing.T) {
 	lie := cbor.Map([]cbor.MapEntry{{Key: cbor.Text("kind"), Val: cbor.Text("block")},
 		{Key: cbor.Text("mcid"), Val: cbor.Bytes(mcid[:])}, {Key: cbor.Text("bytes"), Val: cbor.Bytes([]byte("something else"))}})
 	own := record.OwnProcedure(liar.NodeID(), ContentProcedureName)
-	if _, err := liar.Serve(t.Context(), Offer{Realm: contentRealm, Procedure: own, Stream: &stationlink.StreamOffer{
+	if _, err := liar.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: contentRealm, Procedure: own, Stream: &stationlink.StreamOffer{
 		Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
 			if err := s.SendValue(lie); err != nil {
 				return err
@@ -198,7 +199,7 @@ func liarFor(t *testing.T, name string, station *teststation.Station, mcid manif
 	t.Helper()
 	liar := connectWith(t, name, teststation.Realm{}, func(o *Opts) { o.RealmTrust = nil }, station)
 	own := record.OwnProcedure(liar.NodeID(), ContentProcedureName)
-	if _, err := liar.Serve(t.Context(), Offer{Realm: contentRealm, Procedure: own, Stream: &stationlink.StreamOffer{
+	if _, err := liar.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: contentRealm, Procedure: own, Stream: &stationlink.StreamOffer{
 		Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
 			want, _ := wireText(s.Request().Payload, "want")
 			asked, _ := wireBytes(s.Request().Payload, "mcid")
@@ -328,7 +329,7 @@ func serveSilentSharer(t *testing.T, station *teststation.Station, mcid manifest
 	t.Helper()
 	silent := connectWith(t, "silent", teststation.Realm{}, func(o *Opts) { o.RealmTrust = nil }, station)
 	own := record.OwnProcedure(silent.NodeID(), ContentProcedureName)
-	if _, err := silent.Serve(t.Context(), Offer{Realm: contentRealm, Procedure: own, Stream: &stationlink.StreamOffer{
+	if _, err := silent.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: contentRealm, Procedure: own, Stream: &stationlink.StreamOffer{
 		Mode: frame.ServerStream, Handler: func(ctx context.Context, _ *stationlink.Stream) error {
 			<-ctx.Done()
 			return ctx.Err()

@@ -169,7 +169,7 @@ func TestACallDialsTheProvidersStation(t *testing.T) {
 	providerID := nodeIDOf(t, "provider")
 	realm.Admit(t, serving, providerID)
 	provider := connect(t, "provider", realm, serving)
-	if _, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
+	if _, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	caller := connect(t, "caller", realm, callers)
@@ -198,7 +198,7 @@ func TestACallTrustsOnlyThePinnedRealm(t *testing.T) {
 	provider := connectWith(t, "impostor provider", impostor, func(o *Opts) {
 		o.RealmTrust = map[[32]byte][]byte{impostor.ID: impostor.RealmKey()}
 	}, s)
-	if _, err := provider.Serve(t.Context(), Offer{Realm: impostor.ID, Procedure: procedure, Handler: echo}); err != nil {
+	if _, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: impostor.ID, Procedure: procedure, Handler: echo}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	caller := connect(t, "trusting caller", realm, s)
@@ -219,7 +219,7 @@ func TestAServedProcedureSurvivesARedialUntilStopped(t *testing.T) {
 	realm := teststation.NewRealm(t, profile.PQPure, "replay", org)
 	realm.Admit(t, s, nodeIDOf(t, "replayed provider"))
 	provider := connect(t, "replayed provider", realm, s)
-	served, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: echo})
+	served, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo})
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
@@ -244,13 +244,13 @@ func TestACallTriesTheNextCandidate(t *testing.T) {
 	realm.Admit(t, gone, nodeIDOf(t, "lost provider"), nodeIDOf(t, "live provider"))
 	refusing := func(context.Context, stationlink.Request) (cbor.Value, error) { return cbor.Value{}, errors.New("no") }
 	liveProvider := connect(t, "live provider", realm, live)
-	if _, err := liveProvider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: refusing}); err != nil {
+	if _, err := liveProvider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: refusing}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	// The lost provider advertises last, so its candidate is the freshest and
 	// is tried first.
 	lost := connect(t, "lost provider", realm, gone)
-	if _, err := lost.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
+	if _, err := lost.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	caller := connect(t, "candidate caller", realm, live)
@@ -413,7 +413,7 @@ func TestAStreamDialsTheProvidersStation(t *testing.T) {
 	realm := teststation.NewRealm(t, profile.PQPure, "streams", org)
 	realm.Admit(t, serving, nodeIDOf(t, "stream provider"))
 	provider := connect(t, "stream provider", realm, serving)
-	if _, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure,
+	if _, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure,
 		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
 			for _, chunk := range []string{"a", "b"} {
 				if err := s.Send([]byte(chunk)); err != nil {
@@ -460,7 +460,7 @@ func TestAProcedureInTheNodesOwnNamespaceNeedsNoRealmKey(t *testing.T) {
 	untrusting := func(o *Opts) { o.RealmTrust = nil }
 	provider := connectWith(t, "own provider", teststation.Realm{}, untrusting, serving)
 	ring := record.OwnProcedure(provider.NodeID(), "ring")
-	if _, err := provider.Serve(t.Context(), Offer{Realm: realm, Procedure: ring, Handler: echo}); err != nil {
+	if _, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm, Procedure: ring, Handler: echo}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	mallory := teststation.Key(t, profile.PQPure, "own impostor")
@@ -513,7 +513,7 @@ func TestACallInFlightWhenThePoolClosesIsErrClosed(t *testing.T) {
 		}
 		return cbor.Null(), nil
 	}
-	if _, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: slow}); err != nil {
+	if _, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: slow}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	caller := connect(t, "closing caller", realm, callers)

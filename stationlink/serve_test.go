@@ -18,6 +18,7 @@ import (
 	"github.com/macula-io/macula-go/identity"
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/record"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 const (
@@ -167,7 +168,7 @@ func serveEcho(t *testing.T, link *Link, fixture realmFixture, handler Handler) 
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	served, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: servedProcedure, Handler: handler, RealmKey: fixture.realm.PublicKey()})
+	served, err := link.Serve(ctx, Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: servedProcedure, Handler: handler, RealmKey: fixture.realm.PublicKey()})
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
@@ -264,10 +265,10 @@ func TestServeRefusesWhatItCannotServe(t *testing.T) {
 	link, s, fixture := startServing(t, profile.PQPure)
 	_ = s
 	ctx := t.Context()
-	if _, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: "echo", Handler: echo, RealmKey: fixture.realm.PublicKey()}); !errors.Is(err, ErrNoOrg) {
+	if _, err := link.Serve(ctx, Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: "echo", Handler: echo, RealmKey: fixture.realm.PublicKey()}); !errors.Is(err, ErrNoOrg) {
 		t.Errorf("a procedure outside any org: %v, want ErrNoOrg", err)
 	}
-	if _, err := link.Serve(ctx, Offer{Realm: [32]byte{0x99}, Procedure: servedProcedure, Handler: echo, RealmKey: fixture.realm.PublicKey()}); !errors.Is(err, ErrRecordNotFound) {
+	if _, err := link.Serve(ctx, Offer{Policy: ucan.Open{}, Realm: [32]byte{0x99}, Procedure: servedProcedure, Handler: echo, RealmKey: fixture.realm.PublicKey()}); !errors.Is(err, ErrRecordNotFound) {
 		t.Errorf("a realm with no directory for the org: %v, want ErrRecordNotFound", err)
 	}
 }
@@ -315,7 +316,7 @@ func shortAdvertisements(t *testing.T, ttl, retry time.Duration) {
 func TestServeRefusesAChainTheRealmKeyDoesNotSign(t *testing.T) {
 	link, s, _ := startServing(t, profile.PQPure)
 	other := sharedIdentityKey(t, profile.PQPure, "another realm")
-	_, err := link.Serve(t.Context(), Offer{Realm: servedRealm, Procedure: servedProcedure, Handler: echo, RealmKey: other.PublicKey()})
+	_, err := link.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: servedProcedure, Handler: echo, RealmKey: other.PublicKey()})
 	if !errors.Is(err, record.ErrOrgDirectoryWrongRealm) {
 		t.Errorf("Serve: %v, want ErrOrgDirectoryWrongRealm", err)
 	}
@@ -449,7 +450,7 @@ func assertOwnNamespaceServes(t *testing.T, p profile.Profile) {
 	t.Helper()
 	link, s, _ := startServing(t, p)
 	procedure := record.OwnProcedure(link.NodeID(), "ring")
-	if _, err := link.Serve(t.Context(), Offer{Realm: servedRealm, Procedure: procedure, Handler: echo}); err != nil {
+	if _, err := link.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: procedure, Handler: echo}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	now := time.Now().UnixMilli()
@@ -496,15 +497,15 @@ func TestServeRefusesANamespaceThatIsNotItsOwn(t *testing.T) {
 	link, s, _ := startServing(t, profile.PQPure)
 	ctx := t.Context()
 	other := [32]byte{0x01}
-	if _, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: record.OwnProcedure(other, "ring"), Handler: echo}); !errors.Is(err, record.ErrNotOwnNamespace) {
+	if _, err := link.Serve(ctx, Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: record.OwnProcedure(other, "ring"), Handler: echo}); !errors.Is(err, record.ErrNotOwnNamespace) {
 		t.Errorf("another node's namespace: %v, want ErrNotOwnNamespace", err)
 	}
 	self := link.NodeID()
 	upper := "~" + strings.ToUpper(hex.EncodeToString(self[:])) + "/ring"
-	if _, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: upper, Handler: echo}); !errors.Is(err, record.ErrMalformed) {
+	if _, err := link.Serve(ctx, Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: upper, Handler: echo}); !errors.Is(err, record.ErrMalformed) {
 		t.Errorf("an uppercase namespace: %v, want ErrMalformed", err)
 	}
-	if _, err := link.Serve(ctx, Offer{Realm: servedRealm, Procedure: servedProcedure, Handler: echo}); !errors.Is(err, ErrInvalidOffer) {
+	if _, err := link.Serve(ctx, Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: servedProcedure, Handler: echo}); !errors.Is(err, ErrInvalidOffer) {
 		t.Errorf("an org procedure without the realm key: %v, want ErrInvalidOffer", err)
 	}
 	s.quiet(t)
@@ -518,7 +519,7 @@ func TestAnOwnNamespaceAdvertisementIsRenewedWithoutTheDHT(t *testing.T) {
 	s.dht.mu.Lock()
 	clear(s.dht.byKey)
 	s.dht.mu.Unlock()
-	served, err := link.Serve(t.Context(), Offer{Realm: servedRealm, Procedure: record.OwnProcedure(link.NodeID(), "ring"), Handler: echo})
+	served, err := link.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: servedRealm, Procedure: record.OwnProcedure(link.NodeID(), "ring"), Handler: echo})
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/macula-io/macula-go/cbor"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // seenWithin reports whether ok held at some point within d, without failing
@@ -66,7 +67,7 @@ func TestAServedProcedureIsOnBothTiersAndAnswersTheOtherOne(t *testing.T) {
 	provider := connectTiered(t, "tier provider", realm,
 		[]*teststation.Station{public}, []*teststation.Station{fallback})
 	eventually(t, "both links up", func() bool { return upCount(provider) == 2 })
-	served, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: echo})
+	served, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo})
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
 	}

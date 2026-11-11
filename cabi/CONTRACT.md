@@ -15,6 +15,14 @@ the version; a new function does not, and `macula.h` says since which
 macula-go version it exists, so a binding that uses one pins at least that
 version. The set of declarations is fixed per macula-go tag.
 
+A call the declarations allow that stops being allowed is a change of the
+same kind: a declaration that goes, and one that now refuses an argument it
+took before. **ABI 2** is both. `macula_pool_serve` and
+`macula_pool_serve_stream` are gone — they served open without saying so —
+and `macula_pool_serve_opts` and `_serve_stream_opts` require a `policy` in
+`options_json`. A library of ABI 2 built under a binding written for ABI 1 is
+refused at load, by the version check above, before anything serves.
+
 `macula_library_version()` (since v0.27.0) returns the macula-go release the
 library was built from, e.g. `"v0.27.0"`, stamped at build time from the tag,
 or `"devel"` for a build that is not a release. The library owns the string:
@@ -148,7 +156,8 @@ pool's link events wait in an inbox of 256 until taken with the matching
   for room until its deadline, then answers it with an error for you. A
   pool's link events drop the oldest.
 - `macula_served_next` also stores the item's handle in `*out_item`: a
-  pending call for `macula_pool_serve`, a stream for `_serve_stream`.
+  pending call for `macula_pool_serve_opts` (or either gated door), a stream
+  for a session of the `_serve_stream` ones.
 
 ## Cancellation
 
@@ -192,6 +201,13 @@ hex strings, and flags as 0 or 1.
 
 ## Serving and streams
 
+- Every serve names a policy: a procedure serves the callers its policy
+  names, and one that means to serve anyone says so
+  (macula-go#57, #60). `macula_pool_serve_opts` and `_serve_stream_opts` take
+  `{"policy": <a policy_json>}`, `{"kind":"open"}` included, and options with
+  no policy — `{}`, or none at all — are `invalid_argument`, naming both
+  fixes: `{"policy":{"kind":"open"}}`, or a gated symbol. The ABI used to
+  serve open when the policy was absent; ABI 2 does not.
 - A pending call is answered once, with `macula_pending_reply` (a result) or
   `macula_pending_error` (a message the caller receives as a provider error
   of code `handler_error`, the message as its detail, cut to 256 bytes). A
@@ -241,11 +257,13 @@ and macula-go's `ucan` package passes its vectors):
 - `macula_pool_serve_gated` and `_serve_stream_gated` serve under
   `policy_json`: `{"kind":"ucan_required","issuer"}` (a chain rooted at that
   node's identity key) or `{"kind":"realm_member_required","key_id","can"}`
-  (rooted at that realm key, with that can). The provider checks each call
-  and open before it reaches the inbox, as macula's link does: a refused call
-  is a `provider_error` of code `unauthorized`, or `malformed_frame` for a
-  proof no token names; a refused open is a stream `error` of the same code.
-  An open procedure ignores any token.
+  (rooted at that realm key, with that can). A gated serve is gated:
+  `{"kind":"open"}` is `invalid_argument` there, and the message names
+  `macula_pool_serve_opts` with `{"policy":{"kind":"open"}}`. The provider
+  checks each call and open before it reaches the inbox, as macula's link
+  does: a refused call is a `provider_error` of code `unauthorized`, or
+  `malformed_frame` for a proof no token names; a refused open is a stream
+  `error` of the same code. An open procedure ignores any token.
 
 ## Public and fallback stations
 

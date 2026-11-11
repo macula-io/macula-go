@@ -15,6 +15,7 @@ import (
 	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // The A0 shapes of DESIGN_E2E_SEALED_BY_DEFAULT.md section 8.1, end to end
@@ -40,7 +41,7 @@ func assertAClearCallAdopts(t *testing.T, p profile.Profile) {
 	t.Helper()
 	w := newAdoptingWorld(t, p, "adopt call")
 	sealed := make(chan bool, 1)
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/open", Confidential: stationlink.ConfidentialRequired,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/open", Confidential: stationlink.ConfidentialRequired,
 		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
 			sealed <- r.Sealed
 			return r.Payload, nil
@@ -85,7 +86,7 @@ func assertAClearStreamAdopts(t *testing.T, p profile.Profile, mode frame.Stream
 	t.Helper()
 	w := newAdoptingWorld(t, p, "adopt "+mode.Name())
 	read := make(chan string, 1)
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count", Confidential: stationlink.ConfidentialRequired,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/count", Confidential: stationlink.ConfidentialRequired,
 		Stream: &stationlink.StreamOffer{Mode: mode, Handler: countingHandler(read)}})
 	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID,
 		Procedure: "mcl-vault/count", Target: w.provider.NodeID(), Mode: mode, Payload: cbor.Map(nil), Clear: true})
@@ -129,7 +130,7 @@ func assertARacingSendIsDeliveredOnce(t *testing.T, p profile.Profile) {
 	t.Helper()
 	w := newAdoptingWorld(t, p, "adopt race")
 	read := make(chan string, raceRounds)
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count", Confidential: stationlink.ConfidentialRequired,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/count", Confidential: stationlink.ConfidentialRequired,
 		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: countingHandler(read)}})
 	for round := 0; round < raceRounds; round++ {
 		stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID,
@@ -286,7 +287,7 @@ const floodGoroutines = 8
 func TestAFloodOfRefusedOpensCannotStarveAnotherCaller(t *testing.T) {
 	w := newAdoptingWorld(t, profile.PQPure, "adopt flood")
 	entered := make(chan [32]byte, floodOpens)
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count", Confidential: stationlink.ConfidentialRequired,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/count", Confidential: stationlink.ConfidentialRequired,
 		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: holdingHandler(entered)}})
 	flooder := dialIn(t, w.station, profile.PQPure, "adopt flood flooder")
 	other := dialIn(t, w.station, profile.PQPure, "adopt flood other")

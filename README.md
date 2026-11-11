@@ -274,7 +274,7 @@ macula 12.11 or later, which stores and routes a keyed advertisement, and
 every caller runs macula 13 or macula-go 0.18 (the station floor). The fleet's
 stations meet it.
 
-Through the C ABI (still ABI 1): the pool option `kem_advertise`, and
+Through the C ABI: the pool option `kem_advertise`, and
 `macula_pool_call_opts`, `macula_pool_open_stream_opts`,
 `macula_pool_serve_opts` and `macula_pool_serve_stream_opts`, whose
 options JSON carries `confidential`; see the

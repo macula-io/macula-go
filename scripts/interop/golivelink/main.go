@@ -176,7 +176,7 @@ func serveCheck(provider *stationlink.Link, providerKey *identity.NodeKey, targe
 		return err
 	}
 	echoed := func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return r.Payload, nil }
-	served, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: procedure, Handler: echoed, RealmKey: realmKey.PublicKey()})
+	served, err := provider.Serve(ctx, stationlink.Offer{Policy: ucan.Open{}, Realm: realm, Procedure: procedure, Handler: echoed, RealmKey: realmKey.PublicKey()})
 	if err != nil {
 		return fmt.Errorf("serve: %w", err)
 	}
@@ -408,7 +408,7 @@ func nodeIDBytes(link *stationlink.Link) []byte {
 // and the end arrive.
 func streamCheck(ctx context.Context, provider *stationlink.Link, caller *pool.Pool, realm [32]byte, realmKey []byte) error {
 	const watch = "golivelink/watch"
-	served, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: watch, RealmKey: realmKey,
+	served, err := provider.Serve(ctx, stationlink.Offer{Policy: ucan.Open{}, Realm: realm, Procedure: watch, RealmKey: realmKey,
 		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
 			for _, chunk := range []string{"one", "two", "three"} {
 				if err := s.Send([]byte(chunk)); err != nil {
@@ -448,7 +448,7 @@ func streamCheck(ctx context.Context, provider *stationlink.Link, caller *pool.P
 // pool: the caller's signed frames cross the station too.
 func clientStreamCheck(ctx context.Context, provider *stationlink.Link, caller *pool.Pool, realm [32]byte, realmKey []byte) error {
 	const count = "golivelink/count"
-	served, err := provider.Serve(ctx, stationlink.Offer{Realm: realm, Procedure: count, RealmKey: realmKey,
+	served, err := provider.Serve(ctx, stationlink.Offer{Policy: ucan.Open{}, Realm: realm, Procedure: count, RealmKey: realmKey,
 		Stream: &stationlink.StreamOffer{Mode: frame.ClientStream, Handler: func(ctx context.Context, s *stationlink.Stream) error {
 			total := 0
 			for {

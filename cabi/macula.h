@@ -9,7 +9,9 @@
  * This header is the contract; cabi/CONTRACT.md says what every call means.
  * cabi's tests fail if the exported functions and this header disagree.
  * A change to an existing declaration changes MACULA_ABI_VERSION; a new
- * function does not, and says since which macula-go version it exists.
+ * function does not, and says since which macula-go version it exists. A call
+ * this header allows that stops being allowed is a change too: a declaration
+ * that goes, or one that now refuses an argument it used to take.
  */
 #ifndef MACULA_H
 #define MACULA_H
@@ -21,7 +23,7 @@
 extern "C" {
 #endif
 
-#define MACULA_ABI_VERSION 1
+#define MACULA_ABI_VERSION 2
 
 /* The wire this header was written for, major.minor (macula
  * docs/design/WIRE_1_0.md). */
@@ -230,20 +232,23 @@ void macula_subscription_stop(macula_handle subscription);
  * "<org>/<name>" under an org that delegated it to this node. Each serve returns once a station acknowledges the
  * advertisement (since v0.27.0-rc.4, macula#12), within 30 seconds: when none does, the error kind refused with the
  * station's reason, or unacknowledged (CONTRACT.md "Errors"). */
-macula_handle macula_pool_serve(macula_handle pool, const uint8_t realm[32], const char *procedure, char **err_out);
-macula_handle macula_pool_serve_stream(macula_handle pool, const uint8_t realm[32], const char *procedure,
-                                       int32_t mode, char **err_out);
 /* Serve a procedure only to callers whose UCAN policy_json accepts:
  * {"kind":"ucan_required","issuer":"<node_id hex>"} (a chain rooted at that
  * node's identity key) or {"kind":"realm_member_required","key_id":"<hex>",
- * "can"} (rooted at that realm key, granting that can). Refused calls and
- * opens never reach the inbox. Since macula-go v0.17.0. */
+ * "can"} (rooted at that realm key, granting that can). A gated serve is gated:
+ * {"kind":"open"} is refused here with invalid_argument, which names
+ * macula_pool_serve_opts. Refused calls and opens never reach the inbox. Since
+ * macula-go v0.17.0. */
 macula_handle macula_pool_serve_gated(macula_handle pool, const uint8_t realm[32], const char *procedure,
                                       const char *policy_json, char **err_out);
 macula_handle macula_pool_serve_stream_gated(macula_handle pool, const uint8_t realm[32], const char *procedure,
                                              int32_t mode, const char *policy_json, char **err_out);
-/* Serve with options as JSON (NULL for none): {"policy": <a policy_json>,
- * "confidential": "preferred"|"required"|"off"}. Since macula-go v0.18.0. */
+/* Serve with options as JSON: {"policy": <a policy_json> (required),
+ * "confidential": "preferred"|"required"|"off"}. The policy is required: a
+ * procedure serves the callers its policy names, and one that means to serve
+ * anyone says {"policy":{"kind":"open"}}. Options with no policy, and NULL or
+ * empty options, are refused with invalid_argument naming both fixes. Since
+ * macula-go v0.18.0; the required policy since v0.31.0 (ABI 2). */
 macula_handle macula_pool_serve_opts(macula_handle pool, const uint8_t realm[32], const char *procedure,
                                      const char *options_json, char **err_out);
 macula_handle macula_pool_serve_stream_opts(macula_handle pool, const uint8_t realm[32], const char *procedure,

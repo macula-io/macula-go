@@ -14,6 +14,7 @@ import (
 	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // A pool's calls and streams seal to the key the provider's verified
@@ -54,7 +55,7 @@ func (w sealedPools) serve(t *testing.T, o Offer, seen *atomic.Bool) {
 func TestAPoolSealsToAKeyedProvider(t *testing.T) {
 	w := newSealedPools(t, "sealed pool", true)
 	var sealed atomic.Bool
-	w.serve(t, Offer{Procedure: procedure}, &sealed)
+	w.serve(t, Offer{Policy: ucan.Open{}, Procedure: procedure}, &sealed)
 	got, err := w.caller.Call(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("secret")})
 	if text, _ := got.AsText(); err != nil || text != "secret" || !sealed.Load() {
 		t.Fatalf("a preferred call: %q, %v, sealed %v", text, err, sealed.Load())
@@ -71,7 +72,7 @@ func TestAPoolSealsToAKeyedProvider(t *testing.T) {
 		t.Errorf("an off stream at the pool: %v, want ErrConfidentialOff", err)
 	}
 
-	w.serve(t, Offer{Procedure: "mcl-echo/stream", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
+	w.serve(t, Offer{Policy: ucan.Open{}, Procedure: "mcl-echo/stream", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
 		Handler: func(_ context.Context, s *stationlink.Stream) error {
 			if s.Request().Sealed == nil {
 				return errors.New("the open came clear")
@@ -94,7 +95,7 @@ func TestAPoolSealsToAKeyedProvider(t *testing.T) {
 func TestARequiredCallRefusesAKeylessProvider(t *testing.T) {
 	w := newSealedPools(t, "keyless", false)
 	var sealed atomic.Bool
-	w.serve(t, Offer{Procedure: procedure}, &sealed)
+	w.serve(t, Offer{Policy: ucan.Open{}, Procedure: procedure}, &sealed)
 	_, err := w.caller.Call(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("x"),
 		Confidential: stationlink.ConfidentialRequired})
 	var refused *stationlink.ConfidentialityError
@@ -104,7 +105,7 @@ func TestARequiredCallRefusesAKeylessProvider(t *testing.T) {
 	if _, err := w.caller.Call(t.Context(), Call{Realm: w.realm.ID, Procedure: procedure, Payload: cbor.Text("x")}); err != nil || sealed.Load() {
 		t.Errorf("a preferred call to a keyless provider: %v, sealed %v", err, sealed.Load())
 	}
-	if _, err := w.provider.Serve(t.Context(), Offer{Realm: w.realm.ID, Procedure: "mcl-echo/required",
+	if _, err := w.provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: w.realm.ID, Procedure: "mcl-echo/required",
 		Handler:      func(context.Context, stationlink.Request) (cbor.Value, error) { return cbor.Map(nil), nil },
 		Confidential: stationlink.ConfidentialRequired}); !errors.Is(err, stationlink.ErrKEMAdvertiseDisabled) {
 		t.Errorf("a required offer without kem_advertise: %v", err)
@@ -125,7 +126,7 @@ func TestASealedCallNeverWalksToAKeylessCandidate(t *testing.T) {
 		provider: connectWith(t, "no walk provider", realm, func(o *Opts) { o.KEMAdvertise = true }, s)}
 	keyless := connect(t, "no walk keyless", realm, other)
 	var clearEntered atomic.Int32
-	if _, err := keyless.Serve(t.Context(), Offer{Realm: w.realm.ID, Procedure: procedure,
+	if _, err := keyless.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: w.realm.ID, Procedure: procedure,
 		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
 			clearEntered.Add(1)
 			return r.Payload, nil
@@ -135,7 +136,7 @@ func TestASealedCallNeverWalksToAKeylessCandidate(t *testing.T) {
 	// The keyed provider advertises last, so it is the freshest candidate
 	// and is tried first; its handler outlives its share.
 	time.Sleep(50 * time.Millisecond)
-	if _, err := w.provider.Serve(t.Context(), Offer{Realm: w.realm.ID, Procedure: procedure,
+	if _, err := w.provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: w.realm.ID, Procedure: procedure,
 		Handler: func(ctx context.Context, r stationlink.Request) (cbor.Value, error) {
 			time.Sleep(2500 * time.Millisecond)
 			return r.Payload, nil

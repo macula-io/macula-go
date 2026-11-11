@@ -33,6 +33,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/transport"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 func main() {
@@ -102,7 +103,7 @@ func own(node [32]byte, name string) string { return "~" + hex.EncodeToString(no
 
 func serve(ctx context.Context, node *pool.Pool, realm [32]byte, hold time.Duration) error {
 	self := node.NodeID()
-	if _, err := node.Serve(ctx, pool.Offer{Realm: realm, Procedure: own(self, "vault"), Confidential: stationlink.ConfidentialRequired,
+	if _, err := node.Serve(ctx, pool.Offer{Policy: ucan.Open{}, Realm: realm, Procedure: own(self, "vault"), Confidential: stationlink.ConfidentialRequired,
 		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
 			if !r.Sealed {
 				return cbor.Value{}, errors.New("a clear request reached the handler")
@@ -111,7 +112,7 @@ func serve(ctx context.Context, node *pool.Pool, realm [32]byte, hold time.Durat
 		}}); err != nil {
 		return fmt.Errorf("serve vault: %w", err)
 	}
-	if _, err := node.Serve(ctx, pool.Offer{Realm: realm, Procedure: own(self, "watch"), Confidential: stationlink.ConfidentialRequired,
+	if _, err := node.Serve(ctx, pool.Offer{Policy: ucan.Open{}, Realm: realm, Procedure: own(self, "watch"), Confidential: stationlink.ConfidentialRequired,
 		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
 			if err := s.Send([]byte("chunk from go")); err != nil {
 				return err

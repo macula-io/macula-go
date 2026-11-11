@@ -12,6 +12,7 @@ import (
 	"github.com/macula-io/macula-go/group"
 	"github.com/macula-io/macula-go/pool"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // Sealed groups through the ABI: a stand-in for the org's distributor
@@ -88,7 +89,7 @@ func serveGroupDistributor(t *testing.T, f fleet, distributor *livePool) {
 		AcceptUntil: now - 1_000 + group.DefaultRotateAfterMs + 65*60_000}
 	epoch.ID[0], epoch.Key[0] = 0x61, 0x62
 	if _, err := distributor.pool.Serve(context.Background(), pool.Offer{Realm: f.realm.ID, Procedure: group.Procedure(f.realm.Org),
-		Confidential: stationlink.ConfidentialRequired, Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
+		Policy: ucan.Open{}, Confidential: stationlink.ConfidentialRequired, Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
 			prefix, _ := r.Payload.Get("prefix")
 			text, _ := prefix.AsText()
 			return group.ReplyValue(group.Reply{Prefix: text, Policy: group.PolicyRequired, Epochs: []group.Epoch{epoch}}), nil

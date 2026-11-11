@@ -197,6 +197,11 @@ func stationVerdict(err error) *abiError {
 		return newError(kindClosed, "%v", err)
 	case errors.Is(err, pool.ErrConfidentialOff):
 		return newError(kindInvalidArgument, "%v", err)
+	case errors.Is(err, pool.ErrPolicyRequired):
+		// A procedure that serves anyone names ucan.Open, and the ABI says so
+		// as {"policy":{"kind":"open"}}; a nil policy is the caller's mistake,
+		// not the station's refusal (macula-go#57, #60).
+		return newError(kindInvalidArgument, "%v", err)
 	case errors.Is(err, pool.ErrNoProvider):
 		return newError(kindNoProvider, "%v", err)
 	}

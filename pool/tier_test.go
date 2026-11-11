@@ -11,6 +11,7 @@ import (
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // tiers is a public station, a fallback station and the realm they both carry.
@@ -187,7 +188,7 @@ func TestAStationDialledForACallIsPublic(t *testing.T) {
 	teststation.ShareDHT(serving, public)
 	realm.Admit(t, serving, nodeIDOf(t, "tier provider"))
 	provider := connect(t, "tier provider", realm, serving)
-	if _, err := provider.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
+	if _, err := provider.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	caller := connectTiered(t, "tier caller", realm, []*teststation.Station{public}, []*teststation.Station{fallback})
