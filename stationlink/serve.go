@@ -244,7 +244,7 @@ func (l *Link) registered(ctx context.Context, advertisement record.Record, o Of
 	answer := l.expect(r)
 	if err := l.sendControl(frame.AdvertiseFrame(wire)); err != nil {
 		l.forget(r, answer)
-		return err
+		return l.namedEnding(err)
 	}
 	err := l.verdict(ctx, r, answer)
 	if err == nil {
@@ -440,7 +440,7 @@ func (l *Link) withdraw(advertisement record.Record) error {
 // advertise_direct does both.
 func (l *Link) announce(ctx context.Context, wire []byte) error {
 	if err := l.sendControl(frame.AdvertiseFrame(wire)); err != nil {
-		return err
+		return l.namedEnding(err)
 	}
 	return l.PutRecord(ctx, wire)
 }

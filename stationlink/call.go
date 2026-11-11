@@ -50,6 +50,18 @@ func (e *callNotSent) Error() string {
 
 func (e *callNotSent) Unwrap() error { return e.err }
 
+// notSent is a CALL the link could not write: the station never received it. A
+// failure the link or its connection already knows the ending of is named as
+// that ending inside the chain, so a caller can read why and Link.NotCarried
+// still answers from its first arm while link.Err is not yet set; anything else
+// stays the write error itself (macula-go#75).
+func (l *Link) notSent(cause error) error {
+	if ended := l.ending(); ended != nil {
+		return &callNotSent{ended}
+	}
+	return &callNotSent{cause}
+}
+
 // Call is one request: the realm and procedure it names, the node it targets
 // (the station itself when zero, as for _dht.* and _macula.ping; the
 // provider's node_id for an org procedure), its payload, how long to wait for
@@ -207,7 +219,7 @@ func (l *Link) callOnce(ctx context.Context, timerC <-chan time.Time, deadline u
 			// nowhere to move on to.
 			return cbor.Value{}, err
 		}
-		return cbor.Value{}, &callNotSent{err}
+		return cbor.Value{}, l.notSent(err)
 	}
 	select {
 	case outcome := <-pending.outcome:
@@ -217,7 +229,7 @@ func (l *Link) callOnce(ctx context.Context, timerC <-chan time.Time, deadline u
 	case <-ctx.Done():
 		return cbor.Value{}, ctx.Err()
 	case <-l.done:
-		return cbor.Value{}, l.Err()
+		return cbor.Value{}, &LinkEndedError{Cause: l.Err()}
 	}
 }
 

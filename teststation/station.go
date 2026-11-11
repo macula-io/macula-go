@@ -91,6 +91,10 @@ type Station struct {
 	refuseUntil time.Time
 	// verdict judges each registration (Judge), nil accepting every one.
 	verdict func(kind string) (reason string, silent bool)
+	// ackHold, while set, makes every REGISTER_ACK this station sends wait for
+	// it (HoldAcks): the station has accepted the registration and recorded
+	// it, but the client has not heard so yet.
+	ackHold chan struct{}
 	// asked counts the station's own procedures each client's CALLs were
 	// answered for, by client and procedure: a frame a Silence holds back is
 	// never answered, so it is not counted.
@@ -842,14 +846,43 @@ func (s *Station) judged(ack frame.RegisterAck) (frame.RegisterAck, bool) {
 	return ack, !silent
 }
 
-// acknowledge sends c the REGISTER_ACK ack.
+// acknowledge sends c the REGISTER_ACK ack, once a HoldAcks gate lets it.
 func (s *Station) acknowledge(c *conn, ack frame.RegisterAck) {
 	v, err := frame.RegisterAckFrame(ack)
 	if err != nil {
 		s.t.Errorf("teststation: a REGISTER_ACK it cannot build: %v", err)
 		return
 	}
+	s.mu.Lock()
+	hold := s.ackHold
+	s.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	_ = c.writer.write(cbor.Encode(v), maxFrameBytes)
+}
+
+// HoldAcks withholds this station's REGISTER_ACKs until the returned release
+// is called, while it goes on accepting and recording the registrations: the
+// station knows a client is subscribed before the client does. It is how a
+// test reaches the window in which a link carries a subscription its own node
+// has not been told about. Call release once, after the station should answer.
+func (s *Station) HoldAcks() (release func()) {
+	held := make(chan struct{})
+	s.mu.Lock()
+	s.ackHold = held
+	s.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			if s.ackHold == held {
+				s.ackHold = nil
+			}
+			s.mu.Unlock()
+			close(held)
+		})
+	}
 }
 
 // unadvertised withdraws the route a tombstone names.

@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The wire parsers are fuzzed, and CI fuzzes every one of them on each push
+  (macula-go#39).** Go fuzz targets hold the parsers that read bytes a peer
+  chose — CBOR's decoder, the frame decoder, the record verifier under both
+  profiles, the UCAN token decoder and `Authorize` — to one invariant: any byte
+  string either decodes to a value that re-encodes canonically, or is refused
+  with one of the package's own errors, never a panic, a hang or a value that
+  outgrows its input. Each target is seeded from the shared vectors, read from
+  their files (`testdata/wire_1_0`, `cbor/testdata/decoding_rule_v1.json`,
+  `ucan/testdata/ucan_v1.json`), so a regenerated vector set reseeds them; those
+  seeds run as ordinary tests in CI's `test` job, and a new `fuzz` job gives
+  each target 30 seconds per push.
+
 - **Public and fallback station tiers, the Go half of macula-io/macula#201
   step 2.** `pool.Opts.FallbackSeeds` is a second seed list, the LAN stations a
   pool keeps for when no public station is up, and `Pool.ActiveTier` says which
@@ -117,6 +129,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never shortens the stream's own signed deadline. **An unserved procedure now
   costs the call's full timeout** (5 s by default) where it used to fail in
   milliseconds — give a call a shorter `Timeout` where that wait is not wanted.
+
+- **An oversized frame's length header is refused as `ErrFrameTooLarge`
+  (macula-go#39).** `frame.Decode` refused a claimed length over the cap with an
+  error that did not carry the error the encoder uses, although the wire 1.0
+  envelope vectors name that refusal `frame_too_large`: a reader could not tell
+  a peer's oversized header from a malformed frame. The fuzzer found it; its
+  input is kept as a regression seed (`frame/testdata/fuzz/FuzzDecode/`).
+
+- **A request whose link ends under it comes back named, in this library's own
+  words (macula-go#75).** A call waiting when its link ended returned whatever
+  the transport reported — `Application error 0x0 (remote): dropped`, a QUIC
+  type with no place in this SDK's vocabulary — and so did an open, a publish,
+  a subscription and a serve, while a bare `ErrClosed` stood in for an ending
+  that was not the link's owner closing it. Every one of those now returns a
+  `*stationlink.LinkEndedError`: `errors.Is(err, stationlink.ErrLinkEnded)` is
+  true, `stationlink.EndReason(err)` names the ending in the snake_case
+  vocabulary it already uses (`closed_by_station`, `idle_timeout`, `goodbye`,
+  …), the message carries that name, and the transport's own error stays
+  reachable with `errors.As` through `Unwrap`. `Link.NotCarried` answers as it
+  did, so macula-go#74's walk is unchanged and its tests run unedited; a
+  caller's cancellation, a call, a publication or an open over the frame cap and
+  a station's own answer keep their own values and are not named as an ending. A CALL the link could
+  not write keeps its `callNotSent` arm outermost, with the ending named inside
+  it, so a failure in the window before the link records its own error is still
+  one the link did not carry.
+
+  **Binding-visible, narrowly:** in the C ABI a call whose link the station
+  dropped still reports the kind `failed`, now with the named message; an
+  `OpenStream` whose link ends **between the pool's choice of that link and the
+  open itself** now reports `failed` with that message where it reported
+  `closed` — a pool or a link its owner closed still reports `closed`, as
+  `cabi/CONTRACT.md` defines it. No kind is added, no field is added, and
+  `MACULA_ABI_VERSION` does not move.
+
+- **The subscription-notice tests wait for the node to carry the subscription,
+  not for the stations to hold it (macula-go#88).** `listening()` waits until
+  every station reports the subscription, and a station records a SUBSCRIBE
+  before it acknowledges it, so a test could end a link while one of the node's
+  own attachments was still in flight — and that ending link then read as the
+  last one carrying the subscription, delivering `interrupted` and `gap` for a
+  gap that never happened. `TestOneOfTwoLinksEndingDeliversNoNotice` flaked
+  this way on CI (2 in 50 runs here). The two tests that end a link now wait
+  for the node's own attachments first, and
+  `TestStationsHoldingTheSubscriptionIsNotTheNodeCarryingIt` pins the window
+  with `teststation.HoldAcks`. No pool behaviour changes: a false notice stays
+  safer than a silent loss, so the pool is untouched.
 
 - **A station procedure in flight when its link ends is asked again on the
   next link, and nothing that could give a different result is

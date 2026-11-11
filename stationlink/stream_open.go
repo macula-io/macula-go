@@ -101,7 +101,7 @@ func (l *Link) OpenStream(ctx context.Context, c StreamCall) (*Stream, error) {
 	}
 	if !l.holdStream(s) {
 		abandon(opened.qs)
-		return nil, ErrClosed
+		return nil, &LinkEndedError{Cause: l.Err()}
 	}
 	go s.read(opened.state)
 	return s, nil
@@ -152,11 +152,11 @@ func (l *Link) openOn(ctx context.Context, c StreamCall, sealTo []byte, deadline
 	}
 	qs, err := l.conn.OpenStreamSync(ctx)
 	if err != nil {
-		return openedStream{}, err
+		return openedStream{}, l.namedEnding(err)
 	}
 	if err := (&frameWriter{w: qs}).write(encoded, streamOpenBytes); err != nil {
 		abandon(qs)
-		return openedStream{}, err
+		return openedStream{}, l.namedEnding(err)
 	}
 	return openedStream{qs: qs, open: open, state: state, sealing: sealing}, nil
 }
