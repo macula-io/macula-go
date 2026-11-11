@@ -43,6 +43,17 @@ static void expect_kind(const char *step, char **err, const char *kind) {
   *err = NULL;
 }
 
+/* expect_kind_naming checks *err is a JSON error of kind whose message names
+ * want, frees it, and sets *err back to NULL for the next call. */
+static void expect_kind_naming(const char *step, char **err, const char *kind, const char *want) {
+  char wanted[64];
+  if (!*err) fail(step, NULL);
+  snprintf(wanted, sizeof wanted, "\"kind\":\"%s\"", kind);
+  if (!strstr(*err, wanted) || !strstr(*err, want)) fail(step, *err);
+  macula_free_string(*err);
+  *err = NULL;
+}
+
 static void expect_contains(const char *step, const char *text, const char *want) {
   if (!text || !strstr(text, want)) {
     fprintf(stderr, "FAIL %s: %s lacks %s\n", step, text ? text : "(null)", want);
@@ -228,6 +239,10 @@ int main(int argc, char **argv) {
   /* A server stream. */
   char count[128];
   own_procedure(provider, "count", count);
+  /* No policy is refused here too, and the refusal names this door's own gated
+   * twin: a stream is served by _serve_stream_gated, not by the call's. */
+  macula_pool_serve_stream_opts(provider, realm, count, MACULA_STREAM_SERVER, "{}", &err);
+  expect_kind_naming("a stream serve with no policy", &err, "invalid_argument", "macula_pool_serve_stream_gated");
   macula_handle streaming = macula_pool_serve_stream_opts(provider, realm, count, MACULA_STREAM_SERVER,
                                                           "{\"policy\":{\"kind\":\"open\"}}", &err);
   check("pool_serve_stream_opts", err);

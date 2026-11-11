@@ -101,8 +101,10 @@ type serveOptionsJSON struct {
 // policy is required, and is judged before the rest of the options: a
 // procedure serves the callers its policy names, and one that means to serve
 // anyone says {"policy":{"kind":"open"}} (macula-go#57, #60). So options that
-// name no policy are refused for that, whatever else they say.
-func serveOptionsOf(text string) (serveOptions, error) {
+// name no policy are refused for that, whatever else they say. gated is the
+// door this caller's gated twin is, which the refusal names: a stream is
+// served by _serve_stream_gated, not by the call's door.
+func serveOptionsOf(text, gated string) (serveOptions, error) {
 	var o serveOptionsJSON
 	if text != "" {
 		if err := decodeStrict("options_json", text, &o); err != nil {
@@ -110,8 +112,8 @@ func serveOptionsOf(text string) (serveOptions, error) {
 		}
 	}
 	if o.Policy == nil {
-		return serveOptions{}, invalidArgument("options_json's policy is required: {\"policy\":{\"kind\":\"open\"}} " +
-			"serves any caller, or call macula_pool_serve_gated with a gated policy")
+		return serveOptions{}, invalidArgument("options_json's policy is required: {\"policy\":{\"kind\":\"open\"}} "+
+			"serves any caller, or call %s with a gated policy", gated)
 	}
 	policy, err := policyValue(*o.Policy)
 	if err != nil {
@@ -163,7 +165,7 @@ func macula_pool_open_stream_opts(h C.uintptr_t, realm32 *C.uint8_t, procedure *
 //export macula_pool_serve_opts
 func macula_pool_serve_opts(h C.uintptr_t, realm32 *C.uint8_t, procedure, optionsJSON *C.char,
 	errOut **C.char) C.uintptr_t {
-	opts, err := serveOptionsOf(goString(optionsJSON))
+	opts, err := serveOptionsOf(goString(optionsJSON), "macula_pool_serve_gated")
 	if err != nil {
 		setErr(errOut, err)
 		return 0
@@ -174,7 +176,7 @@ func macula_pool_serve_opts(h C.uintptr_t, realm32 *C.uint8_t, procedure, option
 //export macula_pool_serve_stream_opts
 func macula_pool_serve_stream_opts(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, mode C.int32_t,
 	optionsJSON *C.char, errOut **C.char) C.uintptr_t {
-	opts, err := serveOptionsOf(goString(optionsJSON))
+	opts, err := serveOptionsOf(goString(optionsJSON), "macula_pool_serve_stream_gated")
 	if err != nil {
 		setErr(errOut, err)
 		return 0

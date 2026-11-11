@@ -55,7 +55,7 @@ never a crash.
 | key | `macula_key_generate`, `_load`, `_load_or_create` | `macula_key_free` |
 | pool | `macula_pool_connect` | `macula_pool_close` |
 | subscription | `macula_pool_subscribe` | `macula_subscription_stop` |
-| served | `macula_pool_serve`, `_serve_stream`, `_serve_gated`, `_serve_stream_gated` | `macula_served_stop` |
+| served | `macula_pool_serve_opts`, `_serve_stream_opts`, `_serve_gated`, `_serve_stream_gated` | `macula_served_stop` |
 | pending call | `macula_served_next` | its first answer, or its procedure stopping (never freed by the caller) |
 | stream | `macula_pool_open_stream`, `_open_stream_with`, `macula_served_next` | `macula_stream_free` |
 | cancel token | `macula_cancel_new` | `macula_cancel_free` |

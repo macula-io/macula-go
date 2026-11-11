@@ -50,12 +50,12 @@ func TestServeOptionsAreRefusedForTheirOwnReason(t *testing.T) {
 		{`{"confidential":"maybe","policy":{"kind":"open"}}`, "confidential"},
 		{`{"hint":1,"policy":{"kind":"open"}}`, "hint"},
 	} {
-		_, err := serveOptionsOf(c.text)
+		_, err := serveOptionsOf(c.text, "macula_pool_serve_gated")
 		if kindOf(err) != kindInvalidArgument || !strings.Contains(err.Error(), c.names) {
 			t.Errorf("serve options %s: %v, want invalid_argument naming %s", c.text, err, c.names)
 		}
 	}
-	if opts, err := serveOptionsOf(`{"policy":{"kind":"open"}}`); err != nil || opts.policy == nil {
+	if opts, err := serveOptionsOf(`{"policy":{"kind":"open"}}`, "macula_pool_serve_gated"); err != nil || opts.policy == nil {
 		t.Errorf("serve options naming open alone: %+v, %v", opts, err)
 	}
 }
