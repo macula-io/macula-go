@@ -26,7 +26,7 @@ import (
 )
 
 // abiVersion is MACULA_ABI_VERSION in macula.h.
-const abiVersion = 1
+const abiVersion = 2
 
 //export macula_abi_version
 func macula_abi_version() C.int32_t { return abiVersion }

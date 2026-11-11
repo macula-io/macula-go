@@ -8,6 +8,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // The pool's Serve and Subscribe return once one station acknowledges them,
@@ -36,7 +37,7 @@ func twoStations(t *testing.T, name string) (*Pool, *teststation.Station, *tests
 func TestServeHoldsWhenOneStationAccepts(t *testing.T) {
 	p, a, b, realm := twoStations(t, "serve one refuses")
 	a.Judge(refusing("too_many_providers"))
-	if _, err := p.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
+	if _, err := p.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
 		t.Fatalf("Serve: %v, want it served by the station that accepts", err)
 	}
 	if a.Advertised(realm.ID, procedure) || !b.Advertised(realm.ID, procedure) {
@@ -48,13 +49,13 @@ func TestServeReturnsTheRefusalWhenEveryStationRefuses(t *testing.T) {
 	p, a, b, realm := twoStations(t, "serve all refuse")
 	a.Judge(refusing("advertiser_quota"))
 	b.Judge(refusing("advertiser_quota"))
-	served, err := p.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: echo})
+	served, err := p.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo})
 	var refused *stationlink.RefusedError
 	if !errors.As(err, &refused) || refused.Reason != "advertiser_quota" || served != nil {
 		t.Fatalf("Serve: %v, %v; want the stations' refusal", served, err)
 	}
 	a.Judge(nil)
-	if _, err := p.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
+	if _, err := p.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
 		t.Errorf("Serve once a station accepts: %v", err)
 	}
 }
@@ -84,7 +85,7 @@ func TestASilentStationDoesNotHoldUpTheFirstAcceptance(t *testing.T) {
 	p, a, b, realm := twoStations(t, "silent first")
 	a.Judge(func(string) (string, bool) { return "", true })
 	start := time.Now()
-	if _, err := p.Serve(t.Context(), Offer{Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
+	if _, err := p.Serve(t.Context(), Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: procedure, Handler: echo}); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	if _, err := p.Subscribe(realm.ID, topic); err != nil {

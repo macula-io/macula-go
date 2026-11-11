@@ -15,6 +15,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 const streamProcedure = "mcl-tube/watch"
@@ -63,7 +64,7 @@ func newStreamWorld(t *testing.T, name string) streamWorld {
 
 func (w streamWorld) serve(t *testing.T, mode frame.StreamMode, handler stationlink.StreamHandler) *stationlink.Served {
 	t.Helper()
-	served, err := w.provider.Serve(t.Context(), stationlink.Offer{Realm: w.realm.ID, Procedure: streamProcedure,
+	served, err := w.provider.Serve(t.Context(), stationlink.Offer{Policy: ucan.Open{}, Realm: w.realm.ID, Procedure: streamProcedure,
 		Stream: &stationlink.StreamOffer{Mode: mode, Handler: handler}, RealmKey: w.realm.RealmKey()})
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
@@ -440,7 +441,7 @@ func TestAnEndedSessionStopsReading(t *testing.T) {
 	realm := teststation.NewRealm(t, profile.PQPure, "stops reading", "mcl-tube")
 	provider := dialAs(t, s, "stopping provider")
 	realm.Admit(t, s, provider.NodeID())
-	if _, err := provider.Serve(t.Context(), stationlink.Offer{Realm: realm.ID, Procedure: streamProcedure, RealmKey: realm.RealmKey(),
+	if _, err := provider.Serve(t.Context(), stationlink.Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: streamProcedure, RealmKey: realm.RealmKey(),
 		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: func(context.Context, *stationlink.Stream) error {
 			return errors.New("not today")
 		}}}); err != nil {
@@ -507,7 +508,7 @@ func TestAnUnknownFrameTypeInASessionAbortsItsStreamWithCodeFive(t *testing.T) {
 	provider := dialAs(t, s, "mid-stream provider")
 	realm.Admit(t, s, provider.NodeID())
 	ended := make(chan error, 1)
-	if _, err := provider.Serve(t.Context(), stationlink.Offer{Realm: realm.ID, Procedure: streamProcedure, RealmKey: realm.RealmKey(),
+	if _, err := provider.Serve(t.Context(), stationlink.Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: streamProcedure, RealmKey: realm.RealmKey(),
 		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: func(ctx context.Context, stream *stationlink.Stream) error {
 			_, err := stream.Recv(ctx)
 			ended <- err
@@ -562,7 +563,7 @@ func TestACallerFrameOfAnUnknownEncodingEndsTheSessionAsEnumUnknown(t *testing.T
 	provider := dialAs(t, s, "unknown encoding provider")
 	realm.Admit(t, s, provider.NodeID())
 	ended := make(chan error, 1)
-	if _, err := provider.Serve(t.Context(), stationlink.Offer{Realm: realm.ID, Procedure: streamProcedure, RealmKey: realm.RealmKey(),
+	if _, err := provider.Serve(t.Context(), stationlink.Offer{Policy: ucan.Open{}, Realm: realm.ID, Procedure: streamProcedure, RealmKey: realm.RealmKey(),
 		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: func(ctx context.Context, stream *stationlink.Stream) error {
 			_, err := stream.Recv(ctx)
 			ended <- err

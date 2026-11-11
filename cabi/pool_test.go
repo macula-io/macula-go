@@ -16,6 +16,7 @@ import (
 	"github.com/macula-io/macula-go/record"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // The ABI's Go side against in-process macula 12 stations: each test drives
@@ -150,7 +151,7 @@ func TestCallsReachAServedProcedure(t *testing.T) {
 	provider := f.join(t, "provider", f.stations[0])
 	caller := f.join(t, "caller", f.stations[1])
 	procedure := ownProcedure(provider, "echo")
-	s, err := serve(provider, f.realm.ID, procedure, serveOptions{})
+	s, err := serve(provider, f.realm.ID, procedure, serveOptions{policy: ucan.Open{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +192,7 @@ func TestACancelledCallSaysSo(t *testing.T) {
 	provider := f.join(t, "slow provider", f.stations[0])
 	caller := f.join(t, "impatient caller", f.stations[1])
 	procedure := ownProcedure(provider, "never")
-	s, err := serve(provider, f.realm.ID, procedure, serveOptions{})
+	s, err := serve(provider, f.realm.ID, procedure, serveOptions{policy: ucan.Open{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +221,7 @@ func TestOrgProceduresNeedTheirDelegation(t *testing.T) {
 	caller := f.join(t, "org caller", f.stations[1])
 	f.realm.Admit(t, f.stations[0], provider.pool.NodeID())
 	procedure := f.realm.Org + "/greet"
-	s, err := serve(provider, f.realm.ID, procedure, serveOptions{})
+	s, err := serve(provider, f.realm.ID, procedure, serveOptions{policy: ucan.Open{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +284,7 @@ func TestServedStreamsRunBothWays(t *testing.T) {
 	provider := f.join(t, "stream provider", f.stations[0])
 	caller := f.join(t, "stream caller", f.stations[1])
 	procedure := ownProcedure(provider, "count")
-	s, err := serveStream(provider, f.realm.ID, procedure, frame.ServerStream, serveOptions{})
+	s, err := serveStream(provider, f.realm.ID, procedure, frame.ServerStream, serveOptions{policy: ucan.Open{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +415,7 @@ func TestClosingAPoolEndsWhatItOwns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := serve(lp, f.realm.ID, ownProcedure(lp, "x"), serveOptions{})
+	s, err := serve(lp, f.realm.ID, ownProcedure(lp, "x"), serveOptions{policy: ucan.Open{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +445,7 @@ func TestACallInFlightWhenItsPoolClosesIsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	procedure := ownProcedure(provider, "never")
-	s, err := serve(provider, f.realm.ID, procedure, serveOptions{})
+	s, err := serve(provider, f.realm.ID, procedure, serveOptions{policy: ucan.Open{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +481,7 @@ func TestALateAnswerIsAnswered(t *testing.T) {
 	provider := f.join(t, "late provider", f.stations[0])
 	caller := f.join(t, "late caller", f.stations[1])
 	procedure := ownProcedure(provider, "slow")
-	s, err := serve(provider, f.realm.ID, procedure, serveOptions{})
+	s, err := serve(provider, f.realm.ID, procedure, serveOptions{policy: ucan.Open{}})
 	if err != nil {
 		t.Fatal(err)
 	}

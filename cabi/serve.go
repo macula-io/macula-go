@@ -208,11 +208,6 @@ func streamMode(mode C.int32_t) (frame.StreamMode, error) {
 	return 0, invalidArgument("a stream mode is 0 (server), 1 (client) or 2 (bidi), not %d", mode)
 }
 
-//export macula_pool_serve
-func macula_pool_serve(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, errOut **C.char) C.uintptr_t {
-	return poolServe(h, realm32, procedure, serveOptions{}, errOut)
-}
-
 //export macula_pool_serve_gated
 func macula_pool_serve_gated(h C.uintptr_t, realm32 *C.uint8_t, procedure, policyJSON *C.char,
 	errOut **C.char) C.uintptr_t {
@@ -240,12 +235,6 @@ func poolServe(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, opts serveO
 		return 0
 	}
 	return newHandle(s)
-}
-
-//export macula_pool_serve_stream
-func macula_pool_serve_stream(h C.uintptr_t, realm32 *C.uint8_t, procedure *C.char, mode C.int32_t,
-	errOut **C.char) C.uintptr_t {
-	return poolServeStream(h, realm32, procedure, mode, serveOptions{}, errOut)
 }
 
 //export macula_pool_serve_stream_gated

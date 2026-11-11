@@ -118,12 +118,13 @@ defer p.Close()
 result, err := p.Call(ctx, pool.Call{Realm: realm, Procedure: "mcl-echo/echo", Payload: cbor.Text("hello")})
 
 // Serve one: the realm must have admitted the org, and the org delegated its
-// procedures to this node.
-served, err := p.Serve(ctx, pool.Offer{Realm: realm, Procedure: "acme/echo",
+// procedures to this node. Every offer names who may call it: ucan.Open is a
+// procedure that serves anyone, and an offer with no policy at all is refused.
+served, err := p.Serve(ctx, pool.Offer{Realm: realm, Procedure: "acme/echo", Policy: ucan.Open{},
 	Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return r.Payload, nil }})
 
 // Or serve one in this node's own namespace: no org, no realm key.
-ring, err := p.Serve(ctx, pool.Offer{Realm: realm, Procedure: record.OwnProcedure(p.NodeID(), "ring"),
+ring, err := p.Serve(ctx, pool.Offer{Realm: realm, Procedure: record.OwnProcedure(p.NodeID(), "ring"), Policy: ucan.Open{},
 	Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) { return r.Payload, nil }})
 
 // Stream: a server stream's chunks arrive as events until its end.
@@ -274,7 +275,7 @@ macula 12.11 or later, which stores and routes a keyed advertisement, and
 every caller runs macula 13 or macula-go 0.18 (the station floor). The fleet's
 stations meet it.
 
-Through the C ABI (still ABI 1): the pool option `kem_advertise`, and
+Through the C ABI: the pool option `kem_advertise`, and
 `macula_pool_call_opts`, `macula_pool_open_stream_opts`,
 `macula_pool_serve_opts` and `macula_pool_serve_stream_opts`, whose
 options JSON carries `confidential`; see the

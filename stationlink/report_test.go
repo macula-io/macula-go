@@ -10,6 +10,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/stationlink"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // A stream's seal report (macula DESIGN_E2E_SEAL_REPORT §3, §5): it settles on
@@ -21,7 +22,7 @@ import (
 // sends one chunk and replies.
 func held(t *testing.T, w sealedWorld, release <-chan struct{}) {
 	t.Helper()
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/count", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
 		Handler: func(ctx context.Context, s *stationlink.Stream) error {
 			select {
 			case <-release:
@@ -81,7 +82,7 @@ func TestAClearStreamsReportIsSealed0(t *testing.T) {
 // a sealed stream the provider ends before any data has no report.
 func TestASealedStreamEndedBeforeDataHasNoReport(t *testing.T) {
 	w := newSealedWorld(t, profile.PQPure, "report ended")
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/none", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/none", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
 		Handler: func(context.Context, *stationlink.Stream) error { return nil }}})
 	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-vault/none",
 		Target: w.provider.NodeID(), Mode: frame.ServerStream, Payload: cbor.Map(nil), SealTo: w.key()})
@@ -150,7 +151,7 @@ func TestAResealedStreamReportsTheResealsKey(t *testing.T) {
 func TestAServedStreamHasNoReport(t *testing.T) {
 	w := newSealedWorld(t, profile.PQPure, "report served")
 	got := make(chan error, 1)
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/served", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/served", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
 		Handler: func(_ context.Context, s *stationlink.Stream) error {
 			_, err := s.Report()
 			got <- err
