@@ -15,7 +15,8 @@ one and every binding written for ABI 1 moves with it — that breaks, hence the
 minor. Since v0.30.0 the wire parsers are fuzzed on every push, the public and
 fallback station tiers arrive as the Go half of macula#201, sealed key files
 land as the Go half of WP-K2, and a publication a link held is re-sent rather
-than lost (macula-go#78).
+than lost (macula-go#78). The module needs Go 1.27.4, which closes
+GO-2026-6859.
 
 ### Security (breaking)
 
@@ -131,6 +132,18 @@ than lost (macula-go#78).
 
 ### Fixed
 
+- **The teststation's relay ends each direction on its own (#54).** A relayed
+  stream's two directions were joined so that an error in either reset both
+  streams, and `CancelWrite` on the other stream discards what it had written
+  but the peer had not yet acknowledged: a caller that finished sending and
+  stopped reading (STOP_SENDING) cost the provider every byte of the caller's
+  message still in the relay, so an SDK's stream test could fail for the test
+  relay's fault rather than its own (macula-rust#45). A direction that fails
+  now aborts only its own write side and tells that direction's source to stop
+  sending, and the opposite direction finishes. Two tests read it off the wire:
+  a caller that stops reading still delivers its whole message to the provider,
+  and a caller that resets mid-message reaches the provider as a reset while
+  the provider's own answer still arrives.
 - **A lookup that found no advertisement is asked again until the call's
   deadline (macula-go#76).** A pool resolved a procedure once and gave up, so a
   record published on the provider's station but not yet readable at the
@@ -289,18 +302,6 @@ it, hence the minor.
 
 ### Fixed
 
-- **The teststation's relay ends each direction on its own (#54).** A relayed
-  stream's two directions were joined so that an error in either reset both
-  streams, and `CancelWrite` on the other stream discards what it had written
-  but the peer had not yet acknowledged: a caller that finished sending and
-  stopped reading (STOP_SENDING) cost the provider every byte of the caller's
-  message still in the relay, so an SDK's stream test could fail for the test
-  relay's fault rather than its own (macula-rust#45). A direction that fails
-  now aborts only its own write side and tells that direction's source to stop
-  sending, and the opposite direction finishes. Two tests read it off the wire:
-  a caller that stops reading still delivers its whole message to the provider,
-  and a caller that resets mid-message reaches the provider as a reset while
-  the provider's own answer still arrives.
 - **The teststation keeps a live station's connection lifetime (#62).** It
   listened with quic-go's default 30 s idle timeout and no keepalive, so every
   client dialling it got 30 s, where the fleet's stations give 300 s with a
