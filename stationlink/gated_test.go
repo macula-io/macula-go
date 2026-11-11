@@ -217,10 +217,10 @@ func TestARealmMemberProcedureNeedsTheRealmsGrant(t *testing.T) {
 }
 
 // An open procedure serves any caller and ignores a token it is sent, even
-// one no verifier would accept.
+// one no verifier would accept: nothing judges it (macula-go#57, #60).
 func TestAnOpenProcedureIgnoresAnyToken(t *testing.T) {
 	w := newGatedWorld(t, profile.PQPure, "open")
-	w.serveCall(t, nil)
+	w.serveCall(t, ucan.Open{})
 	if got := refusal(t, w.call(t, []byte("not a token"), []byte("not a proof"))); got != "" {
 		t.Errorf("refused %q", got)
 	}
@@ -270,7 +270,7 @@ var forged = cbor.Map([]cbor.MapEntry{
 func TestAHandlerNeverSeesASenderWrittenCaller(t *testing.T) {
 	w := newGatedWorld(t, profile.PQPure, "caller")
 	seen := make(chan cbor.Value, 2)
-	_, err := w.provider.Serve(t.Context(), stationlink.Offer{Realm: w.realm.ID, Procedure: gatedCall,
+	_, err := w.provider.Serve(t.Context(), stationlink.Offer{Policy: ucan.Open{}, Realm: w.realm.ID, Procedure: gatedCall,
 		Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
 			if r.Caller != w.caller.NodeID() {
 				t.Errorf("the handler saw caller %x", r.Caller)
@@ -281,7 +281,7 @@ func TestAHandlerNeverSeesASenderWrittenCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
-	_, err = w.provider.Serve(t.Context(), stationlink.Offer{Realm: w.realm.ID, Procedure: gatedStream,
+	_, err = w.provider.Serve(t.Context(), stationlink.Offer{Policy: ucan.Open{}, Realm: w.realm.ID, Procedure: gatedStream,
 		Stream: &stationlink.StreamOffer{Mode: frame.ServerStream, Handler: func(_ context.Context, s *stationlink.Stream) error {
 			seen <- s.Request().Payload
 			return s.Send([]byte("granted"))

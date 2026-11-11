@@ -17,6 +17,7 @@ import (
 	"github.com/macula-io/macula-go/seal"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // Sealed calls and streams end to end (macula 13, E2E design §5): a Go caller
@@ -99,7 +100,7 @@ func TestASealedCallEndToEnd(t *testing.T) {
 		t.Run(string(p), func(t *testing.T) {
 			w := newSealedWorld(t, p, "sealed call")
 			var sealed atomic.Bool
-			w.serve(t, stationlink.Offer{Procedure: "mcl-vault/open", Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
+			w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/open", Handler: func(_ context.Context, r stationlink.Request) (cbor.Value, error) {
 				sealed.Store(r.Sealed)
 				return cbor.Map([]cbor.MapEntry{{Key: cbor.Text("got"), Val: r.Payload}}), nil
 			}})
@@ -135,7 +136,7 @@ func TestSealedStreamsEndToEnd(t *testing.T) {
 func assertSealedStreamsSealBothWays(t *testing.T, p profile.Profile) {
 	t.Helper()
 	w := newSealedWorld(t, p, "sealed streams")
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/watch", Stream: &stationlink.StreamOffer{Mode: frame.Bidi,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/watch", Stream: &stationlink.StreamOffer{Mode: frame.Bidi,
 		Handler: sealedWatchHandler}})
 	stream, err := w.caller.OpenStream(t.Context(), stationlink.StreamCall{Realm: w.realm.ID, Procedure: "mcl-vault/watch",
 		Target: w.provider.NodeID(), Mode: frame.Bidi, Payload: cbor.Text("open sesame"), SealTo: w.key()})
@@ -200,7 +201,7 @@ func assertSealedWatchAnswers(t *testing.T, stream *stationlink.Stream) {
 // reseal, the refusal ends it naming that key.
 func TestASealedStreamResealsOnceWhenRefused(t *testing.T) {
 	w := newSealedWorld(t, profile.PQPure, "reseal")
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/count", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
 		Handler: func(_ context.Context, s *stationlink.Stream) error { return s.Reply(cbor.Text("counted")) }}})
 	stale := must[*seal.PrivateKey](t)(seal.GenerateKey(profile.PQPure)).PublicKey().Carried()
 	current := w.ring.CurrentID()
@@ -251,7 +252,7 @@ func TestASealedStreamResealsOnceWhenRefused(t *testing.T) {
 func TestAResealGivingNoKeyEndsTheStream(t *testing.T) {
 	w := newSealedWorld(t, profile.PQPure, "reseal no key")
 	var entered atomic.Int32
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/count", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
 		Handler: func(_ context.Context, s *stationlink.Stream) error {
 			entered.Add(1)
 			return s.Reply(cbor.Text("counted"))
@@ -277,7 +278,7 @@ func TestAResealGivingNoKeyEndsTheStream(t *testing.T) {
 func TestAResealedStreamKeepsItsDeadline(t *testing.T) {
 	w := newSealedWorld(t, profile.PQPure, "reseal deadline")
 	seen := make(chan uint64, 1)
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/count", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/count", Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
 		Handler: func(_ context.Context, s *stationlink.Stream) error {
 			seen <- s.Request().Deadline
 			return s.Reply(cbor.Text("counted"))
@@ -307,7 +308,7 @@ func TestAResealedStreamKeepsItsDeadline(t *testing.T) {
 func TestASealedStreamOutlivesItsKey(t *testing.T) {
 	w := newSealedWorld(t, profile.PQPure, "rotation")
 	proceed := make(chan struct{})
-	w.serve(t, stationlink.Offer{Procedure: "mcl-vault/long", Confidential: stationlink.ConfidentialRequired,
+	w.serve(t, stationlink.Offer{Policy: ucan.Open{}, Procedure: "mcl-vault/long", Confidential: stationlink.ConfidentialRequired,
 		Stream: &stationlink.StreamOffer{Mode: frame.Bidi, Handler: func(ctx context.Context, s *stationlink.Stream) error {
 			return sendBeforeAndAfter(ctx, s, proceed)
 		}}})

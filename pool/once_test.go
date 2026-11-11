@@ -13,6 +13,7 @@ import (
 	"github.com/macula-io/macula-go/profile"
 	"github.com/macula-io/macula-go/stationlink"
 	"github.com/macula-io/macula-go/teststation"
+	"github.com/macula-io/macula-go/ucan"
 )
 
 // twoStationProviders is two providers serving procedure with the one offer,
@@ -52,7 +53,7 @@ func TestACallThatWentOutIsNeverSentAgain(t *testing.T) {
 		time.Sleep(2500 * time.Millisecond)
 		return r.Payload, nil
 	}
-	caller, realm := twoStationProviders(t, "once", Offer{Handler: slow})
+	caller, realm := twoStationProviders(t, "once", Offer{Policy: ucan.Open{}, Handler: slow})
 	result, err := caller.Call(t.Context(), Call{Realm: realm.ID, Procedure: procedure, Payload: cbor.Text("hello"),
 		Timeout: 4 * time.Second})
 	if text, _ := result.AsText(); err != nil || text != "hello" {
@@ -69,7 +70,7 @@ func TestACallThatWentOutIsNeverSentAgain(t *testing.T) {
 // request.
 func TestAStreamTheLinkRefusesIsNotWalked(t *testing.T) {
 	var entered atomic.Int32
-	caller, realm := twoStationProviders(t, "once stream", Offer{Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
+	caller, realm := twoStationProviders(t, "once stream", Offer{Policy: ucan.Open{}, Stream: &stationlink.StreamOffer{Mode: frame.ServerStream,
 		Handler: func(_ context.Context, s *stationlink.Stream) error {
 			entered.Add(1)
 			return s.Close()

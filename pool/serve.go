@@ -3,6 +3,8 @@ package pool
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"slices"
 	"sync"
 	"time"
@@ -31,11 +33,18 @@ func (p *Pool) realmKeyFor(realm [32]byte, procedure string) ([]byte, error) {
 // served or trusted.
 var ErrNoRealmKey = errors.New("pool: no realm key pinned for the realm")
 
+// ErrPolicyRequired is an offer that names no policy, as stationlink's: a
+// procedure serves the callers its policy names, and one that means to serve
+// anyone says ucan.Open (macula-go#57, #60).
+var ErrPolicyRequired = stationlink.ErrPolicyRequired
+
 // Offer is a procedure the node serves: its realm, which the pool must pin a
 // key for, its name, its handler (or Stream, for a streaming procedure:
-// exactly one of the two), and its policy: nil serves any caller, a
-// ucan.UCANRequired or ucan.RealmMemberRequired a caller whose UCAN it
-// authorizes, as stationlink.Offer's does.
+// exactly one of the two), and its policy, which every offer names: ucan.Open
+// serves any caller, and a ucan.UCANRequired or ucan.RealmMemberRequired
+// serves a caller whose UCAN it authorizes, as stationlink.Offer's does. An
+// offer that names no policy is refused ErrPolicyRequired before anything is
+// resolved (macula-go#57, #60).
 type Offer struct {
 	Realm     [32]byte
 	Procedure string
@@ -69,6 +78,12 @@ type Served struct {
 // stationlink.Serve does; a station that refused it is not asked again until
 // its link is dialed again.
 func (p *Pool) Serve(ctx context.Context, o Offer) (*Served, error) {
+	// A procedure serves the callers its policy names, and the policy is read
+	// before a realm key is resolved or a link dialed: no offer reaches a
+	// station without saying who may call it (macula-go#57, #60).
+	if o.Policy == nil {
+		return nil, ErrPolicyRequired
+	}
 	realmKey, err := p.realmKeyFor(o.Realm, o.Procedure)
 	if err != nil {
 		return nil, err
@@ -107,6 +122,12 @@ func (p *Pool) Serve(ctx context.Context, o Offer) (*Served, error) {
 		if !slices.Contains(links, link) {
 			s.attach(link)
 		}
+	}
+	if _, open := o.Policy.(ucan.Open); open {
+		// Said once per served procedure, in macula's words: an app that serves
+		// anyone says so here, and the line is how an operator sees it.
+		slog.Info("macula: a procedure declares open callers, an explicit opt-out: any identified caller may call it",
+			"procedure", o.Procedure, "realm", fmt.Sprintf("%x", o.Realm))
 	}
 	return s, nil
 }
