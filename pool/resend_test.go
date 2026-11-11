@@ -463,3 +463,39 @@ func TestACopyOfAPublicationThatWentOutIsNotCounted(t *testing.T) {
 		t.Errorf("%d publications counted unsent, want none: a copy already went out", sent)
 	}
 }
+
+// A copy handed over after the drain already carried the copy that waited is
+// neither queued nor counted: the drain records the publication as dealt with.
+func TestACopyHandedOverAfterTheWaitingOneWentOutIsNotCounted(t *testing.T) {
+	t.Parallel()
+	a := teststation.Start(t, profile.PQPure, "drained twin a")
+	_, sub, publisher, realm := listening(t, "drained twin", []*teststation.Station{a}, []*teststation.Station{a})
+	// The link ends holding it: with no link up, the copy waits.
+	a.Refuse(time.Minute)
+	a.Drop(publisher.NodeID())
+	eventually(t, "no link up", func() bool { return len(publisher.links()) == 0 })
+	waiter := signedFor(t, publisher, realm, "waits then goes out", nil)
+	publisher.keep(waiter)
+	if n := waitingLen(publisher); n != 1 {
+		t.Fatalf("%d publications wait, want the one handed over", n)
+	}
+	a.Allow()
+	eventually(t, "the drain carried it", func() bool { return waitingLen(publisher) == 0 })
+	if got := firstDelivery(t, sub, 3*time.Second); got.Kind != KindEvent {
+		t.Fatalf("delivered %s, want the publication", shown([]Delivery{got}))
+	}
+	// Its twin's copy is handed over after that, with no link to take it.
+	a.Refuse(time.Minute)
+	a.Drop(publisher.NodeID())
+	eventually(t, "no link up again", func() bool { return len(publisher.links()) == 0 })
+	publisher.resend([]stationlink.SignedPublication{waiter})
+	if n := waitingLen(publisher); n != 0 {
+		t.Errorf("%d publications wait after a copy of one already carried, want none", n)
+	}
+	if err := publisher.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if sent := publisher.UnsentPublications(); sent != 0 {
+		t.Errorf("%d publications counted unsent, want none: the drain already carried it", sent)
+	}
+}
