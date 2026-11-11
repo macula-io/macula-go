@@ -21,9 +21,11 @@ import (
 const (
 	maxWaiting      = 4096
 	maxWaitingBytes = stationlink.MaxUnconfirmedBytes
-	// doneRemembered is how many dealt-with publications a pool remembers, the
-	// same bound as the queue: a copy handed over long after its publication
-	// went out or was counted is out of reach of any held set by then.
+	// doneRemembered is how many dealt-with publications an open pool
+	// remembers, the same bound as the queue: a copy handed over long after its
+	// publication went out or was counted is out of reach of any held set by
+	// then. A closing pool remembers every identity it counts instead, so its
+	// count is the union of what its links held (dealtLocked).
 	doneRemembered = maxWaiting
 )
 
@@ -91,8 +93,9 @@ func (p *Pool) dealtWithLocked(id [48]byte) bool {
 	return done
 }
 
-// dealt records a publication the pool has finished with, keeping the newest
-// doneRemembered of them.
+// dealt records a publication the pool has finished with: one a link took, or
+// one counted unsent. An open pool keeps the newest doneRemembered of them; a
+// closing one keeps every identity it counts.
 func (p *Pool) dealt(id [48]byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -105,6 +108,15 @@ func (p *Pool) dealtLocked(id [48]byte) {
 		return
 	}
 	p.done[id] = struct{}{}
+	if p.closed {
+		// A closing pool counts the union of what its links held, and a copy
+		// still to come may be of a publication counted long before it arrives:
+		// forgetting that one would count the publication twice. What a closing
+		// pool takes in is its links' held sets and nothing else, and the links
+		// were holding those publications anyway, so this cannot outgrow them.
+		// Nothing evicts after a close, so it keeps no order either.
+		return
+	}
 	p.doneOrder = append(p.doneOrder, id)
 	for len(p.doneOrder) > doneRemembered {
 		delete(p.done, p.doneOrder[0])

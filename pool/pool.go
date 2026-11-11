@@ -166,9 +166,12 @@ type Pool struct {
 	waitingSeen  map[[48]byte]struct{}
 	waitingBytes int
 	// done is the publications the pool has dealt with — one a link took, or
-	// one counted unsent — by identity, oldest first in doneOrder and at most
-	// doneRemembered of them: a copy handed over after its publication already
-	// went out is dropped, and one already counted is not counted again.
+	// one counted unsent — by identity, oldest first in doneOrder while the
+	// pool is open, so a copy handed over after its publication already went
+	// out is dropped and one already counted is not counted again. An open pool
+	// keeps the newest doneRemembered of them; a closing pool keeps every
+	// identity it counts, so what it counts is the union of what its links held
+	// (resend.go).
 	done      map[[48]byte]struct{}
 	doneOrder [][48]byte
 	// unsent counts the publications this pool accepted and could not carry:

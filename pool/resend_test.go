@@ -464,6 +464,40 @@ func TestACopyOfAPublicationThatWentOutIsNotCounted(t *testing.T) {
 	}
 }
 
+// heldSet is count distinct publications signed as Publish signs one: what one
+// link held, for a test that hands a pool the copies its links hand over.
+func heldSet(t *testing.T, p *Pool, realm teststation.Realm, name string, count int) []stationlink.SignedPublication {
+	t.Helper()
+	held := make([]stationlink.SignedPublication, 0, count)
+	for i := range count {
+		held = append(held, signedFor(t, p, realm, fmt.Sprintf("%s %d", name, i), nil))
+	}
+	return held
+}
+
+// Close counts the union of what its links held: a copy handed over after the
+// pool dealt with doneRemembered other publications is not counted again, so
+// two sets handed over twice count each publication once.
+func TestClosingCountsTheUnionOfWhatTheLinksHeld(t *testing.T) {
+	t.Parallel()
+	a := teststation.Start(t, profile.PQPure, "union a")
+	_, _, publisher, realm := listening(t, "union", []*teststation.Station{a}, []*teststation.Station{a})
+	x := heldSet(t, publisher, realm, "x", doneRemembered)
+	y := heldSet(t, publisher, realm, "y", doneRemembered)
+	if err := publisher.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// What four links hand over as they stop: one set, the other, then a copy
+	// of each — more distinct publications between a copy and its twin than the
+	// pool remembers.
+	for _, held := range [][]stationlink.SignedPublication{x, y, x, y} {
+		publisher.resend(held)
+	}
+	if sent := publisher.UnsentPublications(); sent != 2*doneRemembered {
+		t.Errorf("%d publications counted unsent at close, want %d: each of the two sets once", sent, 2*doneRemembered)
+	}
+}
+
 // A copy handed over after the drain already carried the copy that waited is
 // neither queued nor counted: the drain records the publication as dealt with.
 func TestACopyHandedOverAfterTheWaitingOneWentOutIsNotCounted(t *testing.T) {
