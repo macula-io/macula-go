@@ -157,7 +157,10 @@ func SignPublication(key *identity.NodeKey, seq *PublicationSeq, p Publication) 
 // with the node's own identity key: the publisher a subscriber hears is the
 // key that signed it, whichever link carried it.
 func (l *Link) PublishSigned(p SignedPublication) error {
-	return l.writer.write(p.encoded, MaxFrameBytes)
+	if err := l.writer.write(p.encoded, MaxFrameBytes); err != nil {
+		return l.namedEnding(err)
+	}
+	return nil
 }
 
 // Subscribe subscribes to topic in realm. The first subscription to a realm
@@ -204,7 +207,7 @@ func (l *Link) subscribed(key topicKey) error {
 	answer := l.expect(r)
 	if err := l.sendTopicFrame(frame.SubscribeFrame, key); err != nil {
 		l.forget(r, answer)
-		return err
+		return l.namedEnding(err)
 	}
 	return l.verdict(context.Background(), r, answer)
 }
