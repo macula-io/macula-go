@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/macula-io/macula-go/group"
@@ -157,6 +158,13 @@ type Pool struct {
 	subs     map[*Subscription]struct{}
 	served   map[*Served]struct{}
 	remember map[resolvedKey]candidate
+	// waiting holds the publications no link of the active tier took, oldest
+	// first, until a link comes up (resend.go), with their size on the wire.
+	waiting      []stationlink.SignedPublication
+	waitingBytes int
+	// unsent counts the publications this pool accepted and could not carry:
+	// expired, no room to wait, or the pool closed with them waiting.
+	unsent atomic.Uint64
 	// learnt holds the KEM key a provider's signed refusal named, per
 	// procedure and provider, until the advertisement it beat would expire
 	// (call.go, learnKEMKey).
@@ -359,6 +367,7 @@ func (p *Pool) Close() error {
 	for _, m := range members {
 		m.stop()
 	}
+	p.countWaiting()
 	for sub := range subs {
 		sub.end()
 	}

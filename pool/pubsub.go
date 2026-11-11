@@ -327,6 +327,10 @@ func (p *Pool) Publish(pub stationlink.Publication) error {
 }
 
 func (p *Pool) publish(pub stationlink.Publication) error {
+	// What waits goes first, oldest first, so one caller's next publication does
+	// not overtake an older one that is still waiting: best effort, within this
+	// call alone (macula-go#78).
+	p.drainWaiting()
 	links := p.targets()
 	if len(links) == 0 {
 		return ErrNoLink

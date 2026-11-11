@@ -158,8 +158,23 @@ func (m *member) cameUp(link *stationlink.Link) {
 	m.mu.Unlock()
 	m.pool.event(LinkEvent{Station: m.target.ExpectedNodeID, Direct: m.direct, Tier: m.tier, Up: true})
 	m.armSteadyUp(link)
-	m.pool.replay(link)
+	attached := m.pool.replay(link)
 	m.pool.noticeTier(before)
+	// What waits goes out once the subscriptions do, and on its own goroutine:
+	// an attach may wait 30 s for its acknowledgement, which the tier notice
+	// above must never wait for.
+	go m.pool.drainWhenAttached(attached)
+}
+
+// drainWhenAttached sends what waits once every subscription's attach has
+// returned, or when the pool closes first, whichever comes first.
+func (p *Pool) drainWhenAttached(attached <-chan struct{}) {
+	select {
+	case <-attached:
+	case <-p.ctx.Done():
+		return
+	}
+	p.drainWaiting()
 }
 
 // wentDown records the end of the member's link and tells the pool, which may
@@ -171,6 +186,10 @@ func (m *member) wentDown(link *stationlink.Link) {
 	m.mu.Unlock()
 	m.pool.event(LinkEvent{Station: m.target.ExpectedNodeID, Direct: m.direct, Tier: m.tier, Err: link.Err()})
 	m.pool.noticeTier(before)
+	// What the ended link held goes out again on another link, or waits for the
+	// next one. Taken after m.link is nil, so the pool's selection no longer
+	// offers this link and the re-send reaches a different one.
+	m.pool.resend(link.TakeUnconfirmed())
 }
 
 // armSteadyUp clears the member's backoff once its link has stayed up the
@@ -309,8 +328,11 @@ func (p *Pool) drop(m *member) {
 }
 
 // replay gives a new link the node's subscriptions, then its served
-// procedures, as macula's pool replays them on a respawned link.
-func (p *Pool) replay(link *stationlink.Link) {
+// procedures, as macula's pool replays them on a respawned link. It returns
+// once its attaches are started, and a channel that closes once every one of
+// them has returned: each waits for its own SUBSCRIBE's acknowledgement, and
+// the link's own path must not.
+func (p *Pool) replay(link *stationlink.Link) <-chan struct{} {
 	p.mu.Lock()
 	subs := make([]*Subscription, 0, len(p.subs))
 	for sub := range p.subs {
@@ -321,10 +343,21 @@ func (p *Pool) replay(link *stationlink.Link) {
 		served = append(served, s)
 	}
 	p.mu.Unlock()
+	var attaching sync.WaitGroup
 	for _, sub := range subs {
-		go func() { _ = sub.attach(link) }()
+		attaching.Add(1)
+		go func() {
+			defer attaching.Done()
+			_ = sub.attach(link)
+		}()
 	}
 	for _, s := range served {
 		s.attach(link)
 	}
+	attached := make(chan struct{})
+	go func() {
+		attaching.Wait()
+		close(attached)
+	}()
+	return attached
 }
