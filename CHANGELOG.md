@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The wire parsers are fuzzed, and CI fuzzes every one of them on each push
+  (macula-go#39).** Go fuzz targets hold the parsers that read bytes a peer
+  chose — CBOR's decoder, the frame decoder, the record verifier under both
+  profiles, the UCAN token decoder and `Authorize` — to one invariant: any byte
+  string either decodes to a value that re-encodes canonically, or is refused
+  with one of the package's own errors, never a panic, a hang or a value that
+  outgrows its input. Each target is seeded from the shared vectors, read from
+  their files (`testdata/wire_1_0`, `cbor/testdata/decoding_rule_v1.json`,
+  `ucan/testdata/ucan_v1.json`), so a regenerated vector set reseeds them; those
+  seeds run as ordinary tests in CI's `test` job, and a new `fuzz` job gives
+  each target 30 seconds per push.
+
 - **Public and fallback station tiers, the Go half of macula-io/macula#201
   step 2.** `pool.Opts.FallbackSeeds` is a second seed list, the LAN stations a
   pool keeps for when no public station is up, and `Pool.ActiveTier` says which
@@ -96,16 +108,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A subscription is no longer told it may have missed events while another
-  of its links was carrying it (macula-go#88).** Two races said "no link
-  carries this subscription" before it was true: a link was weighed as ended
-  before the link that had just been answered for joined the covering set, and
-  a link that ended while another link's SUBSCRIBE was still awaiting its
-  verdict was taken as the last one, although the station had already accepted
-  the subscription there. The answered link now joins the set first, and an end
-  that arrives while a SUBSCRIBE is in flight is held until the answers are in,
-  so `KindInterrupted` is only delivered when nothing covers the subscription.
-  `teststation.HoldAcks` makes the second race deterministic in a test.
+- **An oversized frame's length header is refused as `ErrFrameTooLarge`
+  (macula-go#39).** `frame.Decode` refused a claimed length over the cap with an
+  error that did not carry the error the encoder uses, although the wire 1.0
+  envelope vectors name that refusal `frame_too_large`: a reader could not tell
+  a peer's oversized header from a malformed frame. The fuzzer found it; its
+  input is kept as a regression seed (`frame/testdata/fuzz/FuzzDecode/`).
+
+- **The subscription-notice tests wait for the node to carry the subscription,
+  not for the stations to hold it (macula-go#88).** `listening()` waits until
+  every station reports the subscription, and a station records a SUBSCRIBE
+  before it acknowledges it, so a test could end a link while one of the node's
+  own attachments was still in flight — and that ending link then read as the
+  last one carrying the subscription, delivering `interrupted` and `gap` for a
+  gap that never happened. `TestOneOfTwoLinksEndingDeliversNoNotice` flaked
+  this way on CI (2 in 50 runs here). The two tests that end a link now wait
+  for the node's own attachments first, and
+  `TestStationsHoldingTheSubscriptionIsNotTheNodeCarryingIt` pins the window
+  with `teststation.HoldAcks`. No pool behaviour changes: a false notice stays
+  safer than a silent loss, so the pool is untouched.
 - **A station procedure in flight when its link ends is asked again on the
   next link, and nothing that could give a different result is
   (macula-go#74).** A pool's DHT reads and puts moved to the next link only on

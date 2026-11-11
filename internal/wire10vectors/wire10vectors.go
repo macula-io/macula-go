@@ -63,6 +63,35 @@ func (c Case) Hex(name string) ([]byte, error) {
 	return hex.DecodeString(s)
 }
 
+// HexInputs is every case's named hex input in class, each value once: the
+// seed corpus a fuzz target starts from, read from the shared vector file
+// rather than restated in the fuzzer. A case that carries no such input (a
+// length case naming a size, say) has nothing to seed with and is passed over.
+func HexInputs(class, name string) ([][]byte, error) {
+	f, err := Load(class)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(f.Cases))
+	var out [][]byte
+	for _, c := range f.Cases {
+		text, ok := c.Input[name].(string)
+		if !ok {
+			continue
+		}
+		b, err := hex.DecodeString(text)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", c.ID, err)
+		}
+		if seen[string(b)] {
+			continue
+		}
+		seen[string(b)] = true
+		out = append(out, b)
+	}
+	return out, nil
+}
+
 // Text is the input field name as text, "" when absent.
 func (c Case) Text(name string) string {
 	s, _ := c.Input[name].(string)
