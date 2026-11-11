@@ -270,6 +270,22 @@ func TestWhatIsNotTheLinksEndingIsNotNamed(t *testing.T) {
 			t.Errorf("a caller's own cancellation was named as the link's ending: %v", err)
 		}
 	})
+	t.Run("station_answer", func(t *testing.T) {
+		link, s := linkWithStation(t, profile.PQPure)
+		detail := "no such key"
+		s.answerCalls(func(r frame.VerifiedRequest) (cbor.Value, bool) {
+			reply, err := frame.SignProviderError(r, "not_found", &detail, nil, s.key)
+			return reply, err == nil
+		})
+		_, err := callWithin(t, link, stationCall(ProcedureFindRecord, cbor.Map(nil)))
+		var provider *ProviderError
+		if !errors.As(err, &provider) {
+			t.Fatalf("the station's answer: %v, want the provider's error", err)
+		}
+		if errors.Is(err, ErrLinkEnded) {
+			t.Errorf("a station's own answer was named as the link's ending: %v", err)
+		}
+	})
 	t.Run("frame_too_large", func(t *testing.T) {
 		link, _ := linkWithStation(t, profile.PQPure)
 		// Half a signature of headroom keeps the payload under the payload cap
