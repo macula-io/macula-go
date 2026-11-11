@@ -40,7 +40,7 @@ func TestDecodingRuleVectors(t *testing.T) {
 	}
 }
 
-func readDecodingRuleVectors(t *testing.T) decodingRuleVectors {
+func readDecodingRuleVectors(t testing.TB) decodingRuleVectors {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/decoding_rule_v1.json")
 	if err != nil {

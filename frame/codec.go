@@ -9,7 +9,9 @@ import (
 )
 
 // ErrFrameTooLarge is a frame whose encoding is longer than MaxFrameBytes.
-// Encode refuses it with this error, and nothing of it is sent.
+// Encode refuses it with this error, and nothing of it is sent; Decode refuses
+// one whose length header claims more than the cap with the same error, as the
+// wire 1.0 envelope vectors name that refusal (frame_too_large).
 var ErrFrameTooLarge = errors.New("frame too large")
 
 // Encode wraps frameVal as <Length:4 bytes big-endian><Cbor>, and refuses a
@@ -48,7 +50,7 @@ func Decode(buf []byte) (Decoded, error) {
 	}
 	claimed := binary.BigEndian.Uint32(buf[:4])
 	if claimed > MaxFrameBytes {
-		return Decoded{}, fmt.Errorf("frame: decode: claimed frame length %d exceeds the %d-byte cap", claimed, MaxFrameBytes)
+		return Decoded{}, fmt.Errorf("frame: decode: %w: claimed frame length %d exceeds the %d-byte cap", ErrFrameTooLarge, claimed, MaxFrameBytes)
 	}
 	// Checked on the header's unsigned value, so the length is within the cap
 	// once it is an int, whatever the size of an int.
