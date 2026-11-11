@@ -47,6 +47,16 @@ async function subscribed(pool, group, onEvent) {
   return pool.subscribeGroup(realm, topic, group, onEvent).catch((e) => e);
 }
 
+// The group event from erlang, once it has arrived, from what the subscriber
+// has heard so far: an event that came back unopened fails the run here.
+function heardFromErlang(heard) {
+  for (const e of heard) {
+    if (e.unopened !== undefined) throw new Error(`an event unopened: ${e.unopened}`);
+    if (e.payload === "from erlang" && e.sealed === 1) return e;
+  }
+  return null;
+}
+
 async function member(pool, group) {
   const heard = [];
   const sub = await subscribed(pool, group, (e) => heard.push(e));
@@ -57,12 +67,10 @@ async function member(pool, group) {
   await pool.publishGroup(realm, topic, "from go", group);
   console.log("published");
   for (let i = 0; i < 600; i++) {
-    for (const e of heard) {
-      if (e.unopened !== undefined) throw new Error(`an event unopened: ${e.unopened}`);
-      if (e.payload === "from erlang" && e.sealed === 1) {
-        console.log(`opened from erlang under ${e.sealKeyId}`);
-        return 0;
-      }
+    const opened = heardFromErlang(heard);
+    if (opened !== null) {
+      console.log(`opened from erlang under ${opened.sealKeyId}`);
+      return 0;
     }
     await sleep(100);
   }
